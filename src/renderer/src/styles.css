@@ -1,0 +1,50 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+
+/* Design tokens: nền tối (ui-ux-pro-max, dashboard dày), theme cam #F7842E + xanh #8DB8FF */
+@theme {
+  --font-sans: 'Inter Variable', Inter, system-ui, sans-serif;
+  --color-bg: #0e1117;
+  --color-panel: #151a23;
+  --color-panel-2: #1c2330;
+  --color-line: #2a3342;
+  --color-fg: #f1f5f9;
+  --color-muted: #94a3b8;
+  --color-brand: #f7842e;
+  --color-brand-fg: #1a0f05;
+  --color-info: #8db8ff;
+  --color-ok: #4ade80;
+  --color-warn: #fbbf24;
+  --color-danger: #f87171;
+  --radius-ui: 10px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-info);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
