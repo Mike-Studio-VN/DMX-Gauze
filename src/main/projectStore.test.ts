@@ -237,5 +237,24 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
     const loadedHi = await loadSavedProject();
     expect(loadedHi.project.settings.timeline.fps).toBe(60);
     expect(loadedHi.project.settings.ltc.fps).toBe(25);
+
+    // Explicit custom Art-Net ports (5568/6038) on saved projects must be preserved.
+    const explicit5568 = createDefaultProject();
+    explicit5568.settings.output.driver = 'artnet';
+    explicit5568.settings.output.port = 5568;
+    explicit5568.settings.output.portExplicit = true;
+    await saveProjectToDisk(explicit5568);
+    const loadedExplicit = await loadSavedProject();
+    expect(loadedExplicit.project.settings.output.port).toBe(5568);
+    expect(loadedExplicit.project.settings.output.portExplicit).toBe(true);
+
+    // Existing saved project with custom receiver IP + Art-Net port 5568 (no portExplicit marker) is also preserved.
+    const savedCustomReceiver = createDefaultProject();
+    savedCustomReceiver.settings.output.driver = 'artnet';
+    savedCustomReceiver.settings.output.ip = '192.168.1.50';
+    savedCustomReceiver.settings.output.port = 5568;
+    await fs.writeFile(autosavePath, JSON.stringify(savedCustomReceiver, null, 2), 'utf8');
+    const loadedCustomReceiver = await loadSavedProject();
+    expect(loadedCustomReceiver.project.settings.output.port).toBe(5568);
   });
 });

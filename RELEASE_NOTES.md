@@ -16,7 +16,7 @@
 
 ### Known Limitations
 - Auto-resuming ArtPoll discovery in TD after toggling `dmx_in` Art-Net off is verified by unit tests and has not yet been measured in a live TD toggle pass.
-- TD→App LTC sync was verified via WAV + `LtcDecoder`; live virtual audio loopback (e.g. BlackHole) was not yet measured.
+- TD→App LTC sync was verified via WAV + `LtcDecoder`; live virtual audio loopback (e.g. BlackHole) and OS microphone/audio input permissions were not yet measured.
 - Default `.toe` retains the local loopback test input configuration (`127.0.0.1`, rate `25`, `dmxout1` OFF).
 
 ## v1.0.0 (2026-11-17)

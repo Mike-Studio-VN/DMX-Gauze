@@ -125,7 +125,7 @@ export class GauzeCore {
     }
     this.driver = this.factory(out, ev)
     this.driver.start()
-    this.driver.poll()
+    this.driver.poll(true)
     this.lastPoll = this.now()
   }
 
@@ -164,8 +164,8 @@ export class GauzeCore {
     this.start()
   }
 
-  pollNow(): void {
-    this.driver?.poll()
+  pollNow(explicit = true): void {
+    this.driver?.poll(explicit)
     this.lastPoll = this.now()
   }
 
@@ -256,7 +256,7 @@ export class GauzeCore {
     this.simulate(dt)
     this.buildFrame()
     this.sendFrame(now)
-    if (now - this.lastPoll >= POLL_EVERY_MS) this.pollNow()
+    if (now - this.lastPoll >= POLL_EVERY_MS) this.pollNow(false)
     if (now - this.lastSnap >= SNAPSHOT_EVERY_MS) {
       this.lastSnap = now
       const s = this.snapshot()

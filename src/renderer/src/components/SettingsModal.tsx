@@ -672,7 +672,7 @@ export function SettingsModal(props: {
                           : out.driver === 'kinet'
                             ? 'Chưa nhận được KiNET PollReply. Kiểm tra IP thiết bị hoặc gửi trực tiếp tới IP PSU.'
                             : isLoopbackTarget(out.ip)
-                              ? 'Đích localhost: app gửi ArtDmx qua cổng động và không giữ cổng 6454 để tránh tranh cổng nhận cục bộ (vd: TouchDesigner).'
+                              ? 'Đích localhost: app gửi ArtDmx qua cổng động; chỉ nghe ArtPollReply ngắn hạn trên 6454 khi quét (không chiếm giữ cổng receiver cục bộ).'
                               : 'Chưa nhận được ArtPollReply nào. Kiểm tra cùng subnet hoặc firewall nếu dùng thiết bị thật.'}
                     </div>
                   ) : (

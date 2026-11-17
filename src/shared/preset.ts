@@ -75,23 +75,46 @@ function validateSettings(rawSettings: unknown): Settings {
   const rawOut = rawSettings.output
   const driver = rawOut.driver as DriverId
   if (!VALID_DRIVERS.has(driver)) failProject('settings.output.driver không hợp lệ')
+  const ip = reqString(rawOut.ip, 'settings.output.ip')
   let port = reqFinite(rawOut.port, 'settings.output.port', 1, 65535, true)
-  // Migrate cấu hình cũ bị lệch port mặc định giữa Art-Net (6454), sACN (5568) và KiNET (6038).
-  if (driver === 'artnet' && port === SACN_PORT) {
-    port = ARTNET_PORT
-  } else if (driver === 'sacn' && port === ARTNET_PORT) {
-    port = SACN_PORT
-  } else if (driver === 'kinet' && (port === ARTNET_PORT || port === SACN_PORT)) {
-    port = KINET_PORT
+  const portExplicit = reqOptionalBool(rawOut.portExplicit, 'settings.output.portExplicit', false)
+  const net = reqFinite(rawOut.net, 'settings.output.net', 0, 127, true)
+  const subnet = reqFinite(rawOut.subnet, 'settings.output.subnet', 0, 15, true)
+  const universe = reqFinite(rawOut.universe, 'settings.output.universe', 0, 15, true)
+  const sendHz = reqFinite(rawOut.sendHz, 'settings.output.sendHz', 1, 120)
+  // Chỉ migrate cấu hình mặc định cũ chưa tuỳ biến (giữ nguyên mọi custom port/IP/universe đã cấu hình).
+  const hasLtcFps = isRecord(rawSettings.ltc) && rawSettings.ltc.fps !== undefined
+  const timelineFps = isRecord(rawSettings.timeline) ? rawSettings.timeline.fps : undefined
+  const hasHighTimelineFps = typeof timelineFps === 'number' && timelineFps > 30
+  const isLegacyUntouchedDefaults =
+    !portExplicit &&
+    ip === DEFAULT_TARGET_IP &&
+    net === 0 &&
+    subnet === 0 &&
+    universe === 0 &&
+    sendHz === 25 &&
+    rawOut.sacnUniverse === undefined &&
+    rawOut.kinetVersion === undefined &&
+    !hasLtcFps &&
+    !hasHighTimelineFps
+  if (isLegacyUntouchedDefaults) {
+    if (driver === 'artnet' && port === SACN_PORT) {
+      port = ARTNET_PORT
+    } else if (driver === 'sacn' && port === ARTNET_PORT) {
+      port = SACN_PORT
+    } else if (driver === 'kinet' && (port === ARTNET_PORT || port === SACN_PORT)) {
+      port = KINET_PORT
+    }
   }
   const output: OutputSettings = {
     driver,
-    ip: reqString(rawOut.ip, 'settings.output.ip'),
+    ip,
     port,
-    net: reqFinite(rawOut.net, 'settings.output.net', 0, 127, true),
-    subnet: reqFinite(rawOut.subnet, 'settings.output.subnet', 0, 15, true),
-    universe: reqFinite(rawOut.universe, 'settings.output.universe', 0, 15, true),
-    sendHz: reqFinite(rawOut.sendHz, 'settings.output.sendHz', 1, 120),
+    ...(portExplicit ? { portExplicit: true } : {}),
+    net,
+    subnet,
+    universe,
+    sendHz,
   }
   if (rawOut.sacnUniverse !== undefined) {
     output.sacnUniverse = reqFinite(rawOut.sacnUniverse, 'settings.output.sacnUniverse', 1, 63999, true)

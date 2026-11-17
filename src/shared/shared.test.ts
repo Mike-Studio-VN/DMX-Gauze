@@ -962,11 +962,29 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
     expect(migrated.settings.output.port).toBe(6454)
     expect(migrated.settings.timeline.fps).toBe(25)
 
-    // Giữ nguyên custom port Art-Net khác 5568
+    // Giữ nguyên custom port Art-Net (6455, 5568, 6038) khi cấu hình rõ ràng hoặc trên receiver riêng
     const customArtNet = createDefaultProject()
     customArtNet.settings.output.driver = 'artnet'
     customArtNet.settings.output.port = 6455
     expect(normalizeProject(customArtNet).settings.output.port).toBe(6455)
+
+    const explicitPortPatch = resolveOutputSettingsPatch(migrated.settings.output, { port: 5568 })
+    expect(explicitPortPatch.port).toBe(5568)
+    expect(explicitPortPatch.portExplicit).toBe(true)
+    const explicitArtNet5568 = createDefaultProject()
+    explicitArtNet5568.settings.output = explicitPortPatch
+    expect(normalizeProject(explicitArtNet5568).settings.output.port).toBe(5568)
+
+    const legacyCustomIp5568 = createDefaultProject()
+    legacyCustomIp5568.settings.output.driver = 'artnet'
+    legacyCustomIp5568.settings.output.ip = '192.168.1.50'
+    legacyCustomIp5568.settings.output.port = 5568
+    expect(normalizeProject(legacyCustomIp5568).settings.output.port).toBe(5568)
+
+    const customArtNet6038 = createDefaultProject()
+    customArtNet6038.settings.output.driver = 'artnet'
+    customArtNet6038.settings.output.port = 6038
+    expect(normalizeProject(customArtNet6038).settings.output.port).toBe(6038)
 
     // Lưu / mở project 60 fps + ltc.fps riêng, từ chối ltc.fps > 30
     const hiFps = createDefaultProject()
@@ -979,9 +997,10 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
     ;(badLtcFps.settings.ltc as { fps?: number }).fps = 60
     expect(() => normalizeProject(badLtcFps)).toThrow()
 
-    // Đổi giao thức thì port tự đổi theo, sACN map sacnUniverse ?? universe + 1
-    const sacnOut = resolveOutputSettingsPatch(migrated.settings.output, { driver: 'sacn' })
+    // Đổi giao thức thì port tự đổi theo (xóa cờ portExplicit cũ), sACN map sacnUniverse ?? universe + 1
+    const sacnOut = resolveOutputSettingsPatch(explicitPortPatch, { driver: 'sacn' })
     expect(sacnOut.port).toBe(5568)
+    expect(sacnOut.portExplicit).toBeUndefined()
     expect(sacnOut.sacnUniverse).toBe(migrated.settings.output.universe + 1)
     const backToArtNet = resolveOutputSettingsPatch(sacnOut, { driver: 'artnet' })
     expect(backToArtNet.port).toBe(6454)
