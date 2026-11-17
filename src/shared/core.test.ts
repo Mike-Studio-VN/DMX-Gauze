@@ -190,5 +190,19 @@ describe('unconfirmed sends do not mask real discovery', () => {
     emit(false)
     expect(core.status().state).toBe('sending')
     expect(core.status().nodes).toHaveLength(0)
+
+describe('snapshot rate', () => {
+  it('phát một snapshot cho mỗi tick 40 ms (25 Hz)', () => {
+    let now = 1000
+    const p = createDefaultProject()
+    const core = new GauzeCore((_c, ev) => new MockDriver(ev), () => now)
+    core.configure({ modules: [p.modules[0]], output: p.settings.output, lockValue: LOCK_VALUE })
+    let n = 0
+    core.onSnapshot(() => (n += 1))
+    for (let i = 0; i < 25; i += 1) {
+      now += 40
+      core.tick()
+    }
+    expect(n).toBe(25)
   })
 })
