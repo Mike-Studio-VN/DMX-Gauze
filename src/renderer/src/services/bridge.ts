@@ -101,6 +101,9 @@ function createWebBridge(): GauzeBridge {
     async pollNow(): Promise<void> {
       core.pollNow()
     },
+    async listSerialPorts(): Promise<string[]> {
+      return []
+    },
     onSnapshot(cb: (snap: SnapshotDto) => void): () => void {
       listeners.add(cb)
       return () => listeners.delete(cb)

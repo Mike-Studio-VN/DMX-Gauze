@@ -169,115 +169,6 @@ export function GauzeTree() {
         </div>
       </div>
 
-      {/* 2 nút tách biệt: Tạo Layer và Tạo Module */}
-      <div className="grid grid-cols-2 gap-1.5">
-        <button
-          type="button"
-          onClick={openCreateLayer}
-          title="Tạo một Layer (lớp màn) mới"
-          className={`kiln-btn h-7 text-[11px] ${createKind === 'layer' ? 'kiln-btn-cue' : ''}`}
-        >
-          <FolderPlus size={13} aria-hidden />
-          + Layer
-        </button>
-        <button
-          type="button"
-          onClick={() => openCreateModule()}
-          title="Tạo một Module màn mới và chọn Layer chứa"
-          className={`kiln-btn h-7 text-[11px] ${createKind === 'module' ? 'kiln-btn-primary' : ''}`}
-        >
-          <Plus size={13} aria-hidden />
-          + Module
-        </button>
-      </div>
-
-      {/* Form Tạo Layer */}
-      {createKind === 'layer' && (
-        <div className="space-y-2 rounded-2xl bg-black/25 p-2.5 text-xs shadow-[inset_0_0_0_1px_rgba(141,184,255,.35)]">
-          <div className="font-semibold text-info">Tạo Layer mới</div>
-          <input
-            value={newLayerName}
-            onChange={(e) => setNewLayerName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleAddLayer()}
-            placeholder="Tên layer (vd: Lớp giữa)"
-            className="kiln-field h-8 w-full px-2.5 text-xs"
-          />
-          {formErr && <p className="text-[11px] text-danger">{formErr}</p>}
-          <div className="flex justify-end gap-1.5">
-            <button type="button" onClick={() => setCreateKind('none')} className="kiln-btn h-6 px-2.5 text-[11px]">
-              Huỷ
-            </button>
-            <button type="button" onClick={handleAddLayer} className="kiln-btn kiln-btn-cue h-6 px-3 text-[11px]">
-              Tạo Layer
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Form Tạo Module */}
-      {createKind === 'module' && (
-        <div className="space-y-2 rounded-2xl bg-black/25 p-2.5 text-xs shadow-[inset_0_0_0_1px_rgba(247,132,46,.38)]">
-          <div className="font-semibold text-[#FFB26B]">Tạo Module mới</div>
-          <label className="block text-[11px] text-[#C2B3A4]">
-            Thuộc Layer
-            <select
-              value={targetLayerId}
-              onChange={(e) => setTargetLayerId(e.target.value)}
-              className="kiln-field mt-1 h-8 w-full px-2 text-xs"
-            >
-              {project.layers.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <input
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleAddModule()}
-            placeholder="Tên module (vd: Trước 13)"
-            className="kiln-field h-8 w-full px-2.5 text-xs"
-          />
-          <div className="flex gap-1.5">
-            <label className="flex-1 text-[11px] text-[#C2B3A4]">
-              Dài (m)
-              <input
-                type="number"
-                step="0.5"
-                min="0.2"
-                value={newLen}
-                onChange={(e) => setNewLen(e.target.value)}
-                className="kiln-field mt-1 h-7 w-full px-2 text-xs"
-              />
-            </label>
-            {!isAuto && (
-              <label className="flex-1 text-[11px] text-[#C2B3A4]">
-                Kênh đầu
-                <input
-                  type="number"
-                  min="1"
-                  max="509"
-                  value={newAddr}
-                  onChange={(e) => setNewAddr(e.target.value)}
-                  placeholder="Auto"
-                  className="kiln-field mt-1 h-7 w-full px-2 text-xs"
-                />
-              </label>
-            )}
-          </div>
-          {formErr && <p className="text-[11px] text-danger">{formErr}</p>}
-          <div className="flex justify-end gap-1.5">
-            <button type="button" onClick={() => setCreateKind('none')} className="kiln-btn h-6 px-2.5 text-[11px]">
-              Huỷ
-            </button>
-            <button type="button" onClick={handleAddModule} className="kiln-btn kiln-btn-primary h-6 px-3 text-[11px]">
-              Tạo Module
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Danh sách Layer & Module */}
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
         {project.layers.map((layer) => {
@@ -566,6 +457,114 @@ export function GauzeTree() {
             </div>
           )
         })}
+      </div>
+
+      {/* Form tạo mở lên phía trên 2 nút chân panel */}
+      {createKind === 'layer' && (
+        <div className="space-y-2 rounded-2xl bg-black/30 p-2.5 text-xs shadow-[inset_0_0_0_1px_rgba(141,184,255,.35)]">
+          <div className="font-semibold text-info">Tạo Layer mới</div>
+          <input
+            value={newLayerName}
+            onChange={(e) => setNewLayerName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleAddLayer()}
+            placeholder="Tên layer (vd: Lớp giữa)"
+            className="kiln-field h-8 w-full px-2.5 text-xs"
+          />
+          {formErr && <p className="text-[11px] text-danger">{formErr}</p>}
+          <div className="flex justify-end gap-1.5">
+            <button type="button" onClick={() => setCreateKind('none')} className="kiln-btn h-6 px-2.5 text-[11px]">
+              Huỷ
+            </button>
+            <button type="button" onClick={handleAddLayer} className="kiln-btn kiln-btn-cue h-6 px-3 text-[11px]">
+              Tạo Layer
+            </button>
+          </div>
+        </div>
+      )}
+
+      {createKind === 'module' && (
+        <div className="space-y-2 rounded-2xl bg-black/30 p-2.5 text-xs shadow-[inset_0_0_0_1px_rgba(247,132,46,.38)]">
+          <div className="font-semibold text-[#FFB26B]">Tạo Module mới</div>
+          <label className="block text-[11px] text-[#C2B3A4]">
+            Thuộc Layer
+            <select
+              value={targetLayerId}
+              onChange={(e) => setTargetLayerId(e.target.value)}
+              className="kiln-field mt-1 h-8 w-full px-2 text-xs"
+            >
+              {project.layers.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleAddModule()}
+            placeholder="Tên module (vd: Trước 13)"
+            className="kiln-field h-8 w-full px-2.5 text-xs"
+          />
+          <div className="flex gap-1.5">
+            <label className="flex-1 text-[11px] text-[#C2B3A4]">
+              Dài (m)
+              <input
+                type="number"
+                step="0.5"
+                min="0.2"
+                value={newLen}
+                onChange={(e) => setNewLen(e.target.value)}
+                className="kiln-field mt-1 h-7 w-full px-2 text-xs"
+              />
+            </label>
+            {!isAuto && (
+              <label className="flex-1 text-[11px] text-[#C2B3A4]">
+                Kênh đầu
+                <input
+                  type="number"
+                  min="1"
+                  max="509"
+                  value={newAddr}
+                  onChange={(e) => setNewAddr(e.target.value)}
+                  placeholder="Auto"
+                  className="kiln-field mt-1 h-7 w-full px-2 text-xs"
+                />
+              </label>
+            )}
+          </div>
+          {formErr && <p className="text-[11px] text-danger">{formErr}</p>}
+          <div className="flex justify-end gap-1.5">
+            <button type="button" onClick={() => setCreateKind('none')} className="kiln-btn h-6 px-2.5 text-[11px]">
+              Huỷ
+            </button>
+            <button type="button" onClick={handleAddModule} className="kiln-btn kiln-btn-primary h-6 px-3 text-[11px]">
+              Tạo Module
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 2 nút tách biệt ở cuối panel: + Layer và + Module */}
+      <div className="grid shrink-0 grid-cols-2 gap-1.5 border-t border-line pt-2">
+        <button
+          type="button"
+          onClick={openCreateLayer}
+          title="Tạo một Layer (lớp màn) mới"
+          className={`kiln-btn h-8 text-[11px] ${createKind === 'layer' ? 'kiln-btn-cue' : ''}`}
+        >
+          <FolderPlus size={13} aria-hidden />
+          + Layer
+        </button>
+        <button
+          type="button"
+          onClick={() => openCreateModule()}
+          title="Tạo một Module màn mới và chọn Layer chứa"
+          className={`kiln-btn h-8 text-[11px] ${createKind === 'module' ? 'kiln-btn-primary' : ''}`}
+        >
+          <Plus size={13} aria-hidden />
+          + Module
+        </button>
       </div>
 
       {/* Menu Chuột Phải chuẩn Kiln */}

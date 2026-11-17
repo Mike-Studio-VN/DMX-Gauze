@@ -195,6 +195,53 @@ describe('timecode & timeline', () => {
     expect(validateAddress(assigned, assigned[1].id, 1)).toBeNull()
     expect(validateAddress(assigned, assigned[1].id, 3)).not.toBeNull()
   })
+
+  it('dựng gói DMX chuẩn cho sACN E1.31, KiNET v1/v2, Enttec Pro/Mk2 và Generic Serial', async () => {
+    const {
+      sacnMulticastIp,
+      buildSacnPacket,
+      buildKinetV1Packet,
+      buildKinetV2Packet,
+      buildEnttecProFrame,
+      buildEnttecMk2Frame,
+      buildSerialDmxFrame,
+    } = await import('./protocols')
+
+    expect(sacnMulticastIp(1)).toBe('239.255.0.1')
+    expect(sacnMulticastIp(258)).toBe('239.255.1.2')
+
+    const dmx = new Uint8Array([128, 64, 100, 77])
+    const sacn = buildSacnPacket({ universe: 3, seq: 12, priority: 120, data: dmx })
+    expect(sacn.length).toBe(126 + 4)
+    expect(String.fromCharCode(...sacn.subarray(4, 13))).toBe('ASC-E1.17')
+    expect(sacn[108]).toBe(120)
+    expect(sacn[111]).toBe(12)
+    expect((sacn[113] << 8) | sacn[114]).toBe(3)
+    expect(sacn[125]).toBe(0)
+    expect(sacn[126]).toBe(128)
+
+    const kv1 = buildKinetV1Packet(5, 2, dmx)
+    expect(kv1.length).toBe(24 + 512)
+    expect(kv1[24]).toBe(128)
+
+    const kv2 = buildKinetV2Packet(9, 0, 3, dmx)
+    expect(kv2.length).toBe(24 + 4)
+    expect(kv2[16]).toBe(3)
+    expect(kv2[24]).toBe(128)
+
+    const pro = buildEnttecProFrame(dmx)
+    expect(pro[0]).toBe(0x7e)
+    expect(pro[1]).toBe(0x06)
+    expect(pro[4]).toBe(0x00)
+    expect(pro[5]).toBe(128)
+    expect(pro[pro.length - 1]).toBe(0xe7)
+
+    const mk2p2 = buildEnttecMk2Frame(dmx, 2)
+    expect(mk2p2[1]).toBe(0xa9)
+
+    const ascii = buildSerialDmxFrame(dmx, 'ascii')
+    expect(new TextDecoder().decode(ascii)).toBe('DMX:128,64,100,77\n')
+  })
 })
 
 describe('ltc decoder', () => {

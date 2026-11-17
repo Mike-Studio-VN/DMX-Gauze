@@ -247,6 +247,16 @@ export function App() {
   const locked = snapshot?.locked ?? true
   const out = project.settings.output
   const fileLabel = projectFilePath ? projectFilePath.split(/[\\/]/).pop() : 'Chưa lưu'
+  const driverShortLabel: Record<string, string> = {
+    artnet: 'Art-Net',
+    sacn: 'sACN E1.31',
+    kinet: 'KiNET',
+    'enttec-pro': 'Enttec Pro',
+    'enttec-mk2': 'Enttec Mk2',
+    serial: 'Serial DMX',
+    mock: 'Mock',
+  }
+  const activeDriverName = driverShortLabel[out.driver] ?? out.driver
 
   const statusMeta = (() => {
     if (!st || st.state === 'idle') return { chip: 'kiln-chip', dot: 'bg-muted', text: 'Khởi tạo', icon: Wifi }
@@ -327,7 +337,7 @@ export function App() {
                       {project.layers.length} lớp · {project.modules.length} module
                     </span>
                     <span>
-                      {out.driver === 'artnet' ? 'Art-Net' : 'Mock'} · U{out.universe}
+                      {activeDriverName} · {out.driver === 'sacn' ? `U${out.sacnUniverse ?? out.universe + 1}` : `U${out.universe}`}
                     </span>
                   </div>
                 </div>
@@ -613,7 +623,12 @@ export function App() {
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5">
             <span className={`size-1.5 rounded-full ${st?.state === 'online' ? 'bg-ok' : 'bg-warn'}`} />
-            {out.driver === 'artnet' ? 'Art-Net UDP' : 'Mock'} · Net {out.net} · Sub {out.subnet} · Uni {out.universe}
+            {activeDriverName} ·{' '}
+            {['enttec-pro', 'enttec-mk2', 'serial'].includes(out.driver)
+              ? out.serialPort || 'Chưa chọn cổng COM/USB'
+              : out.driver === 'sacn'
+                ? `Uni ${out.sacnUniverse ?? out.universe + 1} · ${out.sacnMulticast !== false ? 'Multicast' : out.ip}`
+                : `Net ${out.net} · Sub ${out.subnet} · Uni ${out.universe}`}
           </span>
           <span>·</span>
           <span>Ctrl+Z / Ctrl+Y Hoàn tác · Ctrl+C / Ctrl+V / Delete</span>

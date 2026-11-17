@@ -5,6 +5,7 @@ import { GauzeCore } from '@shared/core'
 import { MockDriver } from '@shared/drivers'
 import type { Command, CoreConfig, Project } from '@shared/types'
 import { ArtNetDriver } from './artnetDriver'
+import { KinetDriver } from './kinetDriver'
 import {
   clearCurrentFilePath,
   exportProjectDialog,
@@ -14,12 +15,26 @@ import {
   saveProjectFile,
   saveProjectToDisk,
 } from './projectStore'
+import { SacnDriver } from './sacnDriver'
+import { SerialDmxDriver, listSerialPorts } from './serialDriver'
 
 let mainWin: BrowserWindow | null = null
 
 const core = new GauzeCore((cfg, ev) => {
-  if (cfg.driver === 'artnet') return new ArtNetDriver(cfg, ev)
-  return new MockDriver(ev, 'Đang chạy chế độ mô phỏng (Mock)')
+  switch (cfg.driver) {
+    case 'artnet':
+      return new ArtNetDriver(cfg, ev)
+    case 'sacn':
+      return new SacnDriver(cfg, ev)
+    case 'kinet':
+      return new KinetDriver(cfg, ev)
+    case 'enttec-pro':
+    case 'enttec-mk2':
+    case 'serial':
+      return new SerialDmxDriver(cfg, ev)
+    default:
+      return new MockDriver(ev, 'Đang chạy chế độ mô phỏng (Mock)')
+  }
 })
 
 core.onSnapshot((snap) => {
@@ -83,6 +98,7 @@ ipcMain.handle('dmx:configure', (_e, cfg: CoreConfig) => {
 })
 ipcMain.handle('dmx:command', (_e, cmd: Command) => core.command(cmd))
 ipcMain.handle('dmx:poll', () => core.pollNow())
+ipcMain.handle('dmx:list-serial', () => listSerialPorts())
 
 app.whenReady().then(async () => {
   const { project: initial } = await loadSavedProject()

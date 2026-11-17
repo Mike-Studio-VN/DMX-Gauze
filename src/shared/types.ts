@@ -1,4 +1,4 @@
-export type DriverId = 'mock' | 'artnet'
+export type DriverId = 'artnet' | 'sacn' | 'kinet' | 'enttec-pro' | 'enttec-mk2' | 'serial' | 'mock'
 export type Fps = 24 | 25 | 29.97 | 30
 
 export interface Transform3D {
@@ -10,7 +10,7 @@ export interface Transform3D {
 
 export interface OutputSettings {
   driver: DriverId
-  /** IP đích. Mặc định 255.255.255.255 (broadcast). */
+  /** IP đích (Art-Net / sACN unicast / KiNET). Mặc định 255.255.255.255 (broadcast). */
   ip: string
   port: number
   /** Art-Net port-address: net (0-127), subnet (0-15), universe (0-15). */
@@ -18,6 +18,18 @@ export interface OutputSettings {
   subnet: number
   universe: number
   sendHz: number
+  /** sACN E1.31: Universe 1–63999, mức ưu tiên 0–200, multicast 239.255.x.y. */
+  sacnUniverse?: number
+  sacnPriority?: number
+  sacnMulticast?: boolean
+  /** KiNET: v1 DMXOUT / v2 PORT_OUT và cổng ra 1–16. */
+  kinetVersion?: 1 | 2
+  kinetPort?: number
+  /** USB / Serial (Enttec Pro, Enttec Mk2, Generic Serial). */
+  serialPort?: string
+  baudRate?: number
+  enttecMk2Port?: 1 | 2
+  serialFormat?: 'raw' | 'enttec' | 'ascii'
 }
 
 export interface Layer {

@@ -32,5 +32,6 @@ export interface GauzeBridge {
   configure(cfg: CoreConfig): Promise<void>
   command(cmd: Command): Promise<CommandResult>
   pollNow(): Promise<void>
+  listSerialPorts(): Promise<string[]>
   onSnapshot(cb: (snap: SnapshotDto) => void): () => void
 }

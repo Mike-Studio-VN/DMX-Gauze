@@ -14,6 +14,7 @@ const bridge: GauzeBridge = {
   configure: (cfg: CoreConfig) => ipcRenderer.invoke('dmx:configure', cfg),
   command: (cmd: Command) => ipcRenderer.invoke('dmx:command', cmd),
   pollNow: () => ipcRenderer.invoke('dmx:poll'),
+  listSerialPorts: () => ipcRenderer.invoke('dmx:list-serial'),
   onSnapshot: (cb: (snap: SnapshotDto) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, snap: SnapshotDto) => cb(snap)
     ipcRenderer.on('dmx:snapshot', handler)
