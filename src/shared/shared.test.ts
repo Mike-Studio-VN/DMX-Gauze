@@ -283,4 +283,135 @@ describe('ltc decoder', () => {
     expect(decoded.length).toBeGreaterThanOrEqual(1)
     expect(decoded[0]).toMatchObject({ h: 7, m: 56, s: 34, f: 12 })
   })
+
+  it('chỉnh sửa, chèn và xoá điểm keyframe trong moment theo thời gian timeline và % hành trình', async () => {
+    const {
+      heightToPercent,
+      insertClipKeyframe,
+      percentToHeight,
+      removeClipKeyframe,
+      updateClipKeyframeHeight,
+      updateClipKeyframeTimelineTime,
+    } = await import('./timeline')
+    const mod = { minHeight: 0, maxHeight: 3, length: 3 }
+    expect(heightToPercent(1.5, mod)).toBe(50)
+    expect(percentToHeight(50, mod)).toBe(1.5)
+    expect(heightToPercent(2.4, mod)).toBe(80)
+    expect(percentToHeight(80, mod)).toBe(2.4)
+
+    const clip = {
+      id: 'c-edit',
+      layerId: 'l1',
+      moduleId: 'm1',
+      startTime: 2,
+      duration: 4,
+      keyframes: [
+        { id: 'k1', offset: 0, height: 0 },
+        { id: 'k2', offset: 4, height: 3 },
+      ],
+    }
+    expect(removeClipKeyframe(clip, 'k1')).toBeNull()
+
+    const inserted = insertClipKeyframe(clip, 0, 3)
+    expect(inserted.keyframes).toHaveLength(3)
+    expect(inserted.keyframes[1]).toMatchObject({ id: inserted.newKeyId, offset: 2, height: 1.5 })
+
+    const withMid = { ...clip, keyframes: inserted.keyframes }
+    const hRes = updateClipKeyframeHeight(withMid, 'k1', percentToHeight(25, mod))
+    expect(hRes.syncEdge).toBe('start')
+    expect(hRes.keyframes[0].height).toBeCloseTo(0.75, 2)
+
+    // K2 đang ở timeline 2+4 = 6s -> đổi thành 8s trên timeline
+    const tEnd = updateClipKeyframeTimelineTime(withMid, 'k2', 8)
+    expect(tEnd.startTime).toBe(2)
+    expect(tEnd.duration).toBe(6)
+    expect(tEnd.keyframes[2].offset).toBe(6)
+
+    // K1 đang ở timeline 2s -> dời sớm về 1s trên timeline, các điểm sau giữ nguyên thời gian timeline
+    const tStart = updateClipKeyframeTimelineTime(withMid, 'k1', 1)
+    expect(tStart.startTime).toBe(1)
+    expect(tStart.duration).toBe(5)
+    expect(tStart.keyframes.map((k) => tStart.startTime + k.offset)).toEqual([1, 4, 6])
+
+    const removed = removeClipKeyframe(withMid, inserted.newKeyId)
+    expect(removed).toHaveLength(2)
+  })
+
+  it('nội suy độ cao timeline qua evaluateModuleTimelineHeight cho cả moment mượt, thẳng và key cũ', async () => {
+    const { evaluateModuleTimelineHeight } = await import('./timeline')
+    const mod = { id: 'm1', minHeight: 0, maxHeight: 3, length: 3 }
+    const smoothClip = {
+      id: 'c-smooth',
+      layerId: 'l1',
+      moduleId: 'm1',
+      startTime: 1,
+      duration: 4,
+      curveMode: 'smooth' as const,
+      keyframes: [
+        { id: 'k1', offset: 0, height: 0 },
+        { id: 'k2', offset: 2, height: 3 },
+        { id: 'k3', offset: 4, height: 0 },
+      ],
+    }
+    expect(evaluateModuleTimelineHeight([smoothClip], [], mod, 0.5)).toBe(0)
+    expect(evaluateModuleTimelineHeight([smoothClip], [], mod, 3)).toBe(3)
+    const midSmooth = evaluateModuleTimelineHeight([smoothClip], [], mod, 2)
+    expect(midSmooth).not.toBeNull()
+    expect(midSmooth!).toBeGreaterThan(0)
+    expect(midSmooth!).toBeLessThan(3)
+
+    const linearClip = {
+      id: 'c-lin',
+      layerId: 'l1',
+      moduleId: 'm1',
+      startTime: 2,
+      duration: 4,
+      curveMode: 'linear' as const,
+      keyframes: [
+        { id: 'k1', offset: 0, height: 0 },
+        { id: 'k2', offset: 4, height: 2 },
+      ],
+    }
+    expect(evaluateModuleTimelineHeight([linearClip], [], mod, 4)).toBeCloseTo(1, 3)
+    expect(evaluateModuleTimelineHeight([linearClip], [], mod, 10)).toBe(2)
+
+    const legacyKeys = [
+      { id: 'tk1', time: 1, label: 'Start', targets: { m1: 0 } },
+      { id: 'tk2', time: 5, label: 'End', targets: { m1: 2 } },
+    ]
+    expect(evaluateModuleTimelineHeight([], legacyKeys, mod, 3)).toBeCloseTo(1, 3)
+  })
+})
+
+describe('stage3d', () => {
+  it('quy đổi đồng nhất giữa hệ toạ độ World chung và offset cục bộ của Module/Layer xoay & scale', async () => {
+    const { computeModuleBasePositions, getModuleWorldPosition, worldPositionToModuleOffset } = await import('./stage3d')
+    const p = createDefaultProject()
+    const layer2Rotated = {
+      id: 'layer-rot',
+      name: 'Lớp xoay',
+      transform: { position: [1, 4, 2] as [number, number, number], rotation: [0, 90, 0] as [number, number, number], scale: [2, 1, 1] as [number, number, number] },
+    }
+    const modRot = {
+      ...p.modules[0],
+      id: 'm-rot',
+      layerId: 'layer-rot',
+      width: 2,
+      transform: { position: [0.5, 0, -0.25] as [number, number, number], rotation: [0, 0, 0] as [number, number, number], scale: [1, 1, 1] as [number, number, number] },
+    }
+    const layers = [p.layers[0], layer2Rotated]
+    const mods = [...p.modules.filter((m) => m.layerId === p.layers[0].id), modRot]
+    const baseMap = computeModuleBasePositions(layers, mods)
+    expect(baseMap.get('m-rot')).toBe(0)
+
+    const world = getModuleWorldPosition(layer2Rotated, 1, modRot, baseMap.get('m-rot') ?? 0)
+    expect(world[0]).toBeCloseTo(0.75, 3)
+    expect(world[1]).toBeCloseTo(4, 3)
+    expect(world[2]).toBeCloseTo(1, 3)
+
+    const recovered = worldPositionToModuleOffset(layer2Rotated, 1, baseMap.get('m-rot') ?? 0, [0.75, 4, 1])
+    expect(recovered[0]).toBeCloseTo(0.5, 3)
+    expect(recovered[1]).toBe(0)
+    expect(recovered[2]).toBeCloseTo(-0.25, 3)
+  })
 })

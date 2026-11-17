@@ -420,7 +420,7 @@ export function App() {
                   role="menuitem"
                   onClick={() => {
                     setMenuOpen(false)
-                    setSettingsOpen(true, 'network', 'dmx')
+                    setSettingsOpen(true, 'network')
                   }}
                   className="mx-2 flex h-9 w-[calc(100%-16px)] cursor-pointer items-center gap-3 rounded-xl px-2.5 text-left text-[12.5px] text-fg hover:bg-white/8"
                 >
@@ -433,7 +433,7 @@ export function App() {
                   role="menuitem"
                   onClick={() => {
                     setMenuOpen(false)
-                    setSettingsOpen(true, 'ltc', 'timecode')
+                    setSettingsOpen(true, 'ltc')
                   }}
                   className="mx-2 flex h-9 w-[calc(100%-16px)] cursor-pointer items-center gap-3 rounded-xl px-2.5 text-left text-[12.5px] text-fg hover:bg-white/8"
                 >
@@ -466,8 +466,8 @@ export function App() {
 
           <button
             type="button"
-            onClick={() => setSettingsOpen(true, 'network', 'dmx')}
-            title={`Trạng thái: ${st?.state ?? 'idle'} · Giao thức: ${out.driver.toUpperCase()} · Đích: ${out.ip}:${out.port} · Universe ${out.universe}. Bấm để mở Cài đặt DMX`}
+            onClick={() => setSettingsOpen(true, 'network')}
+            title={`Trạng thái: ${st?.state ?? 'idle'} · Giao thức: ${out.driver.toUpperCase()} · Đích: ${out.ip}:${out.port} · Universe ${out.universe}. Bấm để mở Cài đặt hệ thống (tab DMX)`}
             className={`${statusMeta.chip} h-7 cursor-pointer px-2.5 text-[11px]`}
           >
             <span className={`size-1.5 rounded-full ${statusMeta.dot}`} />
@@ -523,8 +523,8 @@ export function App() {
           <IconButton
             icon={Settings}
             iconOnly
-            label="Cài đặt (DMX & Timecode)"
-            onClick={() => setSettingsOpen(true, 'network', 'all')}
+            label="Cài đặt hệ thống"
+            onClick={() => setSettingsOpen(true, 'network')}
           />
         </div>
       </header>

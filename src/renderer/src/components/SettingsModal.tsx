@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Clock, Download, FolderOpen, Network, RefreshCw, RotateCcw, Shield, Sliders, Volume2, X } from 'lucide-react'
+import { Download, FolderOpen, Network, RefreshCw, RotateCcw, Shield, Sliders, Volume2, X } from 'lucide-react'
 import { isValidIPv4 } from '@shared/dmx'
 import { KINET_PORT, SACN_PORT, sacnMulticastIp } from '@shared/protocols'
 import { FPS_OPTIONS, formatTc, parseTc } from '@shared/timecode'
@@ -14,7 +14,6 @@ export function SettingsModal() {
     snapshot,
     settingsOpen,
     settingsTab,
-    settingsScope,
     setSettingsOpen,
     updateOutputSettings,
     updateLtcSettings,
@@ -86,33 +85,14 @@ export function SettingsModal() {
 
   const nodes = snapshot?.status.nodes ?? []
 
-  const allNavItems: Array<{ id: SettingsTab; label: string; icon: typeof Network }> = [
+  const navItems: Array<{ id: SettingsTab; label: string; icon: typeof Network }> = [
     { id: 'network', label: 'Mạng & DMX Out', icon: Network },
     { id: 'safety', label: 'An toàn & Địa chỉ', icon: Shield },
     { id: 'ltc', label: 'Timecode LTC', icon: Volume2 },
     { id: 'project', label: 'Dự án & Preset', icon: FolderOpen },
   ]
 
-  const navItems =
-    settingsScope === 'dmx'
-      ? allNavItems.filter((i) => i.id === 'network' || i.id === 'safety')
-      : settingsScope === 'timecode'
-        ? allNavItems.filter((i) => i.id === 'ltc')
-        : allNavItems
-
-  const tab = navItems.some((i) => i.id === settingsTab) ? settingsTab : (navItems[0]?.id ?? 'network')
-
-  const headerTitle =
-    settingsScope === 'dmx'
-      ? 'Cài đặt DMX'
-      : settingsScope === 'timecode'
-        ? 'Cài đặt Timecode'
-        : 'Cài đặt hệ thống'
-  const HeaderIcon = settingsScope === 'dmx' ? Network : settingsScope === 'timecode' ? Clock : Sliders
-  const badgeText =
-    settingsScope === 'timecode'
-      ? `${tl.fps} FPS · LTC`
-      : `VI · ${out.driver.toUpperCase()}`
+  const tab = navItems.some((i) => i.id === settingsTab) ? settingsTab : 'network'
 
   const isSerialDriver = out.driver === 'enttec-pro' || out.driver === 'enttec-mk2' || out.driver === 'serial'
   const isNetworkDriver = !isSerialDriver
@@ -156,19 +136,15 @@ export function SettingsModal() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-      <div
-        className={`kiln-panel grid max-h-[90vh] w-full grid-rows-[54px_1fr_58px] overflow-hidden shadow-2xl ${
-          settingsScope === 'timecode' ? 'h-[470px] max-w-[600px]' : 'h-[560px] max-w-[760px]'
-        }`}
-      >
+      <div className="kiln-panel grid h-[560px] max-h-[90vh] w-full max-w-[760px] grid-rows-[54px_1fr_58px] overflow-hidden shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-line px-5">
           <div className="flex items-center gap-2.5">
-            <HeaderIcon size={16} className="text-[#FFB26B]" />
-            <h2 className="text-[15px] font-semibold text-fg">{headerTitle}</h2>
+            <Sliders size={16} className="text-[#FFB26B]" />
+            <h2 className="text-[15px] font-semibold text-fg">Cài đặt hệ thống</h2>
           </div>
           <div className="flex items-center gap-3 text-[10px] font-semibold tracking-wider text-muted uppercase">
-            <span>{badgeText}</span>
+            <span>VI · {out.driver.toUpperCase()}</span>
             <button
               type="button"
               onClick={() => setSettingsOpen(false)}
@@ -181,35 +157,33 @@ export function SettingsModal() {
         </div>
 
         {/* Body */}
-        <div className={`grid min-h-0 ${navItems.length > 1 ? 'grid-cols-[195px_1fr]' : 'grid-cols-1'}`}>
-          {navItems.length > 1 && (
-            <nav className="flex flex-col gap-1 border-r border-line p-2.5">
-              {navItems.map((item) => {
-                const Icon = item.icon
-                const active = tab === item.id
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setSettingsOpen(true, item.id, settingsScope)}
-                    className={`flex h-9 cursor-pointer items-center gap-2.5 rounded-xl px-3 text-left text-[12.5px] font-medium transition ${
-                      active
-                        ? 'bg-brand/15 text-[#FFB26B] shadow-[inset_0_0_0_1px_rgba(247,132,46,.38)]'
-                        : 'text-[#C2B3A4] hover:bg-white/5 hover:text-fg'
-                    }`}
-                  >
-                    <Icon size={15} className={active ? 'text-[#FFB26B]' : 'text-muted'} />
-                    {item.label}
-                  </button>
-                )
-              })}
+        <div className="grid min-h-0 grid-cols-[195px_1fr]">
+          <nav className="flex flex-col gap-1 border-r border-line p-2.5">
+            {navItems.map((item) => {
+              const Icon = item.icon
+              const active = tab === item.id
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setSettingsOpen(true, item.id)}
+                  className={`flex h-9 cursor-pointer items-center gap-2.5 rounded-xl px-3 text-left text-[12.5px] font-medium transition ${
+                    active
+                      ? 'bg-brand/15 text-[#FFB26B] shadow-[inset_0_0_0_1px_rgba(247,132,46,.38)]'
+                      : 'text-[#C2B3A4] hover:bg-white/5 hover:text-fg'
+                  }`}
+                >
+                  <Icon size={15} className={active ? 'text-[#FFB26B]' : 'text-muted'} />
+                  {item.label}
+                </button>
+              )
+            })}
 
-              <div className="mt-auto px-3 pb-1 text-[9.5px] leading-relaxed font-medium tracking-wider text-muted uppercase">
-                DMX GAUZE ENGINE
-                <br />v{info?.version ?? '0.1.0'} · {info?.runtime ?? 'web'}
-              </div>
-            </nav>
-          )}
+            <div className="mt-auto px-3 pb-1 text-[9.5px] leading-relaxed font-medium tracking-wider text-muted uppercase">
+              DMX GAUZE ENGINE
+              <br />v{info?.version ?? '0.1.0'} · {info?.runtime ?? 'web'}
+            </div>
+          </nav>
 
           {/* Nội dung phải */}
           <div className="min-h-0 overflow-y-auto p-5 text-xs">
@@ -801,18 +775,16 @@ export function SettingsModal() {
         <div className="flex items-center justify-between border-t border-line px-5 text-xs text-muted">
           <span>Thay đổi được áp dụng và tự động lưu ngay</span>
           <div className="flex items-center gap-2">
-            {settingsScope === 'all' && (
-              <button
-                type="button"
-                onClick={() => {
-                  resetPreset()
-                  setSettingsOpen(false)
-                }}
-                className="kiln-btn h-8 px-4 text-xs"
-              >
-                Mặc định
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => {
+                resetPreset()
+                setSettingsOpen(false)
+              }}
+              className="kiln-btn h-8 px-4 text-xs"
+            >
+              Mặc định
+            </button>
             <button type="button" onClick={() => setSettingsOpen(false)} className="kiln-btn kiln-btn-primary h-8 px-5 text-xs">
               Xong
             </button>

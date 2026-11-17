@@ -55,14 +55,6 @@ export function GauzeTree() {
     notify,
   } = useAppStore()
 
-  const [createKind, setCreateKind] = useState<'none' | 'layer' | 'module'>('none')
-  const [newLayerName, setNewLayerName] = useState('')
-  const [targetLayerId, setTargetLayerId] = useState('')
-  const [newName, setNewName] = useState('')
-  const [newLen, setNewLen] = useState('1')
-  const [newAddr, setNewAddr] = useState('')
-  const [formErr, setFormErr] = useState<string | null>(null)
-
   const [renamingLayerId, setRenamingLayerId] = useState<string | null>(null)
   const [renamingModId, setRenamingModId] = useState<string | null>(null)
   const [renameText, setRenameText] = useState('')
@@ -88,48 +80,43 @@ export function GauzeTree() {
   const conflicts = conflictMap(project.modules)
   const isAuto = project.settings.addressMode === 'auto'
 
-  const openCreateLayer = () => {
-    setFormErr(null)
-    setNewLayerName(`Lớp ${project.layers.length + 1}`)
-    setCreateKind(createKind === 'layer' ? 'none' : 'layer')
-  }
-
-  const openCreateModule = (preferLayerId?: string) => {
-    setFormErr(null)
-    const selectedMod = project.modules.find((m) => m.id === selectedIds[0])
-    setTargetLayerId(preferLayerId ?? selectedLayerId ?? selectedMod?.layerId ?? project.layers[0]?.id ?? '')
-    setNewName('')
-    setNewAddr('')
-    setCreateKind(preferLayerId ? 'module' : createKind === 'module' ? 'none' : 'module')
-  }
-
-  const handleAddLayer = () => {
-    const err = addLayer(newLayerName)
+  const quickAddLayer = () => {
+    const newId = `layer-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`
+    const defaultName = `Lớp ${project.layers.length + 1}`
+    const err = addLayer(defaultName, { id: newId })
     if (err) {
-      setFormErr(err)
+      notify(err, 'error')
       return
     }
-    setFormErr(null)
-    setCreateKind('none')
+    setRenamingModId(null)
+    setRenamingLayerId(newId)
+    setRenameText(defaultName)
   }
 
-  const handleAddModule = () => {
-    const layerId = targetLayerId || project.layers[0]?.id
+  const quickAddModule = (preferLayerId?: string) => {
+    const selectedMod =
+      !preferLayerId && !selectedLayerId ? project.modules.find((m) => m.id === selectedIds[0]) : undefined
+    const layerId = preferLayerId ?? selectedLayerId ?? selectedMod?.layerId ?? project.layers[0]?.id
     if (!layerId) {
-      setFormErr('Hãy tạo ít nhất 1 layer trước')
+      notify('Hãy tạo ít nhất 1 layer trước', 'warn')
       return
     }
-    const len = Number(newLen) || 1
-    const addr = !isAuto && newAddr.trim() ? Number(newAddr) : undefined
-    const err = addModule(layerId, { name: newName, length: len, width: len >= 2 ? 3 : 1, startAddress: addr })
+    const newId = `m-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    const defaultName = `Màn ${project.modules.length + 1}`
+    const err = addModule(layerId, {
+      id: newId,
+      name: defaultName,
+      length: 1,
+      width: 1,
+      insertAfterId: selectedMod?.id,
+    })
     if (err) {
-      setFormErr(err)
+      notify(err, 'error')
       return
     }
-    setFormErr(null)
-    setNewName('')
-    setNewAddr('')
-    setCreateKind('none')
+    setRenamingLayerId(null)
+    setRenamingModId(newId)
+    setRenameText(defaultName)
   }
 
   return (
@@ -229,6 +216,10 @@ export function GauzeTree() {
                     <input
                       autoFocus
                       value={renameText}
+                      onFocus={(e) => {
+                        e.currentTarget.select()
+                        e.currentTarget.scrollIntoView({ block: 'nearest' })
+                      }}
                       onClick={(e) => e.stopPropagation()}
                       onChange={(e) => setRenameText(e.target.value)}
                       onBlur={() => {
@@ -243,7 +234,7 @@ export function GauzeTree() {
                           setRenamingLayerId(null)
                         }
                       }}
-                      className="kiln-field h-6 min-w-0 flex-1 px-1.5 text-xs"
+                      className="kiln-field h-6 min-w-0 flex-1 !bg-[#150F0B] px-1.5 text-xs text-fg"
                     />
                   ) : (
                     <button
@@ -383,21 +374,27 @@ export function GauzeTree() {
                                 <input
                                   autoFocus
                                   value={renameText}
+                                  onFocus={(e) => {
+                                    e.currentTarget.select()
+                                    e.currentTarget.scrollIntoView({ block: 'nearest' })
+                                  }}
                                   onClick={(e) => e.stopPropagation()}
                                   onChange={(e) => setRenameText(e.target.value)}
                                   onBlur={() => {
-                                    if (renameText.trim()) updateModule(m.id, { name: renameText.trim() })
+                                    const nextName = renameText.trim()
+                                    if (nextName && nextName !== m.name) updateModule(m.id, { name: nextName })
                                     setRenamingModId(null)
                                   }}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter') {
-                                      if (renameText.trim()) updateModule(m.id, { name: renameText.trim() })
+                                      const nextName = renameText.trim()
+                                      if (nextName && nextName !== m.name) updateModule(m.id, { name: nextName })
                                       setRenamingModId(null)
                                     } else if (e.key === 'Escape') {
                                       setRenamingModId(null)
                                     }
                                   }}
-                                  className="kiln-field h-5 min-w-0 flex-1 px-1.5 text-xs"
+                                  className="kiln-field h-5 min-w-0 flex-1 !bg-[#150F0B] px-1.5 text-xs text-fg"
                                 />
                               ) : (
                                 <span className={`truncate font-medium ${selected ? 'text-[#FFB26B]' : 'text-fg'}`}>
@@ -459,111 +456,25 @@ export function GauzeTree() {
         })}
       </div>
 
-      {/* Form tạo mở lên phía trên 2 nút chân panel */}
-      {createKind === 'layer' && (
-        <div className="space-y-2 rounded-2xl bg-black/30 p-2.5 text-xs shadow-[inset_0_0_0_1px_rgba(141,184,255,.35)]">
-          <div className="font-semibold text-info">Tạo Layer mới</div>
-          <input
-            value={newLayerName}
-            onChange={(e) => setNewLayerName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleAddLayer()}
-            placeholder="Tên layer (vd: Lớp giữa)"
-            className="kiln-field h-8 w-full px-2.5 text-xs"
-          />
-          {formErr && <p className="text-[11px] text-danger">{formErr}</p>}
-          <div className="flex justify-end gap-1.5">
-            <button type="button" onClick={() => setCreateKind('none')} className="kiln-btn h-6 px-2.5 text-[11px]">
-              Huỷ
-            </button>
-            <button type="button" onClick={handleAddLayer} className="kiln-btn kiln-btn-cue h-6 px-3 text-[11px]">
-              Tạo Layer
-            </button>
-          </div>
-        </div>
-      )}
-
-      {createKind === 'module' && (
-        <div className="space-y-2 rounded-2xl bg-black/30 p-2.5 text-xs shadow-[inset_0_0_0_1px_rgba(247,132,46,.38)]">
-          <div className="font-semibold text-[#FFB26B]">Tạo Module mới</div>
-          <label className="block text-[11px] text-[#C2B3A4]">
-            Thuộc Layer
-            <select
-              value={targetLayerId}
-              onChange={(e) => setTargetLayerId(e.target.value)}
-              className="kiln-field mt-1 h-8 w-full px-2 text-xs"
-            >
-              {project.layers.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <input
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleAddModule()}
-            placeholder="Tên module (vd: Trước 13)"
-            className="kiln-field h-8 w-full px-2.5 text-xs"
-          />
-          <div className="flex gap-1.5">
-            <label className="flex-1 text-[11px] text-[#C2B3A4]">
-              Dài (m)
-              <input
-                type="number"
-                step="0.5"
-                min="0.2"
-                value={newLen}
-                onChange={(e) => setNewLen(e.target.value)}
-                className="kiln-field mt-1 h-7 w-full px-2 text-xs"
-              />
-            </label>
-            {!isAuto && (
-              <label className="flex-1 text-[11px] text-[#C2B3A4]">
-                Kênh đầu
-                <input
-                  type="number"
-                  min="1"
-                  max="509"
-                  value={newAddr}
-                  onChange={(e) => setNewAddr(e.target.value)}
-                  placeholder="Auto"
-                  className="kiln-field mt-1 h-7 w-full px-2 text-xs"
-                />
-              </label>
-            )}
-          </div>
-          {formErr && <p className="text-[11px] text-danger">{formErr}</p>}
-          <div className="flex justify-end gap-1.5">
-            <button type="button" onClick={() => setCreateKind('none')} className="kiln-btn h-6 px-2.5 text-[11px]">
-              Huỷ
-            </button>
-            <button type="button" onClick={handleAddModule} className="kiln-btn kiln-btn-primary h-6 px-3 text-[11px]">
-              Tạo Module
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 2 nút tách biệt ở cuối panel: + Layer và + Module */}
+      {/* 2 nút tách biệt ở cuối panel: Layer và Module */}
       <div className="grid shrink-0 grid-cols-2 gap-1.5 border-t border-line pt-2">
         <button
           type="button"
-          onClick={openCreateLayer}
-          title="Tạo một Layer (lớp màn) mới"
-          className={`kiln-btn h-8 text-[11px] ${createKind === 'layer' ? 'kiln-btn-cue' : ''}`}
+          onClick={quickAddLayer}
+          title="Tạo Layer (lớp màn) mới ở cuối danh sách và đổi tên trực tiếp"
+          className="kiln-btn h-8 text-[11px]"
         >
           <FolderPlus size={13} aria-hidden />
-          + Layer
+          Layer
         </button>
         <button
           type="button"
-          onClick={() => openCreateModule()}
-          title="Tạo một Module màn mới và chọn Layer chứa"
-          className={`kiln-btn h-8 text-[11px] ${createKind === 'module' ? 'kiln-btn-primary' : ''}`}
+          onClick={() => quickAddModule()}
+          title="Thêm nhanh Module mặc định (1m) vào Layer hoặc bên dưới Module đang chọn"
+          className="kiln-btn kiln-btn-primary h-8 text-[11px]"
         >
           <Plus size={13} aria-hidden />
-          + Module
+          Module
         </button>
       </div>
 
@@ -581,7 +492,7 @@ export function GauzeTree() {
             <>
               <button
                 type="button"
-                onClick={() => openCreateModule(ctxMenu.layer.id)}
+                onClick={() => quickAddModule(ctxMenu.layer.id)}
                 className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
               >
                 <Plus size={13} className="text-[#FFB26B]" />
@@ -589,7 +500,7 @@ export function GauzeTree() {
               </button>
               <button
                 type="button"
-                onClick={openCreateLayer}
+                onClick={quickAddLayer}
                 className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
               >
                 <FolderPlus size={13} className="text-info" />

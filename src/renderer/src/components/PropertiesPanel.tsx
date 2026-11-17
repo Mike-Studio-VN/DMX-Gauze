@@ -1,10 +1,28 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, Eye, EyeOff, HelpCircle, Layers, Link2, Lock, RotateCcw, Unlock } from 'lucide-react'
+import { AlertCircle, AlertTriangle, ArrowLeft, Eye, EyeOff, HelpCircle, Layers, Link2, Lock, Plus, RotateCcw, Trash2, Unlock } from 'lucide-react'
 import { layerLoopAddress } from '@shared/addressing'
 import { ch3ToCms } from '@shared/convert'
 import { CH, addressRange } from '@shared/dmx'
 import { defaultLayerTransform, defaultModuleTransform } from '@shared/preset'
-import type { Transform3D } from '@shared/types'
+import {
+  computeModuleBasePositions,
+  getModuleWorldPosition,
+  worldPositionToModuleOffset,
+} from '@shared/stage3d'
+import {
+  CURVE_PRESETS,
+  type CurvePresetId,
+  analyzeClipSpeeds,
+  buildCurveKeyframes,
+  heightToPercent,
+  insertClipKeyframe,
+  percentToHeight,
+  removeClipKeyframe,
+  resolveClipBoundsNoOverlap,
+  updateClipKeyframeHeight,
+  updateClipKeyframeTimelineTime,
+} from '@shared/timeline'
+import type { ModuleCfg, TimelineClip, Transform3D } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 
 function TransformEditor({
@@ -44,7 +62,7 @@ function TransformEditor({
 
       {(
         [
-          ['position', 'Vị trí (m)', 0.1],
+          ['position', 'Vị trí World (m)', 0.1],
           ['rotation', 'Xoay (°)', 5],
           ['scale', 'Tỉ lệ (Scale)', 0.1],
         ] as const
@@ -64,7 +82,7 @@ function TransformEditor({
                     type="number"
                     step={step}
                     disabled={disabled}
-                    value={disabled ? 0 : Number(tf[field][i].toFixed(2))}
+                    value={Number(tf[field][i].toFixed(2))}
                     onChange={(e) => updateAxis(field, i as 0 | 1 | 2, Number(e.target.value))}
                     className="min-w-0 flex-1 bg-transparent text-right text-[11.5px] text-fg tabular-nums outline-none disabled:opacity-45"
                   />
@@ -78,11 +96,299 @@ function TransformEditor({
   )
 }
 
+function MomentEditor({
+  clip,
+  allClips,
+  mod,
+  selectedKeyId,
+  onSelectKey,
+  onBackToModule,
+  onUpdate,
+  onDelete,
+}: {
+  clip: TimelineClip
+  allClips: TimelineClip[]
+  mod: ModuleCfg
+  selectedKeyId: string | null
+  onSelectKey: (id: string | null) => void
+  onBackToModule: () => void
+  onUpdate: (patch: Partial<TimelineClip>, coalesceKey?: string, syncEdge?: 'start' | 'end') => void
+  onDelete: () => void
+}) {
+  const sorted = [...clip.keyframes].sort((a, b) => a.offset - b.offset)
+  const sameModClips = allClips.filter((c) => c.moduleId === clip.moduleId)
+  const bounds = resolveClipBoundsNoOverlap(sameModClips, clip)
+  const issues = analyzeClipSpeeds(clip, mod)
+  const bad = issues.find((i) => !i.feasible)
+  const [draftTime, setDraftTime] = useState<{ id: string; raw: string } | null>(null)
+  const [draftPct, setDraftPct] = useState<{ id: string; raw: string } | null>(null)
+
+  const commitTimelineTime = (kfId: string, rawVal: number) => {
+    const patch = updateClipKeyframeTimelineTime(clip, kfId, rawVal, bounds)
+    onUpdate(patch, `kf-${kfId}`)
+  }
+
+  const commitPercent = (kfId: string, rawPct: number) => {
+    const h = percentToHeight(rawPct, mod)
+    const { keyframes, syncEdge } = updateClipKeyframeHeight(clip, kfId, h)
+    onUpdate({ keyframes }, `kfh-${kfId}`, syncEdge)
+  }
+
+  const applyPreset = (presetId: CurvePresetId) => {
+    const kfs = buildCurveKeyframes(presetId, clip.duration, mod.minHeight, mod.maxHeight)
+    const sameMod = allClips.filter((c) => c.moduleId === clip.moduleId).sort((a, b) => a.startTime - b.startTime)
+    const idx = sameMod.findIndex((c) => c.id === clip.id)
+    const prevClip = idx > 0 ? sameMod[idx - 1] : null
+    const nextClip = idx >= 0 && idx < sameMod.length - 1 ? sameMod[idx + 1] : null
+    if (prevClip && prevClip.keyframes.length > 0 && kfs.length > 0) {
+      const prevKfs = [...prevClip.keyframes].sort((a, b) => a.offset - b.offset)
+      kfs[0] = { ...kfs[0], height: prevKfs[prevKfs.length - 1].height }
+    }
+    if (nextClip && nextClip.keyframes.length > 0 && kfs.length > 1) {
+      const nextKfs = [...nextClip.keyframes].sort((a, b) => a.offset - b.offset)
+      kfs[kfs.length - 1] = { ...kfs[kfs.length - 1], height: nextKfs[0].height }
+    }
+    const curveMode: 'smooth' | 'linear' =
+      presetId === 'triangle' || presetId === 'steps' || presetId === 'hold' ? 'linear' : 'smooth'
+    onUpdate({ keyframes: kfs, curveMode })
+    onSelectKey(kfs[Math.min(1, kfs.length - 1)]?.id ?? null)
+  }
+
+  return (
+    <div className="flex h-full flex-col gap-3 overflow-y-auto pr-0.5 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-line pb-2.5">
+        <span className="kiln-chip acc">Moment · {mod.name}</span>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onBackToModule}
+            title={`Quay lại thuộc tính ${mod.name}`}
+            className="kiln-btn h-6 px-2 text-[10.5px] text-[#C2B3A4]"
+          >
+            <ArrowLeft size={11} />
+            Module
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            title="Xoá moment này"
+            aria-label="Xoá moment"
+            className="cursor-pointer rounded-full p-1 text-muted hover:bg-danger/20 hover:text-danger"
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-2 border-b border-line pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-1.5">
+          <label className="kiln-field flex h-7 min-w-[115px] flex-1 items-center gap-1 px-2">
+            <span className="shrink-0 text-[10px] text-muted">Bắt đầu</span>
+            <input
+              type="number"
+              step="0.1"
+              min="0"
+              value={clip.startTime}
+              onChange={(e) => onUpdate({ startTime: Math.max(0, Number(e.target.value) || 0) }, `clip-start-${clip.id}`)}
+              className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none"
+            />
+            <span className="shrink-0 text-[10px] text-muted">s</span>
+          </label>
+
+          <div className="kiln-seg shrink-0">
+            {(
+              [
+                ['smooth', 'Mượt'],
+                ['linear', 'Thẳng'],
+              ] as const
+            ).map(([m, label]) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => onUpdate({ curveMode: m })}
+                className={`kiln-seg-btn h-5 px-2 text-[10px] ${(clip.curveMode ?? 'smooth') === m ? 'on' : ''}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-2 text-[10.5px]">
+          <span className="text-muted tabular-nums">Độ dài: {clip.duration.toFixed(2)}s</span>
+          {bad ? (
+            <span className="kiln-chip danger">
+              <AlertTriangle size={10} />
+              {bad.requiredCms.toFixed(0)} &gt; {bad.maxSpeedCms} cm/s
+            </span>
+          ) : (
+            <span className="kiln-chip ok">Hợp lệ (≤ {mod.maxSpeedCms} cm/s)</span>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-1.5 border-b border-line pb-3">
+        <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">Mẫu sóng</span>
+        <div className="flex flex-wrap gap-1">
+          {CURVE_PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              onClick={() => applyPreset(preset.id)}
+              title={`Áp dụng đồ thị mẫu "${preset.label}"`}
+              className="kiln-btn h-6 gap-1 px-2 text-[10.5px] text-[#C2B3A4] hover:text-fg"
+            >
+              <svg width="14" height="9" viewBox="0 0 16 10" aria-hidden="true" className="shrink-0">
+                <polyline
+                  fill="none"
+                  stroke="#FFB26B"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  points={preset.points.map(([tx, hy]) => `${(1 + tx * 14).toFixed(1)},${(8.5 - hy * 7).toFixed(1)}`).join(' ')}
+                />
+              </svg>
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-1.5">
+          <span className="text-[11px] font-semibold tracking-wide text-[#FFB26B] uppercase">
+            Các điểm ({sorted.length})
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              const { keyframes, newKeyId } = insertClipKeyframe(clip, mod.minHeight, mod.maxHeight)
+              onUpdate({ keyframes })
+              onSelectKey(newKeyId)
+            }}
+            title="Thêm điểm mới vào moment"
+            className="kiln-btn kiln-btn-cue h-6 px-2.5 text-[10.5px]"
+          >
+            <Plus size={11} />
+            Thêm điểm
+          </button>
+        </div>
+
+        <div className="space-y-1.5">
+          {sorted.map((kf, idx) => {
+            const active = selectedKeyId === kf.id
+            const timelineTime = Number((clip.startTime + kf.offset).toFixed(2))
+            const pct = heightToPercent(kf.height, mod)
+            const prevTimelineTime = idx > 0 ? Number((clip.startTime + sorted[idx - 1].offset).toFixed(2)) : bounds.minStart
+            const nextTimelineTime =
+              idx < sorted.length - 1
+                ? Number((clip.startTime + sorted[idx + 1].offset).toFixed(2))
+                : bounds.maxEnd
+
+            return (
+              <div
+                key={kf.id}
+                onClick={() => onSelectKey(kf.id)}
+                className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 transition ${
+                  active
+                    ? 'bg-brand/15 shadow-[inset_0_0_0_1.5px_var(--acc)]'
+                    : 'bg-black/30 shadow-[inset_0_0_0_1px_var(--line)]'
+                }`}
+              >
+                <span className="w-6 shrink-0 text-[10.5px] font-semibold text-info">K{idx + 1}</span>
+                <label className="flex min-w-0 flex-1 items-center gap-0.5">
+                  <input
+                    type="number"
+                    step="0.1"
+                    min={bounds.minStart}
+                    max={Number.isFinite(bounds.maxEnd) ? bounds.maxEnd : undefined}
+                    title="Thời gian của điểm trên Timeline (s)"
+                    value={draftTime?.id === kf.id ? draftTime.raw : timelineTime}
+                    onFocus={() => setDraftTime({ id: kf.id, raw: String(timelineTime) })}
+                    onChange={(e) => {
+                      const raw = e.target.value
+                      setDraftTime({ id: kf.id, raw })
+                      if (!raw.trim() || raw.endsWith('.')) return
+                      const num = Number(raw)
+                      if (Number.isFinite(num) && num >= prevTimelineTime && num <= nextTimelineTime) {
+                        commitTimelineTime(kf.id, num)
+                      }
+                    }}
+                    onBlur={() => {
+                      if (draftTime?.id === kf.id) {
+                        const num = Number(draftTime.raw)
+                        if (draftTime.raw.trim() && Number.isFinite(num)) commitTimelineTime(kf.id, num)
+                        setDraftTime(null)
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                    }}
+                    className="w-full min-w-0 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none"
+                  />
+                  <span className="text-[10px] text-muted">s</span>
+                </label>
+                <span className="text-muted">·</span>
+                <label className="flex min-w-0 flex-1 items-center gap-0.5">
+                  <input
+                    type="number"
+                    step="1"
+                    min="0"
+                    max="100"
+                    title="Độ cao theo phần trăm hành trình (0–100%)"
+                    value={draftPct?.id === kf.id ? draftPct.raw : pct}
+                    onFocus={() => setDraftPct({ id: kf.id, raw: String(pct) })}
+                    onChange={(e) => {
+                      const raw = e.target.value
+                      setDraftPct({ id: kf.id, raw })
+                      if (!raw.trim() || raw.endsWith('.')) return
+                      const num = Number(raw)
+                      if (Number.isFinite(num)) commitPercent(kf.id, num)
+                    }}
+                    onBlur={() => {
+                      if (draftPct?.id === kf.id) {
+                        const num = Number(draftPct.raw)
+                        if (draftPct.raw.trim() && Number.isFinite(num)) commitPercent(kf.id, num)
+                        setDraftPct(null)
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                    }}
+                    className="w-full min-w-0 bg-transparent text-right text-[11px] text-[#FFB26B] tabular-nums outline-none"
+                  />
+                  <span className="text-[10px] text-muted">%</span>
+                </label>
+                {sorted.length > 2 && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const nextKfs = removeClipKeyframe(clip, kf.id)
+                      if (nextKfs) onUpdate({ keyframes: nextKfs })
+                    }}
+                    title="Xoá điểm"
+                    className="cursor-pointer px-0.5 text-muted hover:text-danger"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function PropertiesPanel() {
   const {
     project,
     selectedIds,
     selectedLayerId,
+    selectedClipId,
+    selectedKeyId,
     snapshot,
     updateLayer,
     toggleLayerVisibility,
@@ -90,9 +396,15 @@ export function PropertiesPanel() {
     updateModule,
     setModulesDmxLoop,
     setAddressMode,
+    selectTimelineClip,
+    selectTimelineKey,
+    updateClip,
+    deleteClip,
     notify,
   } = useAppStore()
 
+  const activeClip = selectedClipId ? (project.clips ?? []).find((c) => c.id === selectedClipId) ?? null : null
+  const activeClipMod = activeClip ? project.modules.find((m) => m.id === activeClip.moduleId) ?? null : null
   const activeLayer = selectedLayerId ? project.layers.find((l) => l.id === selectedLayerId) ?? null : null
   const activeLayerIdx = activeLayer ? project.layers.findIndex((l) => l.id === activeLayer.id) : 0
 
@@ -109,6 +421,22 @@ export function PropertiesPanel() {
       setAddrError(null)
     }
   }, [single?.id, single?.startAddress]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Trang thuộc tính riêng cho Moment đang chọn trên Timeline
+  if (activeClip && activeClipMod) {
+    return (
+      <MomentEditor
+        clip={activeClip}
+        allClips={project.clips ?? []}
+        mod={activeClipMod}
+        selectedKeyId={selectedKeyId}
+        onSelectKey={selectTimelineKey}
+        onBackToModule={() => selectTimelineClip(null)}
+        onUpdate={(patch, coalesceKey, syncEdge) => updateClip(activeClip.id, patch, coalesceKey, syncEdge)}
+        onDelete={() => deleteClip(activeClip.id)}
+      />
+    )
+  }
 
   // Đang chọn Layer
   if (activeLayer) {
@@ -290,13 +618,31 @@ export function PropertiesPanel() {
 
   const loopSharedAddr = layerLoopAddress(project.modules, single.layerId, single.id)
   const [loopChStart, loopChEnd] = addressRange(single.dmxLoop ? single.startAddress : loopSharedAddr)
+  const modLayerIdx = project.layers.findIndex((l) => l.id === single.layerId)
+  const modLayer = modLayerIdx >= 0 ? project.layers[modLayerIdx] : null
+  const baseX = computeModuleBasePositions(project.layers, project.modules).get(single.id) ?? 0
+  const worldPos = modLayer ? getModuleWorldPosition(modLayer, modLayerIdx, single, baseX) : modTf.position
+  const displayModTf: Transform3D = { ...modTf, position: worldPos }
 
   return (
     <div className="flex h-full flex-col gap-2.5 overflow-y-auto pr-0.5 text-xs">
       <TransformEditor
-        tf={modTf}
+        tf={displayModTf}
         lockY
-        onChange={(nextTf) => updateModule(single.id, { transform: nextTf }, `mod-tf-${single.id}`)}
+        onChange={(nextWorldTf) => {
+          const nextPos = modLayer
+            ? worldPositionToModuleOffset(modLayer, modLayerIdx, baseX, [
+                nextWorldTf.position[0],
+                worldPos[1],
+                nextWorldTf.position[2],
+              ])
+            : modTf.position
+          updateModule(
+            single.id,
+            { transform: { ...nextWorldTf, position: nextPos } },
+            `mod-tf-${single.id}`,
+          )
+        }}
         onReset={() => updateModule(single.id, { transform: defaultModuleTransform() })}
       />
 

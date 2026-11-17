@@ -2,9 +2,7 @@ import { useEffect, useState } from 'react'
 import { motion } from 'motion/react'
 import {
   ArrowDown,
-  ArrowDownToLine,
   ArrowUp,
-  ArrowUpToLine,
   Clock,
   Edit3,
   LayoutGrid,
@@ -49,7 +47,7 @@ function ActionBtn({
       whileHover={{ y: -1 }}
       whileTap={{ scale: 0.94 }}
       transition={{ type: 'spring', stiffness: 520, damping: 28 }}
-      className={`h-10 px-3.5 text-xs ${cls}`}
+      className={`h-12 px-4 text-xs ${cls}`}
     >
       <Icon size={15} aria-hidden />
       <span>{label}</span>
@@ -428,12 +426,20 @@ function ModeButtons() {
 }
 
 function ModeManual() {
-  const { selectedIds, sendCommand } = useAppStore()
+  const { selectedIds, sendCommand, notify } = useAppStore()
   const [unit, setUnit] = useState<SpeedUnit>('cms')
   const [val, setVal] = useState(47)
-  const [targetM, setTargetM] = useState(0.5)
 
   const speedSpec = { unit, value: Math.max(0.1, val) }
+
+  const runManual = (cmd: { type: 'move'; target: 'min' | 'max' } | { type: 'stop' }) => {
+    if (selectedIds.length === 0) {
+      notify('Chưa chọn module nào để điều khiển', 'warn')
+      return
+    }
+    if (cmd.type === 'stop') void sendCommand({ type: 'stop', ids: selectedIds })
+    else void sendCommand({ type: 'move', ids: selectedIds, target: cmd.target, speed: speedSpec })
+  }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -447,7 +453,7 @@ function ModeManual() {
   }, [sendCommand])
 
   return (
-    <div className="flex h-full flex-col justify-between gap-2 text-xs">
+    <div className="flex h-full flex-col gap-2 text-xs">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-muted">
           Áp dụng cho <strong className="text-[#FFB26B]">{selectedIds.length}</strong> module đang chọn · Phím{' '}
@@ -489,60 +495,30 @@ function ModeManual() {
         </div>
       </div>
 
-      <div className="grid grid-cols-5 gap-2">
-        <ActionBtn
-          icon={ArrowUpToLine}
-          label="Về 0"
-          hint="Thu màn hoàn toàn về vị trí 0 m"
-          onClick={() => sendCommand({ type: 'move', ids: selectedIds, target: 'zero', speed: speedSpec })}
-        />
-        <ActionBtn
-          icon={ArrowUp}
-          label="Lên (Min)"
-          hint="Di chuyển lên giới hạn Min đã cài"
-          variant="info"
-          onClick={() => sendCommand({ type: 'move', ids: selectedIds, target: 'min', speed: speedSpec })}
-        />
-        <ActionBtn
-          icon={Square}
-          label="Dừng"
-          hint="Dừng ngay và giữ nguyên vị trí hiện tại (Space)"
-          variant="danger"
-          onClick={() => sendCommand({ type: 'stop', ids: selectedIds })}
-        />
-        <ActionBtn
-          icon={ArrowDown}
-          label="Xuống (Max)"
-          hint="Di chuyển xuống giới hạn Max đã cài"
-          variant="brand"
-          onClick={() => sendCommand({ type: 'move', ids: selectedIds, target: 'max', speed: speedSpec })}
-        />
-        <ActionBtn
-          icon={ArrowDownToLine}
-          label="Dài Max"
-          hint="Thả hết chiều dài tối đa của màn"
-          onClick={() => sendCommand({ type: 'move', ids: selectedIds, target: 'length', speed: speedSpec })}
-        />
-      </div>
-
-      <div className="flex items-center gap-2 rounded-2xl bg-black/25 px-3 py-1.5 shadow-[inset_0_0_0_1px_var(--line)]">
-        <span className="text-[#C2B3A4]">Đặt nhanh độ cao (m):</span>
-        <input
-          type="number"
-          step="0.1"
-          min="0"
-          value={targetM}
-          onChange={(e) => setTargetM(Number(e.target.value) || 0)}
-          className="kiln-field h-7 w-20 px-2.5 text-xs tabular-nums"
-        />
-        <motion.button
-          type="button"
-          whileTap={{ scale: 0.94 }}
-          onClick={() => sendCommand({ type: 'move', ids: selectedIds, target: targetM, speed: speedSpec })}
-          className="kiln-btn kiln-btn-primary h-7 px-3.5 text-xs"
-        >
-          Chạy tới {targetM}m
-        </motion.button>
+      <div className="flex flex-1 items-center">
+        <div className="grid w-full grid-cols-3 gap-3">
+          <ActionBtn
+            icon={ArrowUp}
+            label="Lên"
+            hint="Di chuyển lên giới hạn Min đã cài"
+            variant="info"
+            onClick={() => runManual({ type: 'move', target: 'min' })}
+          />
+          <ActionBtn
+            icon={Square}
+            label="Dừng"
+            hint="Dừng ngay và giữ nguyên vị trí hiện tại (Space)"
+            variant="danger"
+            onClick={() => runManual({ type: 'stop' })}
+          />
+          <ActionBtn
+            icon={ArrowDown}
+            label="Xuống"
+            hint="Di chuyển xuống giới hạn Max đã cài"
+            variant="brand"
+            onClick={() => runManual({ type: 'move', target: 'max' })}
+          />
+        </div>
       </div>
     </div>
   )
@@ -557,33 +533,35 @@ export function ControlDeck() {
     { id: 'buttons' as const, label: 'Custom', hint: 'Nút cue tuỳ chỉnh nhanh', icon: LayoutGrid },
   ]
 
+  const modeTabs = (
+    <div className="kiln-seg">
+      {tabs.map((t) => {
+        const Icon = t.icon
+        const active = activeTab === t.id
+        return (
+          <button
+            key={t.id}
+            type="button"
+            title={t.hint}
+            onClick={() => setActiveTab(t.id)}
+            className={`kiln-seg-btn ${active ? 'on' : ''}`}
+          >
+            <Icon size={13} aria-hidden />
+            {t.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+
   return (
     <div className="flex h-full flex-col gap-2">
-      <div className="flex items-center">
-        <div className="kiln-seg">
-          {tabs.map((t) => {
-            const Icon = t.icon
-            const active = activeTab === t.id
-            return (
-              <button
-                key={t.id}
-                type="button"
-                title={t.hint}
-                onClick={() => setActiveTab(t.id)}
-                className={`kiln-seg-btn ${active ? 'on' : ''}`}
-              >
-                <Icon size={13} aria-hidden />
-                {t.label}
-              </button>
-            )
-          })}
-        </div>
-      </div>
+      {activeTab !== 'timeline' && <div className="flex items-center">{modeTabs}</div>}
 
       <div className="min-h-0 flex-1">
         {activeTab === 'buttons' && <ModeButtons />}
         {activeTab === 'manual' && <ModeManual />}
-        {activeTab === 'timeline' && <TimelineEditor />}
+        {activeTab === 'timeline' && <TimelineEditor modeTabs={modeTabs} />}
       </div>
     </div>
   )

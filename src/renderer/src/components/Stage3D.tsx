@@ -6,6 +6,7 @@ import { Box, Eye, Grid, Maximize2, RotateCcw, SlidersHorizontal, Video } from '
 import type { SnapshotDto } from '@shared/api'
 import { CH, addressRange } from '@shared/dmx'
 import { defaultLayerTransform, defaultModuleTransform } from '@shared/preset'
+import { DEG2RAD, computeModuleBasePositions } from '@shared/stage3d'
 import type { Layer, ModuleCfg } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 
@@ -14,6 +15,15 @@ type CameraPreset = 'perspective' | 'front' | 'side' | 'top'
 interface PositionedModule {
   mod: ModuleCfg
   baseX: number
+}
+
+interface LayerVisuals {
+  group: THREE.Group
+  beam: THREE.Mesh
+  leftPillar: THREE.Mesh
+  rightPillar: THREE.Mesh
+  leftBase: THREE.Mesh
+  rightBase: THREE.Mesh
 }
 
 interface ModuleMeshVisuals {
@@ -33,8 +43,65 @@ interface ModuleMeshVisuals {
 }
 
 const RIGGING_TRUSS_HEIGHT = 3.6
-const MODULE_GAP = 0.08
-const DEG2RAD = Math.PI / 180
+const TRUSS_BEAM_Y = 0.16
+const TRUSS_END_MARGIN = 0.72
+const MIN_TRUSS_SPAN = 3.2
+const BASE_FLOOR_MIN_X = -8.25
+const BASE_FLOOR_MAX_X = 8.25
+const BASE_FLOOR_MIN_Z = -3.75
+const BASE_FLOOR_MAX_Z = 3.75
+const FLOOR_MARGIN = 1.2
+
+function buildFloorGridGeometry(minX: number, maxX: number, minZ: number, maxZ: number): THREE.BufferGeometry {
+  const x0 = Math.floor(minX)
+  const x1 = Math.ceil(maxX)
+  const z0 = Math.floor(minZ)
+  const z1 = Math.ceil(maxZ)
+  const positions: number[] = []
+  const colors: number[] = []
+  const majorColor = new THREE.Color(0x3b2a1e)
+  const minorColor = new THREE.Color(0x1b130f)
+
+  const pushLine = (ax: number, az: number, bx: number, bz: number, isMajor: boolean) => {
+    positions.push(ax, 0.005, az, bx, 0.005, bz)
+    const c = isMajor ? majorColor : minorColor
+    colors.push(c.r, c.g, c.b, c.r, c.g, c.b)
+  }
+
+  for (let x = x0; x <= x1; x += 1) {
+    pushLine(x, z0, x, z1, x === 0 || x % 4 === 0)
+  }
+  for (let z = z0; z <= z1; z += 1) {
+    pushLine(x0, z, x1, z, z === 0 || z % 4 === 0)
+  }
+
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+  return geo
+}
+
+function computeLayerSpan(items: PositionedModule[]): { minX: number; maxX: number } {
+  if (items.length === 0) return { minX: -MIN_TRUSS_SPAN / 2, maxX: MIN_TRUSS_SPAN / 2 }
+  let minEdge = Number.POSITIVE_INFINITY
+  let maxEdge = Number.NEGATIVE_INFINITY
+  for (const { mod, baseX } of items) {
+    const mtf = mod.transform ?? defaultModuleTransform()
+    const halfW = (Math.max(0.3, mod.width) * Math.abs(mtf.scale[0])) / 2
+    const cx = baseX + mtf.position[0]
+    minEdge = Math.min(minEdge, cx - halfW)
+    maxEdge = Math.max(maxEdge, cx + halfW)
+  }
+  let minX = minEdge - TRUSS_END_MARGIN
+  let maxX = maxEdge + TRUSS_END_MARGIN
+  const span = maxX - minX
+  if (span < MIN_TRUSS_SPAN) {
+    const pad = (MIN_TRUSS_SPAN - span) / 2
+    minX -= pad
+    maxX += pad
+  }
+  return { minX, maxX }
+}
 
 export function Stage3D() {
   const { project, selectedIds, snapshot, selectModule } = useAppStore()
@@ -50,18 +117,8 @@ export function Stage3D() {
   } | null>(null)
 
   const positioned = useMemo<PositionedModule[]>(() => {
-    const out: PositionedModule[] = []
-    project.layers.forEach((layer) => {
-      const mods = project.modules.filter((m) => m.layerId === layer.id)
-      const totalWidth = mods.reduce((acc, m) => acc + m.width, 0) + Math.max(0, mods.length - 1) * MODULE_GAP
-      let cursor = -totalWidth / 2
-      mods.forEach((mod) => {
-        const baseX = cursor + mod.width / 2
-        cursor += mod.width + MODULE_GAP
-        out.push({ mod, baseX })
-      })
-    })
-    return out
+    const baseMap = computeModuleBasePositions(project.layers, project.modules)
+    return project.modules.map((mod) => ({ mod, baseX: baseMap.get(mod.id) ?? 0 }))
   }, [project.layers, project.modules])
 
   const positionedRef = useRef<PositionedModule[]>(positioned)
@@ -197,17 +254,18 @@ export function Stage3D() {
     warmStageSpot.position.set(0, 4.5, 2.5)
     scene.add(warmStageSpot)
 
-    // Sàn sân khấu & lưới ấm theo nền Kiln
+    // Sàn sân khấu & lưới ấm theo nền Kiln (tự động mở rộng theo toàn bộ Layer & chân cột)
     const stageDeck = new THREE.Mesh(
-      new THREE.BoxGeometry(16.5, 0.14, 7.5),
+      new THREE.BoxGeometry(1, 0.14, 1),
       new THREE.MeshStandardMaterial({ color: 0x130d0a, roughness: 0.78, metalness: 0.18 }),
     )
+    stageDeck.scale.set(BASE_FLOOR_MAX_X - BASE_FLOOR_MIN_X, 1, BASE_FLOOR_MAX_Z - BASE_FLOOR_MIN_Z)
     stageDeck.position.set(0, -0.07, 0)
     stageDeck.receiveShadow = true
     scene.add(stageDeck)
 
     const stageTrim = new THREE.Mesh(
-      new THREE.BoxGeometry(16.52, 0.03, 0.06),
+      new THREE.BoxGeometry(1, 0.03, 0.06),
       new THREE.MeshStandardMaterial({
         color: 0xf7842e,
         roughness: 0.35,
@@ -216,12 +274,17 @@ export function Stage3D() {
         emissiveIntensity: 0.25,
       }),
     )
-    stageTrim.position.set(0, 0.01, 3.73)
+    stageTrim.scale.set(BASE_FLOOR_MAX_X - BASE_FLOOR_MIN_X + 0.02, 1, 1)
+    stageTrim.position.set(0, 0.01, BASE_FLOOR_MAX_Z - 0.02)
     scene.add(stageTrim)
 
-    const gridHelper = new THREE.GridHelper(16, 16, 0x3b2a1e, 0x1b130f)
-    gridHelper.position.y = 0.005
-    scene.add(gridHelper)
+    let lastGridBounds = ''
+    const floorGridMat = new THREE.LineBasicMaterial({ vertexColors: true })
+    const floorGrid = new THREE.LineSegments(
+      buildFloorGridGeometry(BASE_FLOOR_MIN_X, BASE_FLOOR_MAX_X, BASE_FLOOR_MIN_Z, BASE_FLOOR_MAX_Z),
+      floorGridMat,
+    )
+    scene.add(floorGrid)
 
     // Texture dệt lưới màn gauze
     const createGauzeTexture = () => {
@@ -273,18 +336,12 @@ export function Stage3D() {
     scene.add(rulerGroup)
     rulerGroupRef.current = rulerGroup
 
-    // Trụ truss hai bên sân khấu
-    const towerPillarGeo = new THREE.CylinderGeometry(0.08, 0.08, RIGGING_TRUSS_HEIGHT + 0.3, 12)
+    // Vật liệu & hình khối cơ sở cho trụ chân cột và dầm truss theo từng Layer
+    const towerPillarGeo = new THREE.CylinderGeometry(0.08, 0.08, 1, 12)
+    const towerBaseGeo = new THREE.CylinderGeometry(0.22, 0.24, 0.04, 16)
     const towerMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.85, roughness: 0.28 })
-    ;[-7.6, 7.6].forEach((xPos) => {
-      ;[1.2, -1.4].forEach((zPos) => {
-        const pillar = new THREE.Mesh(towerPillarGeo, towerMat)
-        pillar.position.set(xPos, (RIGGING_TRUSS_HEIGHT + 0.3) / 2, zPos)
-        scene.add(pillar)
-      })
-    })
 
-    const overheadTrussGeo = new THREE.BoxGeometry(15.4, 0.18, 0.18)
+    const overheadTrussGeo = new THREE.BoxGeometry(1, 0.18, 0.18)
     const overheadTrussMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.88, roughness: 0.22 })
 
     const winchHousingMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.48, metalness: 0.55 })
@@ -293,21 +350,31 @@ export function Stage3D() {
     const bottomWeightBarMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.35, metalness: 0.8 })
 
     // Phân cấp 3D: Scene -> LayerGroup (dầm truss + transform Layer) -> Module rootGroup (neo cạnh trên ở y=0)
-    const layerGroupsMap = new Map<string, THREE.Group>()
+    const layerGroupsMap = new Map<string, LayerVisuals>()
     const visualsMap = new Map<string, ModuleMeshVisuals>()
     const raycastTargets: THREE.Object3D[] = []
+    const localAnchorLeft = new THREE.Vector3()
+    const localAnchorRight = new THREE.Vector3()
 
-    const getOrCreateLayerGroup = (layerId: string): THREE.Group => {
-      let g = layerGroupsMap.get(layerId)
-      if (!g) {
-        g = new THREE.Group()
+    const getOrCreateLayerVisuals = (layerId: string): LayerVisuals => {
+      let lv = layerGroupsMap.get(layerId)
+      if (!lv) {
+        const group = new THREE.Group()
         const beam = new THREE.Mesh(overheadTrussGeo, overheadTrussMat)
-        beam.position.set(0, 0.16, 0) // dính ngay trên điểm treo tời y=0
-        g.add(beam)
-        scene.add(g)
-        layerGroupsMap.set(layerId, g)
+        beam.position.set(0, TRUSS_BEAM_Y, 0) // dính ngay trên điểm treo tời y=0
+        group.add(beam)
+        scene.add(group)
+
+        const leftPillar = new THREE.Mesh(towerPillarGeo, towerMat)
+        const rightPillar = new THREE.Mesh(towerPillarGeo, towerMat)
+        const leftBase = new THREE.Mesh(towerBaseGeo, towerMat)
+        const rightBase = new THREE.Mesh(towerBaseGeo, towerMat)
+        scene.add(leftPillar, rightPillar, leftBase, rightBase)
+
+        lv = { group, beam, leftPillar, rightPillar, leftBase, rightBase }
+        layerGroupsMap.set(layerId, lv)
       }
-      return g
+      return lv
     }
 
     const createModuleVisual = (mod: ModuleCfg): ModuleMeshVisuals => {
@@ -515,22 +582,88 @@ export function Stage3D() {
       const snap = snapshotRef.current
       const isLocked = snap?.locked ?? true
 
-      // Đồng bộ LayerGroups + transform 3D & visible
+      // Đồng bộ LayerGroups + transform 3D, dầm truss & chân cột theo thông số Layer/Module
       const activeLayerIds = new Set(currentLayers.map((l) => l.id))
-      for (const [id, lg] of layerGroupsMap.entries()) {
+      for (const [id, lv] of layerGroupsMap.entries()) {
         if (!activeLayerIds.has(id)) {
-          scene.remove(lg)
+          scene.remove(lv.group, lv.leftPillar, lv.rightPillar, lv.leftBase, lv.rightBase)
           layerGroupsMap.delete(id)
         }
       }
+
+      const itemsByLayer = new Map<string, PositionedModule[]>()
+      for (const item of currentItems) {
+        const list = itemsByLayer.get(item.mod.layerId) ?? []
+        list.push(item)
+        itemsByLayer.set(item.mod.layerId, list)
+      }
+
+      let pillarMinX = Number.POSITIVE_INFINITY
+      let pillarMaxX = Number.NEGATIVE_INFINITY
+      let pillarMinZ = Number.POSITIVE_INFINITY
+      let pillarMaxZ = Number.NEGATIVE_INFINITY
+
       currentLayers.forEach((layer, idx) => {
-        const lg = getOrCreateLayerGroup(layer.id)
+        const lv = getOrCreateLayerVisuals(layer.id)
+        const lg = lv.group
         const tf = layer.transform ?? defaultLayerTransform(idx)
-        lg.visible = layer.visible ?? true
+        const visible = layer.visible ?? true
+        lg.visible = visible
+        lv.leftPillar.visible = visible
+        lv.rightPillar.visible = visible
+        lv.leftBase.visible = visible
+        lv.rightBase.visible = visible
+
         lg.position.set(tf.position[0], tf.position[1], tf.position[2])
         lg.rotation.set(tf.rotation[0] * DEG2RAD, tf.rotation[1] * DEG2RAD, tf.rotation[2] * DEG2RAD)
         lg.scale.set(tf.scale[0], tf.scale[1], tf.scale[2])
+
+        const { minX, maxX } = computeLayerSpan(itemsByLayer.get(layer.id) ?? [])
+        const spanWidth = maxX - minX
+        const centerX = (minX + maxX) / 2
+        lv.beam.scale.set(spanWidth + 0.24, 1, 1)
+        lv.beam.position.set(centerX, TRUSS_BEAM_Y, 0)
+
+        lg.updateMatrixWorld(true)
+        localAnchorLeft.set(minX, TRUSS_BEAM_Y, 0).applyMatrix4(lg.matrixWorld)
+        localAnchorRight.set(maxX, TRUSS_BEAM_Y, 0).applyMatrix4(lg.matrixWorld)
+
+        const hLeft = Math.max(0.2, localAnchorLeft.y + 0.14)
+        lv.leftPillar.scale.set(1, hLeft, 1)
+        lv.leftPillar.position.set(localAnchorLeft.x, hLeft / 2, localAnchorLeft.z)
+        lv.leftBase.position.set(localAnchorLeft.x, 0.02, localAnchorLeft.z)
+
+        const hRight = Math.max(0.2, localAnchorRight.y + 0.14)
+        lv.rightPillar.scale.set(1, hRight, 1)
+        lv.rightPillar.position.set(localAnchorRight.x, hRight / 2, localAnchorRight.z)
+        lv.rightBase.position.set(localAnchorRight.x, 0.02, localAnchorRight.z)
+
+        pillarMinX = Math.min(pillarMinX, localAnchorLeft.x, localAnchorRight.x)
+        pillarMaxX = Math.max(pillarMaxX, localAnchorLeft.x, localAnchorRight.x)
+        pillarMinZ = Math.min(pillarMinZ, localAnchorLeft.z, localAnchorRight.z)
+        pillarMaxZ = Math.max(pillarMaxZ, localAnchorLeft.z, localAnchorRight.z)
       })
+
+      const floorMinX = Number.isFinite(pillarMinX) ? Math.min(BASE_FLOOR_MIN_X, pillarMinX - FLOOR_MARGIN) : BASE_FLOOR_MIN_X
+      const floorMaxX = Number.isFinite(pillarMaxX) ? Math.max(BASE_FLOOR_MAX_X, pillarMaxX + FLOOR_MARGIN) : BASE_FLOOR_MAX_X
+      const floorMinZ = Number.isFinite(pillarMinZ) ? Math.min(BASE_FLOOR_MIN_Z, pillarMinZ - FLOOR_MARGIN) : BASE_FLOOR_MIN_Z
+      const floorMaxZ = Number.isFinite(pillarMaxZ) ? Math.max(BASE_FLOOR_MAX_Z, pillarMaxZ + FLOOR_MARGIN) : BASE_FLOOR_MAX_Z
+      const floorW = floorMaxX - floorMinX
+      const floorD = floorMaxZ - floorMinZ
+      const floorCX = (floorMinX + floorMaxX) / 2
+      const floorCZ = (floorMinZ + floorMaxZ) / 2
+      stageDeck.scale.set(floorW, 1, floorD)
+      stageDeck.position.set(floorCX, -0.07, floorCZ)
+      stageTrim.scale.set(floorW + 0.02, 1, 1)
+      stageTrim.position.set(floorCX, 0.01, floorMaxZ - 0.02)
+
+      const gridKey = `${Math.floor(floorMinX)},${Math.ceil(floorMaxX)},${Math.floor(floorMinZ)},${Math.ceil(floorMaxZ)}`
+      if (gridKey !== lastGridBounds) {
+        lastGridBounds = gridKey
+        const nextGeo = buildFloorGridGeometry(floorMinX, floorMaxX, floorMinZ, floorMaxZ)
+        floorGrid.geometry.dispose()
+        floorGrid.geometry = nextGeo
+      }
 
       // Dọn module bị xoá
       const activeIds = new Set(currentItems.map((p) => p.mod.id))
@@ -546,7 +679,7 @@ export function Stage3D() {
       const layerVisMap = new Map(currentLayers.map((l) => [l.id, l.visible ?? true]))
 
       for (const { mod, baseX } of currentItems) {
-        const lg = getOrCreateLayerGroup(mod.layerId)
+        const lg = getOrCreateLayerVisuals(mod.layerId).group
         let vis = visualsMap.get(mod.id)
         if (!vis || Math.abs(vis.lastWidth - mod.width) > 0.01 || Math.abs(vis.lastLength - mod.length) > 0.01) {
           if (vis) {
@@ -671,6 +804,8 @@ export function Stage3D() {
       renderer.domElement.removeEventListener('pointerdown', handlePointerDown)
       renderer.domElement.removeEventListener('pointerup', handlePointerUp)
       renderer.domElement.removeEventListener('pointermove', handlePointerMove)
+      floorGrid.geometry.dispose()
+      floorGridMat.dispose()
       controls.dispose()
       renderer.dispose()
     }

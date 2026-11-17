@@ -27,7 +27,6 @@ import { getBridge } from '../services/bridge'
 export type ControlTab = 'buttons' | 'manual' | 'timeline'
 export type FocusScope = 'tree' | 'buttons' | 'timeline'
 export type SettingsTab = 'network' | 'safety' | 'ltc' | 'project'
-export type SettingsScope = 'all' | 'dmx' | 'timecode'
 
 export interface ToastMsg {
   id: number
@@ -50,6 +49,7 @@ interface AppState {
   selectedLayerId: string | null
   selectedButtonId: string | null
   selectedClipId: string | null
+  selectedKeyId: string | null
   selectedTimelineLayerId: string | null
 
   copiedModules: ModuleCfg[]
@@ -60,14 +60,13 @@ interface AppState {
   activeTab: ControlTab
   settingsOpen: boolean
   settingsTab: SettingsTab
-  settingsScope: SettingsScope
   toast: ToastMsg | null
 
   init: () => Promise<void>
   notify: (text: string, kind?: ToastMsg['kind']) => void
   setActiveTab: (tab: ControlTab) => void
   setFocusScope: (scope: FocusScope) => void
-  setSettingsOpen: (open: boolean, tab?: SettingsTab, scope?: SettingsScope) => void
+  setSettingsOpen: (open: boolean, tab?: SettingsTab) => void
 
   undo: () => void
   redo: () => void
@@ -77,7 +76,7 @@ interface AppState {
   toggleLayerSync: (layerId: string) => void
   toggleModuleVisibility: (moduleId: string) => void
   setModulesDmxLoop: (ids: string[], enabled: boolean) => void
-  addLayer: (name: string) => string | null
+  addLayer: (name: string, opts?: { id?: string }) => string | null
   updateLayer: (layerId: string, patch: Partial<Layer>, coalesceKey?: string) => void
   renameLayer: (layerId: string, name: string) => void
   removeLayer: (layerId: string) => void
@@ -87,9 +86,13 @@ interface AppState {
   selectAll: () => void
   selectButton: (id: string | null) => void
   selectTimelineClip: (clipId: string | null) => void
+  selectTimelineKey: (keyId: string | null) => void
   selectTimelineLayer: (layerId: string | null) => void
 
-  addModule: (layerId: string, opts: { name: string; length: number; width: number; startAddress?: number }) => string | null
+  addModule: (
+    layerId: string,
+    opts: { id?: string; name: string; length: number; width: number; startAddress?: number; insertAfterId?: string },
+  ) => string | null
   removeModule: (id: string) => void
   removeModules: (ids: string[]) => void
   duplicateModule: (id: string) => void
@@ -222,6 +225,7 @@ export const useAppStore = create<AppState>((set, get) => {
     selectedLayerId: null,
     selectedButtonId: null,
     selectedClipId: null,
+    selectedKeyId: null,
     selectedTimelineLayerId: null,
 
     copiedModules: [],
@@ -232,7 +236,6 @@ export const useAppStore = create<AppState>((set, get) => {
     activeTab: 'timeline',
     settingsOpen: false,
     settingsTab: 'network',
-    settingsScope: 'all',
     toast: null,
 
     notify(text, kind = 'info') {
@@ -271,11 +274,10 @@ export const useAppStore = create<AppState>((set, get) => {
         focusScope: activeTab === 'buttons' ? 'buttons' : activeTab === 'timeline' ? 'timeline' : 'tree',
       }),
     setFocusScope: (focusScope) => set({ focusScope }),
-    setSettingsOpen: (settingsOpen, tab, scope) =>
+    setSettingsOpen: (settingsOpen, tab) =>
       set((s) => ({
         settingsOpen,
-        settingsScope: scope ?? s.settingsScope,
-        settingsTab: tab ?? (scope === 'timecode' ? 'ltc' : scope === 'dmx' ? 'network' : s.settingsTab),
+        settingsTab: tab ?? s.settingsTab,
       })),
 
     undo() {
@@ -353,12 +355,12 @@ export const useAppStore = create<AppState>((set, get) => {
       applyProject(next)
     },
 
-    addLayer(name) {
+    addLayer(name, opts) {
       const trimmed = name.trim()
       if (!trimmed) return 'Nhập tên layer mới'
       const { project, collapsedLayers } = get()
       const layer: Layer = {
-        id: `layer-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+        id: opts?.id ?? `layer-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
         name: trimmed,
         visible: true,
         transform: defaultLayerTransform(project.layers.length),
@@ -368,6 +370,10 @@ export const useAppStore = create<AppState>((set, get) => {
         extra: {
           collapsedLayers: { ...collapsedLayers, [layer.id]: false },
           selectedLayerId: layer.id,
+          selectedIds: [],
+          selectedClipId: null,
+          selectedKeyId: null,
+          selectedTimelineLayerId: null,
           focusScope: 'tree',
         },
       })
@@ -386,6 +392,8 @@ export const useAppStore = create<AppState>((set, get) => {
     renameLayer(layerId, name) {
       const trimmed = name.trim()
       if (!trimmed) return
+      const cur = get().project.layers.find((l) => l.id === layerId)
+      if (!cur || cur.name === trimmed) return
       get().updateLayer(layerId, { name: trimmed })
     },
 
@@ -422,17 +430,38 @@ export const useAppStore = create<AppState>((set, get) => {
         const b = ordered.indexOf(id)
         if (a >= 0 && b >= 0) {
           const [lo, hi] = a < b ? [a, b] : [b, a]
-          set({ selectedIds: ordered.slice(lo, hi + 1), selectedLayerId: null, focusScope: 'tree' })
+          set({
+            selectedIds: ordered.slice(lo, hi + 1),
+            selectedLayerId: null,
+            selectedClipId: null,
+            selectedKeyId: null,
+            selectedTimelineLayerId: null,
+            focusScope: 'tree',
+          })
           return
         }
       }
       if (opts?.multi) {
         const exists = selectedIds.includes(id)
         const next = exists ? selectedIds.filter((x) => x !== id) : [...selectedIds, id]
-        set({ selectedIds: next.length ? next : [id], selectedLayerId: null, focusScope: 'tree' })
+        set({
+          selectedIds: next.length ? next : [id],
+          selectedLayerId: null,
+          selectedClipId: null,
+          selectedKeyId: null,
+          selectedTimelineLayerId: null,
+          focusScope: 'tree',
+        })
         return
       }
-      set({ selectedIds: [id], selectedLayerId: null, focusScope: 'tree' })
+      set({
+        selectedIds: [id],
+        selectedLayerId: null,
+        selectedClipId: null,
+        selectedKeyId: null,
+        selectedTimelineLayerId: null,
+        focusScope: 'tree',
+      })
     },
 
     selectLayer(layerId) {
@@ -440,28 +469,49 @@ export const useAppStore = create<AppState>((set, get) => {
       set({
         selectedLayerId: layerId,
         selectedIds: ids,
+        selectedClipId: null,
+        selectedKeyId: null,
+        selectedTimelineLayerId: null,
         focusScope: 'tree',
       })
     },
 
     selectAll() {
-      set({ selectedIds: get().project.modules.map((m) => m.id), selectedLayerId: null, focusScope: 'tree' })
+      set({
+        selectedIds: get().project.modules.map((m) => m.id),
+        selectedLayerId: null,
+        selectedClipId: null,
+        selectedKeyId: null,
+        selectedTimelineLayerId: null,
+        focusScope: 'tree',
+      })
     },
 
     selectButton: (selectedButtonId) => set({ selectedButtonId, focusScope: 'buttons' }),
 
-    selectTimelineClip: (selectedClipId) =>
-      set({ selectedClipId, selectedTimelineLayerId: null, focusScope: 'timeline' }),
+    selectTimelineClip(selectedClipId) {
+      const clip = selectedClipId ? (get().project.clips ?? []).find((c) => c.id === selectedClipId) : null
+      set({
+        selectedClipId,
+        selectedKeyId: null,
+        selectedTimelineLayerId: null,
+        ...(clip ? { selectedLayerId: null, selectedIds: [clip.moduleId] } : {}),
+        focusScope: 'timeline',
+      })
+    },
+
+    selectTimelineKey: (selectedKeyId) => set({ selectedKeyId }),
 
     selectTimelineLayer(selectedTimelineLayerId) {
       if (!selectedTimelineLayerId) {
-        set({ selectedTimelineLayerId: null, selectedClipId: null, focusScope: 'timeline' })
+        set({ selectedTimelineLayerId: null, selectedClipId: null, selectedKeyId: null, focusScope: 'timeline' })
         return
       }
       const ids = get().project.modules.filter((m) => m.layerId === selectedTimelineLayerId).map((m) => m.id)
       set({
         selectedTimelineLayerId,
         selectedClipId: null,
+        selectedKeyId: null,
         selectedLayerId: selectedTimelineLayerId,
         selectedIds: ids,
         focusScope: 'timeline',
@@ -470,7 +520,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
     addModule(layerId, opts) {
       const { project, collapsedLayers } = get()
-      const id = `m-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      const id = opts.id ?? `m-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
       const addr = opts.startAddress ?? nextFree(project.modules)
       if (addr === null) return 'Hết kênh trống trong Universe 0 (tối đa 512 kênh)'
       if (project.settings.addressMode === 'manual') {
@@ -491,13 +541,21 @@ export const useAppStore = create<AppState>((set, get) => {
         maxSpeedCms: H2_MAX_SPEED_CMS,
         defaultSpeed: DEFAULT_SPEED,
       }
-      let modules = [...project.modules, mod]
+      const afterIdx = opts.insertAfterId
+        ? project.modules.findIndex((m) => m.id === opts.insertAfterId && m.layerId === layerId)
+        : -1
+      let modules = [...project.modules]
+      if (afterIdx >= 0) modules.splice(afterIdx + 1, 0, mod)
+      else modules.push(mod)
       if (project.settings.addressMode === 'auto') modules = autoAssign(project.layers, modules)
       const next = { ...project, modules }
       applyProject(next, {
         extra: {
           selectedIds: [id],
           selectedLayerId: null,
+          selectedClipId: null,
+          selectedKeyId: null,
+          selectedTimelineLayerId: null,
           collapsedLayers: { ...collapsedLayers, [layerId]: false },
         },
       })
@@ -752,7 +810,19 @@ export const useAppStore = create<AppState>((set, get) => {
       if (layer?.syncLayer) {
         clips = mirrorLayerClips(clips, project.modules, layer.id, clip.moduleId)
       }
-      applyProject({ ...project, clips }, { extra: { selectedClipId: clip.id, focusScope: 'timeline' } })
+      applyProject(
+        { ...project, clips },
+        {
+          extra: {
+            selectedClipId: clip.id,
+            selectedKeyId: null,
+            selectedTimelineLayerId: null,
+            selectedLayerId: null,
+            selectedIds: [clip.moduleId],
+            focusScope: 'timeline',
+          },
+        },
+      )
     },
 
     updateClip(clipId, patch, coalesceKey, syncEdge) {
@@ -788,7 +858,12 @@ export const useAppStore = create<AppState>((set, get) => {
       }
       applyProject(
         { ...project, clips },
-        { extra: { selectedClipId: selectedClipId === clipId ? null : selectedClipId } },
+        {
+          extra: {
+            selectedClipId: selectedClipId === clipId ? null : selectedClipId,
+            selectedKeyId: selectedClipId === clipId ? null : get().selectedKeyId,
+          },
+        },
       )
     },
 
