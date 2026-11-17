@@ -498,26 +498,26 @@ function MomentEditor({
 
       <div className="space-y-1.5 border-b border-line pb-3">
         <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">Mẫu sóng</span>
-        <div className="flex flex-wrap gap-1">
+        <div className="grid grid-cols-7 gap-1">
           {CURVE_PRESETS.map((preset) => (
             <button
               key={preset.id}
               type="button"
               onClick={() => applyPreset(preset.id)}
-              title={`Áp dụng đồ thị mẫu "${preset.label}"`}
-              className="kiln-btn h-6 gap-1 px-2 text-[10.5px] text-[#C2B3A4] hover:text-fg"
+              title={preset.label}
+              aria-label={`Mẫu sóng ${preset.label}`}
+              className="kiln-btn h-7 w-full px-0 text-[#C2B3A4] hover:text-fg"
             >
-              <svg width="14" height="9" viewBox="0 0 16 10" aria-hidden="true" className="shrink-0">
+              <svg width="18" height="11" viewBox="0 0 20 12" aria-hidden="true" className="shrink-0">
                 <polyline
                   fill="none"
                   stroke="#FFB26B"
-                  strokeWidth="1.4"
+                  strokeWidth="1.6"
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  points={preset.points.map(([tx, hy]) => `${(1 + tx * 14).toFixed(1)},${(8.5 - hy * 7).toFixed(1)}`).join(' ')}
+                  points={preset.points.map(([tx, hy]) => `${(1.5 + tx * 17).toFixed(1)},${(10 - hy * 8).toFixed(1)}`).join(' ')}
                 />
               </svg>
-              {preset.label}
             </button>
           ))}
         </div>
