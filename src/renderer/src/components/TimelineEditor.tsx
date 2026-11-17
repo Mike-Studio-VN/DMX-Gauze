@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronRight,
   Clock,
   Layers,
   Mic,
@@ -14,13 +16,87 @@ import {
   ZoomOut,
 } from 'lucide-react'
 import { clamp } from '@shared/convert'
+import { addressRange } from '@shared/dmx'
 import { LtcDecoder } from '@shared/ltc'
 import { FPS_OPTIONS, formatTc, parseTc, tcToSeconds } from '@shared/timecode'
-import { TimelineRunner, analyzeClipSpeeds, analyzeTimeline } from '@shared/timeline'
-import type { Fps, TimelineClip } from '@shared/types'
+import {
+  CURVE_PRESETS,
+  type CurvePresetId,
+  TimelineRunner,
+  analyzeClipSpeeds,
+  analyzeTimeline,
+  buildCurveKeyframes,
+} from '@shared/timeline'
+import type { ClipKeyframe, Fps, ModuleCfg, TimelineClip } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 
 const MIN_CLIP_DUR = 0.2
+const CLIP_MIN_W = 84
+const CURVE_COLORS = ['#F7842E', '#FFCB72', '#7FDDA8', '#8DB8FF', '#FF9A4D']
+const BODY_H = 40
+const DOT_PAD_X = 6
+const DOT_PAD_Y = 7
+
+interface Pt {
+  x: number
+  y: number
+}
+
+function mapKeyframesToPts(
+  kfs: ClipKeyframe[],
+  duration: number,
+  minH: number,
+  maxH: number,
+  width: number,
+  height: number,
+  padX = DOT_PAD_X,
+  padY = DOT_PAD_Y,
+): Pt[] {
+  const usableW = Math.max(4, width - padX * 2)
+  const usableH = Math.max(4, height - padY * 2)
+  const span = Math.max(0.1, maxH - minH)
+  const dur = Math.max(0.01, duration)
+  return kfs.map((k) => {
+    const tNorm = clamp(k.offset / dur, 0, 1)
+    const hNorm = clamp((k.height - minH) / span, 0, 1)
+    return {
+      x: padX + tNorm * usableW,
+      y: padY + (1 - hNorm) * usableH,
+    }
+  })
+}
+
+/** Sinh path cubic Bezier mượt (Catmull-Rom có giới hạn dọc) cho từng đoạn i -> i+1 */
+function segmentPath(pts: Pt[], i: number, mode: 'smooth' | 'linear', minY: number, maxY: number): string {
+  const p1 = pts[i]
+  const p2 = pts[i + 1]
+  if (!p1 || !p2) return ''
+  if (mode === 'linear' || pts.length < 3) {
+    return `M ${p1.x.toFixed(1)} ${p1.y.toFixed(1)} L ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`
+  }
+  const p0 = pts[i - 1] ?? p1
+  const p3 = pts[i + 2] ?? p2
+  const segMinY = Math.max(minY, Math.min(p1.y, p2.y) - 3)
+  const segMaxY = Math.min(maxY, Math.max(p1.y, p2.y) + 3)
+
+  const c1x = clamp(p1.x + (p2.x - p0.x) / 6, p1.x, p2.x)
+  const c1y = clamp(p1.y + (p2.y - p0.y) / 6, segMinY, segMaxY)
+  const c2x = clamp(p2.x - (p3.x - p1.x) / 6, p1.x, p2.x)
+  const c2y = clamp(p2.y - (p3.y - p1.y) / 6, segMinY, segMaxY)
+
+  return `M ${p1.x.toFixed(1)} ${p1.y.toFixed(1)} C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`
+}
+
+function fullCurvePath(pts: Pt[], mode: 'smooth' | 'linear', minY: number, maxY: number): string {
+  if (pts.length < 2) return ''
+  let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`
+  for (let i = 0; i < pts.length - 1; i++) {
+    const seg = segmentPath(pts, i, mode, minY, maxY)
+    const cmdStart = seg.indexOf(' L ') >= 0 ? seg.indexOf(' L ') : seg.indexOf(' C ')
+    if (cmdStart >= 0) d += seg.slice(cmdStart)
+  }
+  return d
+}
 
 export function TimelineEditor() {
   const {
@@ -45,8 +121,9 @@ export function TimelineEditor() {
   const [ltcActive, setLtcActive] = useState(false)
   const [ltcStatus, setLtcStatus] = useState<'off' | 'lock' | 'freewheel' | 'lost'>('off')
   const [tcInput, setTcInput] = useState(formatTc(project.settings.timeline.startTime, fps))
-  const [pxPerSec, setPxPerSec] = useState(56)
-  const [dragOverLayerId, setDragOverLayerId] = useState<string | null>(null)
+  const [pxPerSec, setPxPerSec] = useState(64)
+  const [collapsedLayers, setCollapsedLayers] = useState<Record<string, boolean>>({})
+  const [dragOverTarget, setDragOverTarget] = useState<string | null>(null)
   const [selectedKeyId, setSelectedKeyId] = useState<string | null>(null)
 
   const runnerRef = useRef(new TimelineRunner())
@@ -56,7 +133,6 @@ export function TimelineEditor() {
   clipsRef.current = clips
   const keysRef = useRef(project.keys)
   keysRef.current = project.keys
-  const trackAreaRef = useRef<HTMLDivElement | null>(null)
 
   const maxTime = useMemo(
     () => Math.max(20, ...clips.map((c) => c.startTime + c.duration + 4), ...project.keys.map((k) => k.time + 4)),
@@ -65,6 +141,10 @@ export function TimelineEditor() {
 
   const allIssues = useMemo(() => analyzeTimeline(clips, project.modules), [clips, project.modules])
   const unfeasibleIssues = useMemo(() => allIssues.filter((i) => !i.feasible), [allIssues])
+
+  useEffect(() => {
+    setTcInput(formatTc(project.settings.timeline.startTime, fps))
+  }, [project.settings.timeline.startTime, fps])
 
   useEffect(() => {
     if (!playing || ltcActive) return
@@ -219,30 +299,83 @@ export function TimelineEditor() {
     window.addEventListener('pointerup', onUp)
   }
 
-  const handleDropModuleOnTrack = (e: React.DragEvent, layerId: string) => {
+  const startKeyframeDrag = (
+    e: React.PointerEvent,
+    clip: TimelineClip,
+    mod: ModuleCfg | undefined,
+    kfId: string,
+    widthPx: number,
+    heightPx: number,
+  ) => {
+    e.stopPropagation()
     e.preventDefault()
-    setDragOverLayerId(null)
+    selectTimelineClip(clip.id)
+    setSelectedKeyId(kfId)
+    const svgEl = e.currentTarget.closest('svg')
+    if (!svgEl) return
+
+    const minH = mod?.minHeight ?? 0
+    const maxH = Math.max(minH + 0.1, mod?.maxHeight ?? mod?.length ?? 1)
+    const usableW = Math.max(4, widthPx - DOT_PAD_X * 2)
+    const usableH = Math.max(4, heightPx - DOT_PAD_Y * 2)
+    const baseKfs = clip.keyframes
+
+    const applyPointer = (clientX: number, clientY: number) => {
+      const rect = svgEl.getBoundingClientRect()
+      const localX = clamp((clientX - rect.left) * (widthPx / Math.max(1, rect.width)), DOT_PAD_X, widthPx - DOT_PAD_X)
+      const localY = clamp((clientY - rect.top) * (heightPx / Math.max(1, rect.height)), DOT_PAD_Y, heightPx - DOT_PAD_Y)
+
+      const tNorm = clamp((localX - DOT_PAD_X) / usableW, 0, 1)
+      const hNorm = clamp(1 - (localY - DOT_PAD_Y) / usableH, 0, 1)
+
+      const nextOffset = Number((tNorm * clip.duration).toFixed(2))
+      const nextHeight = Number((minH + hNorm * (maxH - minH)).toFixed(2))
+
+      const nextKfs = baseKfs
+        .map((k) => (k.id === kfId ? { ...k, offset: nextOffset, height: nextHeight } : k))
+        .sort((a, b) => a.offset - b.offset)
+
+      updateClip(clip.id, { keyframes: nextKfs }, `kf-drag-${kfId}`)
+    }
+
+    const onMove = (ev: PointerEvent) => applyPointer(ev.clientX, ev.clientY)
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  const createDefaultWaveClip = (mod: ModuleCfg, layerId: string, startSec: number) => {
+    const clipId = `clip-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`
+    const dur = 4
+    const keyframes = buildCurveKeyframes('flat', dur, mod.minHeight, mod.maxHeight)
+    const clip: TimelineClip = {
+      id: clipId,
+      layerId,
+      moduleId: mod.id,
+      startTime: Math.max(0, Number(startSec.toFixed(2))),
+      duration: dur,
+      curveMode: 'smooth',
+      keyframes,
+    }
+    addClip(clip)
+    setSelectedKeyId(keyframes[1]?.id ?? keyframes[0]?.id ?? null)
+    notify(`Đã tạo sóng mặc định (0 → 0) cho "${mod.name}" tại ${startSec.toFixed(2)}s`, 'info')
+  }
+
+  const handleDropModule = (e: React.DragEvent, layerId: string, targetMod?: ModuleCfg) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragOverTarget(null)
     const modId = e.dataTransfer.getData('application/x-gauze-module') || e.dataTransfer.getData('text/plain')
-    const mod = project.modules.find((m) => m.id === modId)
+    const mod = targetMod ?? project.modules.find((m) => m.id === modId)
     if (!mod) return
 
     const rect = e.currentTarget.getBoundingClientRect()
     const dropSec = Math.max(0, Number(((e.clientX - rect.left) / pxPerSec).toFixed(2)))
-
-    const clip: TimelineClip = {
-      id: `clip-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
-      layerId,
-      moduleId: mod.id,
-      startTime: dropSec,
-      duration: 2,
-      keyframes: [
-        { id: `kf-${Date.now()}-1`, offset: 0, height: 0 },
-        { id: `kf-${Date.now()}-2`, offset: 2, height: 0 },
-      ],
-    }
-    addClip(clip)
-    setSelectedKeyId(clip.keyframes[1].id)
-    notify(`Đã thêm "${mod.name}" tại ${dropSec.toFixed(2)}s (mặc định 0m)`, 'info')
+    createDefaultWaveClip(mod, layerId, dropSec)
   }
 
   const selectedClip = clips.find((c) => c.id === selectedClipId) ?? null
@@ -251,6 +384,20 @@ export function TimelineEditor() {
     () => (selectedClip ? analyzeClipSpeeds(selectedClip, selectedClipMod) : []),
     [selectedClip, selectedClipMod],
   )
+
+  const applyPresetToSelected = (presetId: CurvePresetId) => {
+    if (!selectedClip || !selectedClipMod) return
+    const kfs = buildCurveKeyframes(
+      presetId,
+      selectedClip.duration,
+      selectedClipMod.minHeight,
+      selectedClipMod.maxHeight,
+    )
+    const curveMode: 'smooth' | 'linear' =
+      presetId === 'triangle' || presetId === 'steps' || presetId === 'hold' ? 'linear' : 'smooth'
+    updateClip(selectedClip.id, { keyframes: kfs, curveMode })
+    setSelectedKeyId(kfs[Math.min(1, kfs.length - 1)]?.id ?? null)
+  }
 
   const addKeyframeToSelected = () => {
     if (!selectedClip || !selectedClipMod) return
@@ -261,11 +408,46 @@ export function TimelineEditor() {
     )
     const nextDur = Math.max(selectedClip.duration, rel)
     const curHeight = Number(
-      clamp(snapshot?.modules[selectedClipMod.id]?.pos ?? 0, selectedClipMod.minHeight, selectedClipMod.maxHeight).toFixed(2),
+      clamp(
+        snapshot?.modules[selectedClipMod.id]?.pos ?? selectedClipMod.minHeight,
+        selectedClipMod.minHeight,
+        selectedClipMod.maxHeight,
+      ).toFixed(2),
     )
     const kfId = `kf-${Date.now()}`
-    const kfs = [...selectedClip.keyframes, { id: kfId, offset: rel, height: curHeight }].sort((a, b) => a.offset - b.offset)
+    const kfs = [...selectedClip.keyframes, { id: kfId, offset: rel, height: curHeight }].sort(
+      (a, b) => a.offset - b.offset,
+    )
     updateClip(selectedClip.id, { duration: nextDur, keyframes: kfs })
+    setSelectedKeyId(kfId)
+  }
+
+  const insertKeyframeAtDoubleClick = (
+    e: React.MouseEvent<SVGSVGElement>,
+    clip: TimelineClip,
+    mod: ModuleCfg | undefined,
+    widthPx: number,
+    heightPx: number,
+  ) => {
+    e.stopPropagation()
+    const rect = e.currentTarget.getBoundingClientRect()
+    const localX = clamp((e.clientX - rect.left) * (widthPx / Math.max(1, rect.width)), DOT_PAD_X, widthPx - DOT_PAD_X)
+    const localY = clamp((e.clientY - rect.top) * (heightPx / Math.max(1, rect.height)), DOT_PAD_Y, heightPx - DOT_PAD_Y)
+    const minH = mod?.minHeight ?? 0
+    const maxH = Math.max(minH + 0.1, mod?.maxHeight ?? mod?.length ?? 1)
+    const usableW = Math.max(4, widthPx - DOT_PAD_X * 2)
+    const usableH = Math.max(4, heightPx - DOT_PAD_Y * 2)
+    const tNorm = clamp((localX - DOT_PAD_X) / usableW, 0, 1)
+    const hNorm = clamp(1 - (localY - DOT_PAD_Y) / usableH, 0, 1)
+    const kfId = `kf-${Date.now()}-${Math.random().toString(36).slice(2, 4)}`
+    const nextKf: ClipKeyframe = {
+      id: kfId,
+      offset: Number((tNorm * clip.duration).toFixed(2)),
+      height: Number((minH + hNorm * (maxH - minH)).toFixed(2)),
+    }
+    const kfs = [...clip.keyframes, nextKf].sort((a, b) => a.offset - b.offset)
+    selectTimelineClip(clip.id)
+    updateClip(clip.id, { keyframes: kfs })
     setSelectedKeyId(kfId)
   }
 
@@ -274,7 +456,7 @@ export function TimelineEditor() {
 
   return (
     <div className="flex h-full flex-col gap-2 text-xs">
-      {/* Thanh điều khiển Timeline chuẩn Kiln */}
+      {/* Thanh điều khiển Timeline */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-black/35 px-3 font-mono text-[13px] font-bold text-[#FFB26B] tabular-nums shadow-[inset_0_0_0_1px_var(--line2)]">
@@ -339,7 +521,7 @@ export function TimelineEditor() {
           <div className="kiln-seg">
             <button
               type="button"
-              onClick={() => setPxPerSec((z) => Math.max(24, z - 12))}
+              onClick={() => setPxPerSec((z) => Math.max(28, z - 12))}
               title="Thu nhỏ timeline"
               className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full text-muted hover:text-fg"
             >
@@ -347,7 +529,7 @@ export function TimelineEditor() {
             </button>
             <button
               type="button"
-              onClick={() => setPxPerSec((z) => Math.min(140, z + 12))}
+              onClick={() => setPxPerSec((z) => Math.min(150, z + 12))}
               title="Phóng to timeline"
               className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full text-muted hover:text-fg"
             >
@@ -359,6 +541,7 @@ export function TimelineEditor() {
             value={tcInput}
             onChange={(e) => setTcInput(e.target.value)}
             onBlur={applyStartTc}
+            onKeyDown={(e) => e.key === 'Enter' && applyStartTc()}
             title="Timecode bắt đầu (hh:mm:ss:ff)"
             className="kiln-field h-7 w-24 px-2 font-mono text-[11px]"
           />
@@ -378,7 +561,7 @@ export function TimelineEditor() {
             <button
               type="button"
               onClick={addKeyframeToSelected}
-              title="Thêm keyframe vào clip đang chọn tại Playhead"
+              title="Thêm keyframe tại Playhead"
               className="kiln-btn kiln-btn-cue h-7 px-2.5 text-[11px]"
             >
               <Plus size={12} />
@@ -388,40 +571,19 @@ export function TimelineEditor() {
         </div>
       </div>
 
-      {/* Khung NLE Timeline nền #0A0706 phẳng */}
-      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-2xl bg-[#0A0706] shadow-[inset_0_0_0_1px_var(--line)]">
-        {/* Cột nhãn Layer Track */}
-        <div className="flex w-36 shrink-0 flex-col border-r border-line bg-[#130D0A]">
-          <div className="flex h-6 items-center border-b border-line px-2.5 text-[10px] font-semibold tracking-wider text-muted uppercase">
-            Layer Track
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {project.layers.map((layer) => {
-              const isLayerSel = selectedTimelineLayerId === layer.id
-              return (
-                <button
-                  key={layer.id}
-                  type="button"
-                  onClick={() => selectTimelineLayer(layer.id)}
-                  title="Chọn track layer (hỗ trợ Ctrl+C, Ctrl+V, Delete các clip của layer)"
-                  className={`flex h-14 w-full cursor-pointer items-center gap-1.5 border-b border-line px-2.5 text-left text-[11px] font-medium transition ${
-                    isLayerSel ? 'bg-brand/15 text-[#FFB26B]' : 'text-[#C2B3A4] hover:bg-white/5 hover:text-fg'
-                  }`}
-                >
-                  <Layers size={12} className={`shrink-0 ${isLayerSel ? 'text-brand' : 'text-info'}`} />
-                  <span className="truncate">{layer.name}</span>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* Vùng Ruler + Track Clips cuộn ngang */}
-        <div ref={trackAreaRef} className="relative min-h-0 min-w-0 flex-1 overflow-x-auto overflow-y-auto">
-          <div style={{ width: timelineWidth }} className="relative min-h-full">
+      {/* Khung NLE Waveform đồng bộ cuộn dọc & ngang */}
+      <div className="min-h-0 min-w-0 flex-1 overflow-auto rounded-2xl bg-[#0A0706] shadow-[inset_0_0_0_1px_var(--line)]">
+        <div style={{ width: 168 + timelineWidth }} className="relative min-h-full">
+          {/* Header Top Sticky: Corner + Time Ruler */}
+          <div className="sticky top-0 z-30 flex h-6 border-b border-line bg-[#130D0A]">
+            <div className="sticky left-0 z-30 flex w-[168px] shrink-0 items-center justify-between border-r border-line bg-[#130D0A] px-2.5 text-[10px] font-semibold tracking-wider text-muted uppercase">
+              <span>Layer / Module</span>
+              <span className="text-[9px] opacity-75">Wave</span>
+            </div>
             <div
               onPointerDown={startRulerScrub}
-              className="sticky top-0 z-20 flex h-6 cursor-ew-resize items-end border-b border-line bg-[#130D0A]/95 select-none"
+              style={{ width: timelineWidth }}
+              className="relative h-6 cursor-ew-resize select-none"
             >
               {ticks.map((sec) => (
                 <div
@@ -433,238 +595,539 @@ export function TimelineEditor() {
                 </div>
               ))}
             </div>
+          </div>
 
-            {project.layers.map((layer) => {
-              const layerClips = clips.filter((c) => c.layerId === layer.id)
-              const isDragOver = dragOverLayerId === layer.id
-              const isLayerSel = selectedTimelineLayerId === layer.id
+          {/* Các Layer & dòng Module con */}
+          {project.layers.map((layer) => {
+            const mods = project.modules.filter((m) => m.layerId === layer.id)
+            const collapsed = Boolean(collapsedLayers[layer.id])
+            const isLayerSel = selectedTimelineLayerId === layer.id
+            const layerClips = clips.filter((c) => c.layerId === layer.id)
 
-              return (
-                <div
-                  key={layer.id}
-                  onDragOver={(e) => {
-                    e.preventDefault()
-                    setDragOverLayerId(layer.id)
-                  }}
-                  onDragLeave={() => setDragOverLayerId(null)}
-                  onDrop={(e) => handleDropModuleOnTrack(e, layer.id)}
-                  onClick={() => selectTimelineLayer(layer.id)}
-                  className={`relative h-14 border-b border-line transition ${
-                    isDragOver
-                      ? 'bg-brand/15 shadow-[inset_0_0_0_1px_var(--acc)]'
-                      : isLayerSel
-                        ? 'bg-info/5'
-                        : 'bg-[#0A0706]'
-                  }`}
-                >
-                  {ticks.map((sec) => (
-                    <div
-                      key={sec}
-                      style={{ left: sec * pxPerSec }}
-                      className="pointer-events-none absolute top-0 bottom-0 border-l border-white/[0.04]"
-                    />
-                  ))}
+            return (
+              <div key={layer.id}>
+                {/* Hàng Layer */}
+                <div className="flex border-b border-line">
+                  <div
+                    className={`sticky left-0 z-20 flex w-[168px] shrink-0 items-center justify-between border-r border-line px-2 transition ${
+                      collapsed ? 'h-14' : 'h-8'
+                    } ${isLayerSel ? 'bg-[#281A10] text-[#FFB26B]' : 'bg-[#150F0B] text-fg'}`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setCollapsedLayers((s) => ({ ...s, [layer.id]: !s[layer.id] }))}
+                      title={collapsed ? 'Mở rộng các dòng module' : 'Thu gọn thành đồ thị tổng hợp'}
+                      className="cursor-pointer rounded-full p-0.5 text-muted hover:bg-white/10 hover:text-fg"
+                    >
+                      {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => selectTimelineLayer(layer.id)}
+                      title="Chọn Layer track (Ctrl+C, Ctrl+V, Delete)"
+                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 pl-1 text-left text-[11px] font-semibold"
+                    >
+                      <Layers size={12} className={`shrink-0 ${isLayerSel ? 'text-brand' : 'text-info'}`} />
+                      <span className="truncate">{layer.name}</span>
+                      <span className="shrink-0 text-[10px] font-normal text-muted">({mods.length})</span>
+                    </button>
+                  </div>
 
-                  {layerClips.length === 0 && (
-                    <div className="pointer-events-none flex h-full items-center pl-3 text-[11px] text-muted/60">
-                      Kéo thả module từ Cây màn vào đây...
-                    </div>
-                  )}
+                  {/* Vùng track của Layer (khi thu gọn hiện overlay đa đường sóng như mẫu) */}
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      setDragOverTarget(`layer:${layer.id}`)
+                    }}
+                    onDragLeave={() => setDragOverTarget(null)}
+                    onDrop={(e) => handleDropModule(e, layer.id)}
+                    onClick={() => selectTimelineLayer(layer.id)}
+                    style={{ width: timelineWidth }}
+                    className={`relative transition ${collapsed ? 'h-14' : 'h-8'} ${
+                      dragOverTarget === `layer:${layer.id}`
+                        ? 'bg-brand/15 shadow-[inset_0_0_0_1px_var(--acc)]'
+                        : isLayerSel
+                          ? 'bg-brand/[0.04]'
+                          : 'bg-[#0E0A08]'
+                    }`}
+                  >
+                    {ticks.map((sec) => (
+                      <div
+                        key={sec}
+                        style={{ left: sec * pxPerSec }}
+                        className="pointer-events-none absolute top-0 bottom-0 border-l border-dashed border-white/[0.05]"
+                      />
+                    ))}
 
-                  {layerClips.map((clip) => {
-                    const mod = project.modules.find((m) => m.id === clip.moduleId)
-                    const issues = analyzeClipSpeeds(clip, mod)
-                    const badSeg = issues.find((i) => !i.feasible)
-                    const maxReq = issues.reduce((mx, i) => Math.max(mx, i.requiredCms), 0)
-                    const isSelected = selectedClipId === clip.id
-                    const leftPx = clip.startTime * pxPerSec
-                    const widthPx = Math.max(54, clip.duration * pxPerSec)
+                    {collapsed ? (
+                      <>
+                        {/* Lưới ngang đứt nét cho chế độ thu gọn đa sóng */}
+                        <div className="pointer-events-none absolute inset-x-0 top-1/3 border-t border-dashed border-white/[0.06]" />
+                        <div className="pointer-events-none absolute inset-x-0 top-2/3 border-t border-dashed border-white/[0.06]" />
 
-                    const sortedKfs = [...clip.keyframes].sort((a, b) => a.offset - b.offset)
-                    const maxH = Math.max(0.2, mod?.length ?? 1)
-                    const pts = sortedKfs
-                      .map((k) => {
-                        const x = (k.offset / Math.max(0.01, clip.duration)) * 100
-                        const y = 90 - clamp(k.height / maxH, 0, 1) * 76
-                        return `${x},${y}`
-                      })
-                      .join(' ')
-                    const areaPts = sortedKfs.length ? `0,95 ${pts} 100,95` : ''
+                        {layerClips.length === 0 ? (
+                          <div className="pointer-events-none flex h-full items-center pl-3 text-[10.5px] text-muted/65">
+                            Mở rộng layer để vẽ sóng từng module...
+                          </div>
+                        ) : (
+                          layerClips.map((clip) => {
+                            const modIdx = Math.max(
+                              0,
+                              mods.findIndex((m) => m.id === clip.moduleId),
+                            )
+                            const mod = mods[modIdx]
+                            const color = CURVE_COLORS[modIdx % CURVE_COLORS.length]
+                            const issues = analyzeClipSpeeds(clip, mod)
+                            const hasBad = issues.some((i) => !i.feasible)
+                            const stroke = hasBad ? '#FF7D6E' : color
+                            const w = Math.max(CLIP_MIN_W, clip.duration * pxPerSec)
+                            const h = 56
+                            const sorted = [...clip.keyframes].sort((a, b) => a.offset - b.offset)
+                            const minH = mod?.minHeight ?? 0
+                            const maxH = Math.max(minH + 0.1, mod?.maxHeight ?? mod?.length ?? 1)
+                            const pts = mapKeyframesToPts(sorted, clip.duration, minH, maxH, w, h, 4, 8)
+                            const d = fullCurvePath(pts, clip.curveMode ?? 'smooth', 6, h - 6)
 
-                    const curveColor = badSeg ? '#FF7D6E' : isSelected ? '#F7842E' : '#8DB8FF'
-                    const handleColor = badSeg ? 'bg-danger' : isSelected ? 'bg-[#1C0E04]' : 'bg-info'
+                            return (
+                              <svg
+                                key={clip.id}
+                                width={w}
+                                height={h}
+                                viewBox={`0 0 ${w} ${h}`}
+                                style={{ left: clip.startTime * pxPerSec }}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  selectTimelineClip(clip.id)
+                                }}
+                                className="absolute top-0 cursor-pointer overflow-visible"
+                              >
+                                <path d={d} fill="none" stroke={stroke} strokeWidth={2} strokeOpacity={0.9} />
+                                {pts.map((p, idx) => (
+                                  <circle
+                                    key={sorted[idx]?.id ?? idx}
+                                    cx={p.x}
+                                    cy={p.y}
+                                    r={3}
+                                    fill={stroke}
+                                    stroke="#FBF3EA"
+                                    strokeWidth={1.3}
+                                  />
+                                ))}
+                              </svg>
+                            )
+                          })
+                        )}
+                      </>
+                    ) : (
+                      <div className="pointer-events-none flex h-full items-center px-3 text-[10px] text-muted/70">
+                        {layerClips.length > 0
+                          ? `${layerClips.length} sóng trên ${mods.length} module`
+                          : 'Kéo thả module hoặc tạo sóng ở từng dòng bên dưới'}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Các dòng Module con khi Layer mở rộng */}
+                {!collapsed &&
+                  mods.map((mod, modIdx) => {
+                    const modClips = clips.filter((c) => c.moduleId === mod.id)
+                    const seriesColor = CURVE_COLORS[modIdx % CURVE_COLORS.length]
+                    const [chStart, chEnd] = addressRange(mod.startAddress)
+                    const dropId = `mod:${mod.id}`
 
                     return (
-                      <div
-                        key={clip.id}
-                        onPointerDown={(e) => startClipDrag(e, clip, 'move')}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          selectTimelineClip(clip.id)
-                        }}
-                        title={
-                          badSeg
-                            ? `Cảnh báo: Cần ${badSeg.requiredCms.toFixed(0)} cm/s > tối đa ${badSeg.maxSpeedCms} cm/s (tối thiểu ${badSeg.minDurationSec.toFixed(2)}s)`
-                            : `${mod?.name ?? 'Module'} · Kéo để dời thời gian, kéo 2 đầu để chỉnh độ dài`
-                        }
-                        style={{ left: leftPx, width: widthPx }}
-                        className={`kiln-clip absolute top-1 bottom-1 flex cursor-grab flex-col select-none active:cursor-grabbing ${
-                          badSeg ? 'bad' : isSelected ? 'sel' : ''
-                        }`}
-                      >
-                        {/* Bar tiêu đề tách riêng theo Kiln + 2 tay nắm bo tròn */}
-                        <div className="clip-bar flex h-[20px] shrink-0 items-center justify-between gap-1 px-1 text-[10.5px] font-semibold">
-                          <div
-                            onPointerDown={(e) => startClipDrag(e, clip, 'trim-left')}
-                            title="Kéo để đổi thời điểm bắt đầu"
-                            className="flex h-full w-2 shrink-0 cursor-ew-resize items-center justify-center"
-                          >
-                            <span className={`h-3 w-1 rounded-full ${handleColor}`} />
+                      <div key={mod.id} className="flex border-b border-white/[0.06]">
+                        {/* Nhãn Module bên trái */}
+                        <div className="sticky left-0 z-20 flex h-16 w-[168px] shrink-0 items-center justify-between gap-1.5 border-r border-line bg-[#110C09] pr-2 pl-4">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                style={{ backgroundColor: seriesColor }}
+                                className="size-2 shrink-0 rounded-full"
+                              />
+                              <span className="truncate text-[11px] font-medium text-fg">{mod.name}</span>
+                            </div>
+                            <div className="mt-0.5 flex items-center gap-1 text-[9.5px] text-muted tabular-nums">
+                              <span>
+                                CH {chStart}–{chEnd}
+                              </span>
+                              <span>·</span>
+                              <span>
+                                {mod.minHeight.toFixed(1)}–{mod.maxHeight.toFixed(1)}m
+                              </span>
+                            </div>
                           </div>
-                          <span className="truncate">{mod?.name ?? 'Module'}</span>
-                          <div
-                            onPointerDown={(e) => startClipDrag(e, clip, 'trim-right')}
-                            title="Kéo để chỉnh độ dài thời gian clip"
-                            className="flex h-full w-2 shrink-0 cursor-ew-resize items-center justify-center"
+
+                          <button
+                            type="button"
+                            onClick={() => createDefaultWaveClip(mod, layer.id, modClips.length ? time : 0)}
+                            title={`Tạo đường sóng mới (mặc định 0 → 0) cho ${mod.name}`}
+                            className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full bg-white/[0.06] text-muted hover:bg-brand/25 hover:text-[#FFB26B]"
                           >
-                            <span className={`h-3 w-1 rounded-full ${handleColor}`} />
-                          </div>
+                            <Plus size={11} />
+                          </button>
                         </div>
 
-                        {/* Body phẳng #0A0706 chứa đồ thị chiều cao + tốc độ */}
-                        <div className="clip-body relative flex-1 overflow-hidden">
-                          {sortedKfs.length >= 2 && (
-                            <svg
-                              viewBox="0 0 100 100"
-                              preserveAspectRatio="none"
-                              className="pointer-events-none absolute inset-0 h-full w-full opacity-70"
-                            >
-                              <polygon points={areaPts} fill={curveColor} fillOpacity="0.18" />
-                              <polyline points={pts} fill="none" stroke={curveColor} strokeWidth="3" />
-                            </svg>
+                        {/* Làn Waveform riêng của Module */}
+                        <div
+                          onDragOver={(e) => {
+                            e.preventDefault()
+                            setDragOverTarget(dropId)
+                          }}
+                          onDragLeave={() => setDragOverTarget(null)}
+                          onDrop={(e) => handleDropModule(e, layer.id, mod)}
+                          onDoubleClick={(e) => {
+                            if (modClips.length === 0) {
+                              const rect = e.currentTarget.getBoundingClientRect()
+                              const dropSec = Math.max(0, Number(((e.clientX - rect.left) / pxPerSec).toFixed(2)))
+                              createDefaultWaveClip(mod, layer.id, dropSec)
+                            }
+                          }}
+                          style={{ width: timelineWidth }}
+                          className={`relative h-16 transition ${
+                            dragOverTarget === dropId ? 'bg-brand/12 shadow-[inset_0_0_0_1px_var(--acc)]' : 'bg-[#0A0706]'
+                          }`}
+                        >
+                          {/* Lưới ngang & dọc đứt nét */}
+                          <div className="pointer-events-none absolute inset-x-0 top-1/4 border-t border-dashed border-white/[0.045]" />
+                          <div className="pointer-events-none absolute inset-x-0 top-2/4 border-t border-dashed border-white/[0.06]" />
+                          <div className="pointer-events-none absolute inset-x-0 top-3/4 border-t border-dashed border-white/[0.045]" />
+
+                          {ticks.map((sec) => (
+                            <div
+                              key={sec}
+                              style={{ left: sec * pxPerSec }}
+                              className="pointer-events-none absolute top-0 bottom-0 border-l border-dashed border-white/[0.045]"
+                            />
+                          ))}
+
+                          {modClips.length === 0 && (
+                            <div className="pointer-events-none flex h-full items-center pl-3 text-[10.5px] text-muted/55">
+                              Double-click hoặc bấm + bên trái để tạo đường sóng (0 → 0)...
+                            </div>
                           )}
-                          <div className="relative z-10 flex h-full items-end justify-between px-2 pb-0.5 text-[9.5px] font-semibold">
-                            <span className={badSeg ? 'text-danger' : isSelected ? 'text-[#FFB26B]' : 'text-info'}>
-                              {badSeg ? `⚠ ${badSeg.requiredCms.toFixed(0)}cm/s` : maxReq > 0 ? `${maxReq.toFixed(0)}cm/s` : '0m'}
-                            </span>
-                            <span className="text-muted tabular-nums">{clip.duration.toFixed(1)}s</span>
-                          </div>
+
+                          {modClips.map((clip) => {
+                            const issues = analyzeClipSpeeds(clip, mod)
+                            const badSeg = issues.find((i) => !i.feasible)
+                            const maxReq = issues.reduce((mx, i) => Math.max(mx, i.requiredCms), 0)
+                            const isSelected = selectedClipId === clip.id
+                            const leftPx = clip.startTime * pxPerSec
+                            const widthPx = Math.max(CLIP_MIN_W, clip.duration * pxPerSec)
+
+                            const sortedKfs = [...clip.keyframes].sort((a, b) => a.offset - b.offset)
+                            const minH = mod.minHeight
+                            const maxH = Math.max(minH + 0.1, mod.maxHeight ?? mod.length)
+                            const mode = clip.curveMode ?? 'smooth'
+                            const pts = mapKeyframesToPts(sortedKfs, clip.duration, minH, maxH, widthPx, BODY_H)
+                            const baseStroke = isSelected ? '#F7842E' : seriesColor
+                            const areaPath =
+                              pts.length >= 2
+                                ? `${fullCurvePath(pts, mode, DOT_PAD_Y, BODY_H - DOT_PAD_Y)} L ${pts[pts.length - 1].x.toFixed(1)} ${BODY_H} L ${pts[0].x.toFixed(1)} ${BODY_H} Z`
+                                : ''
+                            const handleColor = badSeg ? 'bg-danger' : isSelected ? 'bg-[#1C0E04]' : 'bg-info'
+
+                            return (
+                              <div
+                                key={clip.id}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  selectTimelineClip(clip.id)
+                                }}
+                                style={{ left: leftPx, width: widthPx }}
+                                className={`kiln-clip absolute top-1 bottom-1 flex flex-col select-none ${
+                                  badSeg ? 'bad' : isSelected ? 'sel' : ''
+                                }`}
+                              >
+                                {/* Bar trên mảnh để kéo dời clip và chỉnh 2 đầu */}
+                                <div
+                                  onPointerDown={(e) => startClipDrag(e, clip, 'move')}
+                                  title={`${mod.name} · Kéo để dời vị trí clip, kéo 2 đầu để chỉnh độ dài`}
+                                  className="clip-bar flex h-[16px] shrink-0 cursor-grab items-center justify-between gap-1 px-1 text-[9.5px] font-semibold active:cursor-grabbing"
+                                >
+                                  <div
+                                    onPointerDown={(e) => startClipDrag(e, clip, 'trim-left')}
+                                    className="flex h-full w-2 shrink-0 cursor-ew-resize items-center justify-center"
+                                  >
+                                    <span className={`h-2.5 w-1 rounded-full ${handleColor}`} />
+                                  </div>
+                                  <span className="truncate tabular-nums">
+                                    {badSeg
+                                      ? `⚠ ${badSeg.requiredCms.toFixed(0)}cm/s`
+                                      : `${clip.duration.toFixed(1)}s${maxReq > 0 ? ` · ${maxReq.toFixed(0)}cm/s` : ' · 0–0'}`}
+                                  </span>
+                                  <div
+                                    onPointerDown={(e) => startClipDrag(e, clip, 'trim-right')}
+                                    className="flex h-full w-2 shrink-0 cursor-ew-resize items-center justify-center"
+                                  >
+                                    <span className={`h-2.5 w-1 rounded-full ${handleColor}`} />
+                                  </div>
+                                </div>
+
+                                {/* Vùng đồ thị SVG tương tác */}
+                                <div className="clip-body relative h-[40px] w-full overflow-hidden">
+                                  <svg
+                                    width={widthPx}
+                                    height={BODY_H}
+                                    viewBox={`0 0 ${widthPx} ${BODY_H}`}
+                                    onDoubleClick={(e) => insertKeyframeAtDoubleClick(e, clip, mod, widthPx, BODY_H)}
+                                    className="block h-full w-full cursor-crosshair"
+                                  >
+                                    {/* Đường đứt nét tham chiếu 0m / mid */}
+                                    <line
+                                      x1={0}
+                                      y1={BODY_H - DOT_PAD_Y}
+                                      x2={widthPx}
+                                      y2={BODY_H - DOT_PAD_Y}
+                                      stroke="rgba(255,255,255,0.08)"
+                                      strokeDasharray="3 3"
+                                      strokeWidth={1}
+                                    />
+                                    <line
+                                      x1={0}
+                                      y1={BODY_H / 2}
+                                      x2={widthPx}
+                                      y2={BODY_H / 2}
+                                      stroke="rgba(255,255,255,0.05)"
+                                      strokeDasharray="3 3"
+                                      strokeWidth={1}
+                                    />
+
+                                    {areaPath && (
+                                      <path
+                                        d={areaPath}
+                                        fill={badSeg ? '#FF7D6E' : baseStroke}
+                                        fillOpacity={isSelected ? 0.14 : 0.08}
+                                      />
+                                    )}
+
+                                    {/* Vẽ từng đoạn để highlight đoạn quá tốc độ */}
+                                    {pts.length >= 2 &&
+                                      pts.slice(0, -1).map((_, idx) => {
+                                        const segIssue = issues[idx]
+                                        const segBad = segIssue && !segIssue.feasible
+                                        const d = segmentPath(pts, idx, mode, DOT_PAD_Y, BODY_H - DOT_PAD_Y)
+                                        return (
+                                          <path
+                                            key={idx}
+                                            d={d}
+                                            fill="none"
+                                            stroke={segBad ? '#FF7D6E' : baseStroke}
+                                            strokeWidth={segBad ? 2.5 : isSelected ? 2.2 : 1.75}
+                                            strokeLinecap="round"
+                                          />
+                                        )
+                                      })}
+
+                                    {/* Chấm keyframe kéo thả 2D */}
+                                    {sortedKfs.map((kf, idx) => {
+                                      const pt = pts[idx]
+                                      if (!pt) return null
+                                      const activeKf = isSelected && selectedKeyId === kf.id
+                                      const prevBad = idx > 0 && issues[idx - 1] && !issues[idx - 1].feasible
+                                      const nextBad = idx < issues.length && issues[idx] && !issues[idx].feasible
+                                      const dotColor = prevBad || nextBad ? '#FF7D6E' : baseStroke
+
+                                      return (
+                                        <g
+                                          key={kf.id}
+                                          onPointerDown={(e) => startKeyframeDrag(e, clip, mod, kf.id, widthPx, BODY_H)}
+                                          onContextMenu={(e) => {
+                                            e.preventDefault()
+                                            e.stopPropagation()
+                                            if (clip.keyframes.length <= 2) {
+                                              notify('Mỗi đường sóng cần giữ ít nhất 2 điểm (đầu & cuối)', 'warn')
+                                              return
+                                            }
+                                            const nextKfs = clip.keyframes.filter((k) => k.id !== kf.id)
+                                            updateClip(clip.id, { keyframes: nextKfs })
+                                          }}
+                                          className="cursor-grab active:cursor-grabbing"
+                                        >
+                                          <title>
+                                            {`K${idx + 1}: ${kf.offset.toFixed(2)}s · ${kf.height.toFixed(2)}m (Kéo để chỉnh · Chuột phải xoá điểm)`}
+                                          </title>
+                                          <circle cx={pt.x} cy={pt.y} r={8} fill="transparent" />
+                                          {activeKf && (
+                                            <circle cx={pt.x} cy={pt.y} r={6} fill={dotColor} fillOpacity={0.3} />
+                                          )}
+                                          <circle
+                                            cx={pt.x}
+                                            cy={pt.y}
+                                            r={activeKf ? 4.2 : 3.4}
+                                            fill={dotColor}
+                                            stroke="#FBF3EA"
+                                            strokeWidth={activeKf ? 1.8 : 1.4}
+                                          />
+                                        </g>
+                                      )
+                                    })}
+                                  </svg>
+                                </div>
+                              </div>
+                            )
+                          })}
                         </div>
                       </div>
                     )
                   })}
-                </div>
-              )
-            })}
+              </div>
+            )
+          })}
 
-            {/* Vạch Playhead dọc */}
-            <div
-              style={{ left: time * pxPerSec }}
-              className="pointer-events-none absolute top-0 bottom-0 z-30 w-0.5 bg-brand shadow-[0_0_8px_#f7842e]"
-            >
-              <div className="-ml-1.5 h-2.5 w-3.5 rounded-b-sm bg-brand" />
-            </div>
+          {/* Vạch Playhead dọc xuyên qua toàn bộ Tracks */}
+          <div
+            style={{ left: 168 + time * pxPerSec }}
+            className="pointer-events-none absolute top-6 bottom-0 z-10 w-0.5 bg-brand shadow-[0_0_8px_#f7842e]"
+          >
+            <div className="-ml-1.5 h-2 w-3.5 rounded-b-sm bg-brand" />
           </div>
         </div>
       </div>
 
-      {/* Thanh chỉnh Keyframe cho Clip đang chọn */}
+      {/* Thanh đồ thị mẫu (Curve Presets) + Chỉnh Keyframe chính xác cho Clip đang chọn */}
       {selectedClip && selectedClipMod && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-black/30 px-3 py-1.5 shadow-[inset_0_0_0_1px_var(--line)]">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-[#FFB26B]">{selectedClipMod.name}</span>
-            <span className="text-muted">({selectedClip.startTime.toFixed(2)}s)</span>
-
+        <div className="flex flex-col gap-1.5 rounded-2xl bg-black/30 px-3 py-1.5 shadow-[inset_0_0_0_1px_var(--line)]">
+          {/* Hàng 1: Đồ thị mẫu & Kiểu nội suy */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-1.5">
-              {[...selectedClip.keyframes]
-                .sort((a, b) => a.offset - b.offset)
-                .map((kf, idx) => {
-                  const active = selectedKeyId === kf.id
+              <span className="font-semibold text-[#FFB26B]">{selectedClipMod.name}</span>
+              <span className="text-[10.5px] text-muted">Mẫu sóng:</span>
+              {CURVE_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => applyPresetToSelected(preset.id)}
+                  title={`Áp dụng đồ thị mẫu "${preset.label}" (đầu/cuối 0)`}
+                  className="kiln-btn h-5.5 gap-1.5 px-2 text-[10.5px] text-[#C2B3A4] hover:text-fg"
+                >
+                  <svg width="16" height="10" viewBox="0 0 16 10" aria-hidden="true" className="shrink-0">
+                    <polyline
+                      fill="none"
+                      stroke="#FFB26B"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      points={preset.points.map(([tx, hy]) => `${(1 + tx * 14).toFixed(1)},${(8.5 - hy * 7).toFixed(1)}`).join(' ')}
+                    />
+                  </svg>
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="kiln-seg">
+                {(
+                  [
+                    ['smooth', 'Mượt'],
+                    ['linear', 'Thẳng'],
+                  ] as const
+                ).map(([m, label]) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => updateClip(selectedClip.id, { curveMode: m })}
+                    className={`kiln-seg-btn h-5 px-2 text-[10px] ${(selectedClip.curveMode ?? 'smooth') === m ? 'on' : ''}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {selectedClipIssues.some((i) => !i.feasible) ? (
+                (() => {
+                  const bad = selectedClipIssues.find((i) => !i.feasible)!
                   return (
-                    <div
-                      key={kf.id}
-                      onClick={() => setSelectedKeyId(kf.id)}
-                      className={`flex items-center gap-1 rounded-xl px-2 py-0.5 ${
-                        active
-                          ? 'bg-brand/15 shadow-[inset_0_0_0_1.5px_var(--acc)]'
-                          : 'bg-black/35 shadow-[inset_0_0_0_1px_var(--line)]'
-                      }`}
-                    >
-                      <span className="text-[10px] font-semibold text-info">K{idx + 1}</span>
-                      <input
-                        type="number"
-                        step="0.1"
-                        min="0"
-                        title="Thời gian tương đối trong clip (s)"
-                        value={kf.offset}
-                        onChange={(e) => {
-                          const offset = Math.max(0, Number(e.target.value) || 0)
-                          const nextKfs = selectedClip.keyframes
-                            .map((x) => (x.id === kf.id ? { ...x, offset } : x))
-                            .sort((a, b) => a.offset - b.offset)
-                          const nextDur = Math.max(MIN_CLIP_DUR, ...nextKfs.map((x) => x.offset))
-                          updateClip(selectedClip.id, { duration: nextDur, keyframes: nextKfs }, `kf-${kf.id}`)
-                        }}
-                        className="w-11 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none"
-                      />
-                      <span className="text-[10px] text-muted">s</span>
-                      <input
-                        type="number"
-                        step="0.1"
-                        min={selectedClipMod.minHeight}
-                        max={selectedClipMod.maxHeight}
-                        title={`Chiều cao màn (m) [${selectedClipMod.minHeight}..${selectedClipMod.maxHeight}]`}
-                        value={kf.height}
-                        onChange={(e) => {
-                          const h = clamp(Number(e.target.value) || 0, selectedClipMod.minHeight, selectedClipMod.maxHeight)
-                          const nextKfs = selectedClip.keyframes.map((x) => (x.id === kf.id ? { ...x, height: h } : x))
-                          updateClip(selectedClip.id, { keyframes: nextKfs }, `kfh-${kf.id}`)
-                        }}
-                        className="w-11 bg-transparent text-right text-[11px] text-[#FFB26B] tabular-nums outline-none"
-                      />
-                      <span className="text-[10px] text-muted">m</span>
-                      {selectedClip.keyframes.length > 2 && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            const nextKfs = selectedClip.keyframes.filter((x) => x.id !== kf.id)
-                            updateClip(selectedClip.id, { keyframes: nextKfs })
-                          }}
-                          title="Xoá key"
-                          className="cursor-pointer text-muted hover:text-danger"
-                        >
-                          ×
-                        </button>
-                      )}
-                    </div>
+                    <span className="kiln-chip danger">
+                      <AlertTriangle size={11} />
+                      Cần {bad.requiredCms.toFixed(0)} cm/s &gt; {bad.maxSpeedCms} cm/s (≥ {bad.minDurationSec.toFixed(2)}s)
+                    </span>
                   )
-                })}
+                })()
+              ) : (
+                <span className="kiln-chip ok">Hợp lệ (≤ {selectedClipMod.maxSpeedCms} cm/s)</span>
+              )}
+
+              <button
+                type="button"
+                onClick={() => deleteClip(selectedClip.id)}
+                title="Xoá clip này (Delete)"
+                className="cursor-pointer rounded-full p-1 text-muted hover:bg-danger/20 hover:text-danger"
+              >
+                <Trash2 size={13} />
+              </button>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {selectedClipIssues.some((i) => !i.feasible) ? (
-              (() => {
-                const bad = selectedClipIssues.find((i) => !i.feasible)!
+          {/* Hàng 2: Danh sách các chấm Keyframe đang có */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10.5px] text-muted">Điểm ({selectedClip.keyframes.length}):</span>
+            {[...selectedClip.keyframes]
+              .sort((a, b) => a.offset - b.offset)
+              .map((kf, idx) => {
+                const active = selectedKeyId === kf.id
                 return (
-                  <span className="kiln-chip danger">
-                    <AlertTriangle size={11} />
-                    Cần {bad.requiredCms.toFixed(0)} cm/s &gt; {bad.maxSpeedCms} cm/s (≥ {bad.minDurationSec.toFixed(2)}s)
-                  </span>
+                  <div
+                    key={kf.id}
+                    onClick={() => setSelectedKeyId(kf.id)}
+                    className={`flex items-center gap-1 rounded-xl px-2 py-0.5 ${
+                      active
+                        ? 'bg-brand/15 shadow-[inset_0_0_0_1.5px_var(--acc)]'
+                        : 'bg-black/35 shadow-[inset_0_0_0_1px_var(--line)]'
+                    }`}
+                  >
+                    <span className="text-[10px] font-semibold text-info">K{idx + 1}</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      title="Thời gian tương đối trong clip (s)"
+                      value={kf.offset}
+                      onChange={(e) => {
+                        const offset = Math.max(0, Number(e.target.value) || 0)
+                        const nextKfs = selectedClip.keyframes
+                          .map((x) => (x.id === kf.id ? { ...x, offset } : x))
+                          .sort((a, b) => a.offset - b.offset)
+                        const nextDur = Math.max(MIN_CLIP_DUR, ...nextKfs.map((x) => x.offset))
+                        updateClip(selectedClip.id, { duration: nextDur, keyframes: nextKfs }, `kf-${kf.id}`)
+                      }}
+                      className="w-10 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none"
+                    />
+                    <span className="text-[10px] text-muted">s</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min={selectedClipMod.minHeight}
+                      max={selectedClipMod.maxHeight}
+                      title={`Chiều cao màn (m) [${selectedClipMod.minHeight}..${selectedClipMod.maxHeight}]`}
+                      value={kf.height}
+                      onChange={(e) => {
+                        const h = clamp(Number(e.target.value) || 0, selectedClipMod.minHeight, selectedClipMod.maxHeight)
+                        const nextKfs = selectedClip.keyframes.map((x) => (x.id === kf.id ? { ...x, height: h } : x))
+                        updateClip(selectedClip.id, { keyframes: nextKfs }, `kfh-${kf.id}`)
+                      }}
+                      className="w-10 bg-transparent text-right text-[11px] text-[#FFB26B] tabular-nums outline-none"
+                    />
+                    <span className="text-[10px] text-muted">m</span>
+                    {selectedClip.keyframes.length > 2 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const nextKfs = selectedClip.keyframes.filter((x) => x.id !== kf.id)
+                          updateClip(selectedClip.id, { keyframes: nextKfs })
+                        }}
+                        title="Xoá điểm"
+                        className="cursor-pointer text-muted hover:text-danger"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
                 )
-              })()
-            ) : (
-              <span className="kiln-chip ok">Hợp lệ (≤ {selectedClipMod.maxSpeedCms} cm/s)</span>
-            )}
-            <button
-              type="button"
-              onClick={() => deleteClip(selectedClip.id)}
-              title="Xoá clip này (Delete)"
-              className="cursor-pointer rounded-full p-1 text-muted hover:bg-danger/20 hover:text-danger"
-            >
-              <Trash2 size={13} />
-            </button>
+              })}
           </div>
         </div>
       )}

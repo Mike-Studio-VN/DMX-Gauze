@@ -81,8 +81,8 @@ export function CollapsedTreeRail({ onExpand }: { onExpand: () => void }) {
       <button
         type="button"
         onClick={onExpand}
-        title="Mở rộng Cây màn"
-        aria-label="Mở rộng Cây màn"
+        title="Mở rộng Layers"
+        aria-label="Mở rộng Layers"
         className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-xl bg-white/[0.06] text-info shadow-[inset_0_0_0_1px_var(--line)] hover:bg-white/10"
       >
         <PanelLeftOpen size={15} />
@@ -170,7 +170,7 @@ export function CollapsedTreeRail({ onExpand }: { onExpand: () => void }) {
               </div>
             ) : (
               openLayerMods.map((m) => {
-                const selected = !selectedLayerId && selectedIds.includes(m.id)
+                const selected = selectedIds.includes(m.id)
                 const visible = m.visible ?? true
                 const [chStart, chEnd] = addressRange(m.startAddress)
                 const pos = snapshot?.modules[m.id]?.pos ?? 0

@@ -552,9 +552,9 @@ export function ControlDeck() {
   const { activeTab, setActiveTab } = useAppStore()
 
   const tabs = [
-    { id: 'buttons' as const, label: 'Mode 1 · Nút sẵn', icon: LayoutGrid },
-    { id: 'manual' as const, label: 'Mode 2 · Thủ công', icon: SlidersHorizontal },
-    { id: 'timeline' as const, label: 'Mode 3 · Timeline', icon: Clock },
+    { id: 'timeline' as const, label: 'Timeline', hint: 'Lập trình sóng & keyframe theo thời gian', icon: Clock },
+    { id: 'manual' as const, label: 'Manual', hint: 'Điều khiển thủ công trực tiếp', icon: SlidersHorizontal },
+    { id: 'buttons' as const, label: 'Custom', hint: 'Nút cue tuỳ chỉnh nhanh', icon: LayoutGrid },
   ]
 
   return (
@@ -568,6 +568,7 @@ export function ControlDeck() {
               <button
                 key={t.id}
                 type="button"
+                title={t.hint}
                 onClick={() => setActiveTab(t.id)}
                 className={`kiln-seg-btn ${active ? 'on' : ''}`}
               >

@@ -122,10 +122,13 @@ export function createDefaultProject(): Project {
       moduleId: frontModules[0].id,
       startTime: 1,
       duration: 4,
+      curveMode: 'smooth',
       keyframes: [
         { id: 'kf-1', offset: 0, height: 0 },
-        { id: 'kf-2', offset: 2, height: 1 },
-        { id: 'kf-3', offset: 4, height: 0 },
+        { id: 'kf-2', offset: 1, height: 0.7 },
+        { id: 'kf-3', offset: 2, height: 1 },
+        { id: 'kf-4', offset: 3, height: 0.7 },
+        { id: 'kf-5', offset: 4, height: 0 },
       ],
     },
     {
@@ -134,10 +137,13 @@ export function createDefaultProject(): Project {
       moduleId: backModule.id,
       startTime: 2,
       duration: 6,
+      curveMode: 'smooth',
       keyframes: [
-        { id: 'kf-4', offset: 0, height: 0 },
-        { id: 'kf-5', offset: 3, height: 2.4 },
-        { id: 'kf-6', offset: 6, height: 0 },
+        { id: 'kf-6', offset: 0, height: 0 },
+        { id: 'kf-7', offset: 1.5, height: 1.4 },
+        { id: 'kf-8', offset: 3, height: 2.4 },
+        { id: 'kf-9', offset: 4.5, height: 1.4 },
+        { id: 'kf-10', offset: 6, height: 0 },
       ],
     },
   ]

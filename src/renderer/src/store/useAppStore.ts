@@ -24,6 +24,8 @@ import { getBridge } from '../services/bridge'
 
 export type ControlTab = 'buttons' | 'manual' | 'timeline'
 export type FocusScope = 'tree' | 'buttons' | 'timeline'
+export type SettingsTab = 'network' | 'safety' | 'ltc' | 'project'
+export type SettingsScope = 'all' | 'dmx' | 'timecode'
 
 export interface ToastMsg {
   id: number
@@ -55,13 +57,15 @@ interface AppState {
   snapshot: SnapshotDto | null
   activeTab: ControlTab
   settingsOpen: boolean
+  settingsTab: SettingsTab
+  settingsScope: SettingsScope
   toast: ToastMsg | null
 
   init: () => Promise<void>
   notify: (text: string, kind?: ToastMsg['kind']) => void
   setActiveTab: (tab: ControlTab) => void
   setFocusScope: (scope: FocusScope) => void
-  setSettingsOpen: (open: boolean) => void
+  setSettingsOpen: (open: boolean, tab?: SettingsTab, scope?: SettingsScope) => void
 
   undo: () => void
   redo: () => void
@@ -170,7 +174,7 @@ export const useAppStore = create<AppState>((set, get) => {
     future: [],
     collapsedLayers: {},
 
-    focusScope: 'tree',
+    focusScope: 'timeline',
     selectedIds: ['m-front-1'],
     selectedLayerId: null,
     selectedButtonId: null,
@@ -182,8 +186,10 @@ export const useAppStore = create<AppState>((set, get) => {
     copiedClips: [],
 
     snapshot: null,
-    activeTab: 'manual',
+    activeTab: 'timeline',
     settingsOpen: false,
+    settingsTab: 'network',
+    settingsScope: 'all',
     toast: null,
 
     notify(text, kind = 'info') {
@@ -222,7 +228,12 @@ export const useAppStore = create<AppState>((set, get) => {
         focusScope: activeTab === 'buttons' ? 'buttons' : activeTab === 'timeline' ? 'timeline' : 'tree',
       }),
     setFocusScope: (focusScope) => set({ focusScope }),
-    setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+    setSettingsOpen: (settingsOpen, tab, scope) =>
+      set((s) => ({
+        settingsOpen,
+        settingsScope: scope ?? s.settingsScope,
+        settingsTab: tab ?? (scope === 'timecode' ? 'ltc' : scope === 'dmx' ? 'network' : s.settingsTab),
+      })),
 
     undo() {
       const { past, future, project, selectedIds } = get()
@@ -381,8 +392,20 @@ export const useAppStore = create<AppState>((set, get) => {
     selectTimelineClip: (selectedClipId) =>
       set({ selectedClipId, selectedTimelineLayerId: null, focusScope: 'timeline' }),
 
-    selectTimelineLayer: (selectedTimelineLayerId) =>
-      set({ selectedTimelineLayerId, selectedClipId: null, focusScope: 'timeline' }),
+    selectTimelineLayer(selectedTimelineLayerId) {
+      if (!selectedTimelineLayerId) {
+        set({ selectedTimelineLayerId: null, selectedClipId: null, focusScope: 'timeline' })
+        return
+      }
+      const ids = get().project.modules.filter((m) => m.layerId === selectedTimelineLayerId).map((m) => m.id)
+      set({
+        selectedTimelineLayerId,
+        selectedClipId: null,
+        selectedLayerId: selectedTimelineLayerId,
+        selectedIds: ids,
+        focusScope: 'timeline',
+      })
+    },
 
     addModule(layerId, opts) {
       const { project, collapsedLayers } = get()

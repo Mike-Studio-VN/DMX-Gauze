@@ -151,7 +151,7 @@ export function PropertiesPanel() {
   }
 
   if (selected.length === 0) {
-    return <p className="text-xs text-muted">Chọn một Layer hoặc Module bên Cây màn để chỉnh thông số.</p>
+    return <p className="text-xs text-muted">Chọn một Layer hoặc Module bên Layers để chỉnh thông số.</p>
   }
 
   if (!single) {

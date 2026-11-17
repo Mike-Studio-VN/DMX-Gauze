@@ -1,6 +1,107 @@
-import type { Command, ModuleCfg, TimelineClip, TimelineKey } from './types'
+import type { ClipKeyframe, Command, ModuleCfg, TimelineClip, TimelineKey } from './types'
 
 const MIN_DURATION = 0.05
+
+export type CurvePresetId = 'flat' | 'sine' | 'bell' | 'triangle' | 'hold' | 'double' | 'steps'
+
+export interface CurvePresetMeta {
+  id: CurvePresetId
+  label: string
+  /** Tỉ lệ (từ 0..1 thời gian, 0..1 biên độ min..max). Đầu và cuối mặc định là 0. */
+  points: Array<[number, number]>
+}
+
+export const CURVE_PRESETS: CurvePresetMeta[] = [
+  {
+    id: 'flat',
+    label: 'Phẳng (0–0)',
+    points: [
+      [0, 0],
+      [1, 0],
+    ],
+  },
+  {
+    id: 'sine',
+    label: 'Sóng Sin',
+    points: [
+      [0, 0],
+      [0.25, 0.71],
+      [0.5, 1],
+      [0.75, 0.71],
+      [1, 0],
+    ],
+  },
+  {
+    id: 'bell',
+    label: 'Vòm mượt',
+    points: [
+      [0, 0],
+      [0.2, 0.25],
+      [0.5, 1],
+      [0.8, 0.25],
+      [1, 0],
+    ],
+  },
+  {
+    id: 'triangle',
+    label: 'Đỉnh nhọn',
+    points: [
+      [0, 0],
+      [0.5, 1],
+      [1, 0],
+    ],
+  },
+  {
+    id: 'hold',
+    label: 'Lên giữ đỉnh',
+    points: [
+      [0, 0],
+      [0.25, 1],
+      [0.75, 1],
+      [1, 0],
+    ],
+  },
+  {
+    id: 'double',
+    label: '2 nhịp sóng',
+    points: [
+      [0, 0],
+      [0.2, 0.85],
+      [0.5, 0.2],
+      [0.8, 1],
+      [1, 0],
+    ],
+  },
+  {
+    id: 'steps',
+    label: 'Bậc thang',
+    points: [
+      [0, 0],
+      [0.25, 0.45],
+      [0.5, 0.75],
+      [0.75, 1],
+      [1, 0],
+    ],
+  },
+]
+
+/** Tạo danh sách keyframe từ đồ thị mẫu; luôn giữ key đầu và cuối ở minHeight (mặc định 0). */
+export function buildCurveKeyframes(
+  presetId: CurvePresetId,
+  duration: number,
+  minHeight: number,
+  maxHeight: number,
+): ClipKeyframe[] {
+  const preset = CURVE_PRESETS.find((p) => p.id === presetId) ?? CURVE_PRESETS[0]
+  const lo = Math.max(0, minHeight)
+  const hi = Math.max(lo, maxHeight)
+  const now = Date.now()
+  return preset.points.map(([tNorm, hNorm], idx) => ({
+    id: `kf-${now}-${idx}-${Math.random().toString(36).slice(2, 5)}`,
+    offset: Number((tNorm * duration).toFixed(2)),
+    height: Number((lo + hNorm * (hi - lo)).toFixed(2)),
+  }))
+}
 
 export interface SegmentIssue {
   clipId: string

@@ -306,19 +306,23 @@ export function GauzeTree() {
             >
               {/* Layer header theo ngôn ngữ Kiln (.lh / .lh.sel) */}
               <div
+                onClick={() => renamingLayerId !== layer.id && selectLayer(layer.id)}
                 onContextMenu={(e) => {
                   e.preventDefault()
                   selectLayer(layer.id)
                   setCtxMenu({ kind: 'layer', x: e.clientX, y: e.clientY, layer })
                 }}
-                className={`kiln-layer group flex items-center justify-between gap-1 px-2 py-1.5 transition ${
+                className={`kiln-layer group flex cursor-pointer items-center justify-between gap-1 px-2 py-1.5 transition ${
                   layerSelected ? 'sel' : ''
                 } ${!layerVisible ? 'opacity-45' : ''}`}
               >
                 <div className="flex min-w-0 flex-1 items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => toggleLayerCollapse(layer.id)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      toggleLayerCollapse(layer.id)
+                    }}
                     title={collapsed ? 'Mở rộng layer' : 'Thu gọn layer'}
                     aria-label={collapsed ? `Mở rộng ${layer.name}` : `Thu gọn ${layer.name}`}
                     className={`cursor-pointer rounded-full p-0.5 ${
@@ -332,6 +336,7 @@ export function GauzeTree() {
                     <input
                       autoFocus
                       value={renameText}
+                      onClick={(e) => e.stopPropagation()}
                       onChange={(e) => setRenameText(e.target.value)}
                       onBlur={() => {
                         renameLayer(layer.id, renameText)
@@ -370,45 +375,21 @@ export function GauzeTree() {
                 <div className="flex items-center gap-0.5">
                   <button
                     type="button"
-                    onClick={() => toggleLayerVisibility(layer.id)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      toggleLayerVisibility(layer.id)
+                    }}
                     title={layerVisible ? 'Ẩn Layer trên 3D' : 'Hiện Layer trên 3D'}
                     className={`cursor-pointer rounded-full p-1 transition ${
                       layerSelected
-                        ? 'text-[#1C0E04]/80 hover:bg-black/15'
+                        ? 'text-[#1C0E04]/85 hover:bg-black/15'
                         : layerVisible
-                          ? 'text-muted opacity-0 group-hover:opacity-100 hover:bg-white/10 hover:text-fg'
+                          ? 'text-muted opacity-70 hover:bg-white/10 hover:text-fg hover:opacity-100'
                           : 'text-warn opacity-100 hover:bg-white/10'
                     }`}
                   >
-                    {layerVisible ? <Eye size={12} /> : <EyeOff size={12} />}
+                    {layerVisible ? <Eye size={13} /> : <EyeOff size={13} />}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRenamingLayerId(layer.id)
-                      setRenameText(layer.name)
-                    }}
-                    title="Đổi tên layer"
-                    className={`cursor-pointer rounded-full p-1 opacity-0 transition group-hover:opacity-100 ${
-                      layerSelected ? 'text-[#1C0E04]/80 hover:bg-black/15' : 'text-muted hover:bg-white/10 hover:text-fg'
-                    }`}
-                  >
-                    <Edit3 size={12} />
-                  </button>
-                  {project.layers.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removeLayer(layer.id)}
-                      title="Xoá layer"
-                      className={`cursor-pointer rounded-full p-1 opacity-0 transition group-hover:opacity-100 ${
-                        layerSelected
-                          ? 'text-[#1C0E04]/80 hover:bg-black/15'
-                          : 'text-muted hover:bg-danger/20 hover:text-danger'
-                      }`}
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  )}
                 </div>
               </div>
 
@@ -420,7 +401,7 @@ export function GauzeTree() {
                     </div>
                   ) : (
                     mods.map((m, idx) => {
-                      const selected = !selectedLayerId && selectedIds.includes(m.id)
+                      const selected = selectedIds.includes(m.id)
                       const st = snapshot?.modules[m.id]
                       const [chStart, chEnd] = addressRange(m.startAddress)
                       const conflictWith = conflicts.get(m.id)
@@ -539,7 +520,7 @@ export function GauzeTree() {
                           </div>
 
                           <div
-                            className="ml-1 flex items-center gap-0.5"
+                            className="ml-1 flex items-center"
                             onClick={(e) => e.stopPropagation()}
                           >
                             <button
@@ -548,45 +529,11 @@ export function GauzeTree() {
                               title={modVisible ? 'Ẩn Module' : 'Hiện Module'}
                               className={`cursor-pointer rounded-full p-1 transition ${
                                 modVisible
-                                  ? 'text-muted opacity-0 group-hover:opacity-100 hover:bg-white/10 hover:text-fg'
+                                  ? 'text-muted opacity-70 hover:bg-white/10 hover:text-fg hover:opacity-100'
                                   : 'text-warn opacity-100 hover:bg-white/10'
                               }`}
                             >
-                              {modVisible ? <Eye size={12} /> : <EyeOff size={12} />}
-                            </button>
-                            <button
-                              type="button"
-                              disabled={idx === 0}
-                              onClick={() => moveModule(m.id, -1)}
-                              title="Đưa lên"
-                              className="cursor-pointer rounded-full p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-white/10 hover:text-fg disabled:opacity-30"
-                            >
-                              <ArrowUp size={12} />
-                            </button>
-                            <button
-                              type="button"
-                              disabled={idx === mods.length - 1}
-                              onClick={() => moveModule(m.id, 1)}
-                              title="Đưa xuống"
-                              className="cursor-pointer rounded-full p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-white/10 hover:text-fg disabled:opacity-30"
-                            >
-                              <ArrowDown size={12} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => duplicateModule(m.id)}
-                              title="Nhân bản module"
-                              className="cursor-pointer rounded-full p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-white/10 hover:text-fg"
-                            >
-                              <Copy size={12} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => removeModule(m.id)}
-                              title="Xoá module"
-                              className="cursor-pointer rounded-full p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-danger/20 hover:text-danger"
-                            >
-                              <Trash2 size={12} />
+                              {modVisible ? <Eye size={13} /> : <EyeOff size={13} />}
                             </button>
                           </div>
                         </div>
@@ -606,7 +553,7 @@ export function GauzeTree() {
           role="menu"
           style={{
             left: Math.min(ctxMenu.x, window.innerWidth - 205),
-            top: Math.min(ctxMenu.y, window.innerHeight - 210),
+            top: Math.min(ctxMenu.y, window.innerHeight - 265),
           }}
           className="kiln-panel fixed z-50 w-48 overflow-hidden py-1.5 text-xs shadow-2xl"
         >
@@ -662,44 +609,68 @@ export function GauzeTree() {
               )}
             </>
           ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  setRenamingModId(ctxMenu.mod.id)
-                  setRenameText(ctxMenu.mod.name)
-                }}
-                className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
-              >
-                <Edit3 size={13} className="text-info" />
-                Đổi tên Module
-              </button>
-              <button
-                type="button"
-                onClick={() => duplicateModule(ctxMenu.mod.id)}
-                className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
-              >
-                <Copy size={13} className="text-[#FFB26B]" />
-                Nhân bản Module
-              </button>
-              <button
-                type="button"
-                onClick={() => toggleModuleVisibility(ctxMenu.mod.id)}
-                className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
-              >
-                {(ctxMenu.mod.visible ?? true) ? <EyeOff size={13} className="text-warn" /> : <Eye size={13} className="text-ok" />}
-                {(ctxMenu.mod.visible ?? true) ? 'Ẩn Module' : 'Hiện Module'}
-              </button>
-              <div className="mx-3 my-1 border-t border-line" />
-              <button
-                type="button"
-                onClick={() => removeModule(ctxMenu.mod.id)}
-                className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-danger hover:bg-danger/15"
-              >
-                <Trash2 size={13} />
-                Xoá Module
-              </button>
-            </>
+            (() => {
+              const layerMods = project.modules.filter((m) => m.layerId === ctxMenu.mod.layerId)
+              const modIdx = layerMods.findIndex((m) => m.id === ctxMenu.mod.id)
+              return (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRenamingModId(ctxMenu.mod.id)
+                      setRenameText(ctxMenu.mod.name)
+                    }}
+                    className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
+                  >
+                    <Edit3 size={13} className="text-info" />
+                    Đổi tên Module
+                  </button>
+                  <button
+                    type="button"
+                    disabled={modIdx <= 0}
+                    onClick={() => moveModule(ctxMenu.mod.id, -1)}
+                    className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-35"
+                  >
+                    <ArrowUp size={13} className="text-muted" />
+                    Đưa lên
+                  </button>
+                  <button
+                    type="button"
+                    disabled={modIdx === -1 || modIdx >= layerMods.length - 1}
+                    onClick={() => moveModule(ctxMenu.mod.id, 1)}
+                    className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-35"
+                  >
+                    <ArrowDown size={13} className="text-muted" />
+                    Đưa xuống
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => duplicateModule(ctxMenu.mod.id)}
+                    className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
+                  >
+                    <Copy size={13} className="text-[#FFB26B]" />
+                    Nhân bản Module
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleModuleVisibility(ctxMenu.mod.id)}
+                    className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
+                  >
+                    {(ctxMenu.mod.visible ?? true) ? <EyeOff size={13} className="text-warn" /> : <Eye size={13} className="text-ok" />}
+                    {(ctxMenu.mod.visible ?? true) ? 'Ẩn Module' : 'Hiện Module'}
+                  </button>
+                  <div className="mx-3 my-1 border-t border-line" />
+                  <button
+                    type="button"
+                    onClick={() => removeModule(ctxMenu.mod.id)}
+                    className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-danger hover:bg-danger/15"
+                  >
+                    <Trash2 size={13} />
+                    Xoá Module
+                  </button>
+                </>
+              )
+            })()
           )}
         </div>
       )}

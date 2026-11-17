@@ -89,6 +89,8 @@ export interface TimelineClip {
   startTime: number
   /** Độ dài clip (giây). */
   duration: number
+  /** Dạng đường cong hiển thị: mượt (spline) hoặc thẳng (linear). */
+  curveMode?: 'smooth' | 'linear'
   keyframes: ClipKeyframe[]
 }
 

@@ -113,6 +113,25 @@ describe('timecode & timeline', () => {
     expect(issues[0].requiredCms).toBeCloseTo(200, 1)
     expect(issues[0].feasible).toBe(false)
   })
+
+  it('buildCurveKeyframes tạo đồ thị mẫu chuẩn 0-0 và đỉnh theo maxHeight', async () => {
+    const { CURVE_PRESETS, buildCurveKeyframes } = await import('./timeline')
+    expect(CURVE_PRESETS.length).toBeGreaterThanOrEqual(5)
+
+    const flat = buildCurveKeyframes('flat', 4, 0, 1.5)
+    expect(flat).toHaveLength(2)
+    expect(flat[0]).toMatchObject({ offset: 0, height: 0 })
+    expect(flat[1]).toMatchObject({ offset: 4, height: 0 })
+
+    for (const presetId of ['sine', 'bell', 'triangle', 'double', 'hold', 'steps'] as const) {
+      const kfs = buildCurveKeyframes(presetId, 6, 0, 2)
+      expect(kfs[0].offset).toBe(0)
+      expect(kfs[0].height).toBe(0)
+      expect(kfs[kfs.length - 1].offset).toBe(6)
+      expect(kfs[kfs.length - 1].height).toBe(0)
+      expect(Math.max(...kfs.map((k) => k.height))).toBeCloseTo(2, 1)
+    }
+  })
 })
 
 describe('ltc decoder', () => {

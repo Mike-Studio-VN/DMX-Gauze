@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
+import mikLogo from './assets/mik-logo.png'
 import {
   ChevronDown,
+  Clock,
   Download,
   FilePlus,
   Folder,
   FolderOpen,
   Lock,
+  Network,
   OctagonX,
   PanelLeftClose,
   PanelLeftOpen,
@@ -37,7 +40,7 @@ function Panel({
   onToggleCollapse,
   children,
 }: {
-  title: string
+  title?: string
   collapsed?: boolean
   collapseSide?: 'left' | 'right'
   onToggleCollapse?: () => void
@@ -45,13 +48,14 @@ function Panel({
 }) {
   if (collapsed && onToggleCollapse) {
     const OpenIcon = collapseSide === 'right' ? PanelRightOpen : PanelLeftOpen
+    const label = title ?? 'Bảng'
     return (
       <section className="kiln-panel flex min-h-0 flex-col items-center py-3">
         <button
           type="button"
           onClick={onToggleCollapse}
-          title={`Mở rộng ${title}`}
-          aria-label={`Mở rộng ${title}`}
+          title={`Mở rộng ${label}`}
+          aria-label={`Mở rộng ${label}`}
           className="cursor-pointer rounded-full p-1.5 text-info hover:bg-white/10"
         >
           <OpenIcon size={16} />
@@ -59,35 +63,38 @@ function Panel({
         <button
           type="button"
           onClick={onToggleCollapse}
-          title={`Mở rộng ${title}`}
+          title={`Mở rộng ${label}`}
           style={{ writingMode: 'vertical-rl' }}
           className="mt-3 flex-1 cursor-pointer text-[11px] font-semibold tracking-wider text-muted hover:text-fg"
         >
-          {title}
+          {label}
         </button>
       </section>
     )
   }
 
   const CloseIcon = collapseSide === 'right' ? PanelRightClose : PanelLeftClose
+  const showHeader = Boolean(title || onToggleCollapse)
 
   return (
     <section className="kiln-panel flex min-h-0 min-w-0 flex-col overflow-hidden">
-      <div className="flex h-[42px] shrink-0 items-center justify-between px-4">
-        <h2 className="text-[13.5px] font-semibold text-fg">{title}</h2>
-        {onToggleCollapse && (
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            title={`Thu gọn ${title}`}
-            aria-label={`Thu gọn ${title}`}
-            className="cursor-pointer rounded-full p-1 text-muted hover:bg-white/10 hover:text-fg"
-          >
-            <CloseIcon size={14} />
-          </button>
-        )}
-      </div>
-      <div className="min-h-0 min-w-0 flex-1 px-3 pb-3">{children}</div>
+      {showHeader && (
+        <div className="flex h-[42px] shrink-0 items-center justify-between px-4">
+          {title ? <h2 className="text-[13.5px] font-semibold text-fg">{title}</h2> : <span />}
+          {onToggleCollapse && (
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              title={`Thu gọn ${title ?? ''}`}
+              aria-label={`Thu gọn ${title ?? ''}`}
+              className="cursor-pointer rounded-full p-1 text-muted hover:bg-white/10 hover:text-fg"
+            >
+              <CloseIcon size={14} />
+            </button>
+          )}
+        </div>
+      )}
+      <div className={`min-h-0 min-w-0 flex-1 px-3 pb-3 ${showHeader ? '' : 'pt-3'}`}>{children}</div>
     </section>
   )
 }
@@ -242,23 +249,23 @@ export function App() {
   const fileLabel = projectFilePath ? projectFilePath.split(/[\\/]/).pop() : 'Chưa lưu'
 
   const statusMeta = (() => {
-    if (!st || st.state === 'idle') return { chip: 'kiln-chip', dot: 'bg-muted', text: 'Đang khởi tạo...', icon: Wifi }
+    if (!st || st.state === 'idle') return { chip: 'kiln-chip', dot: 'bg-muted', text: 'Khởi tạo', icon: Wifi }
     if (st.state === 'error') {
-      return { chip: 'kiln-chip danger', dot: 'bg-danger', text: st.message ?? 'Lỗi mạng', icon: WifiOff }
+      return { chip: 'kiln-chip danger', dot: 'bg-danger', text: 'Lỗi mạng', icon: WifiOff }
     }
-    if (st.state === 'lost') return { chip: 'kiln-chip danger', dot: 'bg-danger', text: 'Mất kết nối Node', icon: WifiOff }
+    if (st.state === 'lost') return { chip: 'kiln-chip danger', dot: 'bg-danger', text: 'Mất Node', icon: WifiOff }
     if (st.state === 'online') {
       return {
         chip: 'kiln-chip ok',
         dot: 'bg-ok',
-        text: `Trực tuyến · ${st.nodes.length} Node · ${st.sendHz}Hz`,
+        text: `${st.nodes.length} Node · ${st.sendHz}Hz`,
         icon: Wifi,
       }
     }
     return {
       chip: 'kiln-chip warn',
       dot: 'bg-warn',
-      text: `Đang gửi (${st.sendHz}Hz) · Chưa thấy Node`,
+      text: `Chờ Node · ${st.sendHz}Hz`,
       icon: Wifi,
     }
   })()
@@ -279,12 +286,11 @@ export function App() {
               title="Menu dự án: New, Open, Save, Save As, Settings, Xuất file"
               className="flex cursor-pointer items-center gap-2.5 rounded-xl px-1.5 py-1 transition hover:bg-white/5"
             >
-              <span
-                style={{ background: 'var(--acc-grad)' }}
-                className="grid size-7 place-items-center rounded-[9px] text-sm font-bold text-brand-fg shadow-[inset_0_1px_0_rgba(255,255,255,.45)]"
-              >
-                G
-              </span>
+              <img
+                src={mikLogo}
+                alt="MIK"
+                className="size-7 shrink-0 object-contain"
+              />
               <span className="text-left">
                 <span className="flex items-center gap-1 text-[13px] leading-tight font-semibold text-fg">
                   DMX Gauze
@@ -404,12 +410,25 @@ export function App() {
                   role="menuitem"
                   onClick={() => {
                     setMenuOpen(false)
-                    setSettingsOpen(true)
+                    setSettingsOpen(true, 'network', 'dmx')
                   }}
                   className="mx-2 flex h-9 w-[calc(100%-16px)] cursor-pointer items-center gap-3 rounded-xl px-2.5 text-left text-[12.5px] text-fg hover:bg-white/8"
                 >
-                  <Settings size={15} className="text-muted" />
-                  <span className="flex-1">Cài đặt hệ thống</span>
+                  <Network size={15} className="text-info" />
+                  <span className="flex-1">Cài đặt DMX</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    setSettingsOpen(true, 'ltc', 'timecode')
+                  }}
+                  className="mx-2 flex h-9 w-[calc(100%-16px)] cursor-pointer items-center gap-3 rounded-xl px-2.5 text-left text-[12.5px] text-fg hover:bg-white/8"
+                >
+                  <Clock size={15} className="text-[#FFB26B]" />
+                  <span className="flex-1">Cài đặt Timecode</span>
                 </button>
 
                 <div className="mx-3 my-1.5 border-t border-line" />
@@ -437,14 +456,13 @@ export function App() {
 
           <button
             type="button"
-            onClick={() => setSettingsOpen(true)}
-            title={`Giao thức: ${out.driver.toUpperCase()} · Đích: ${out.ip}:${out.port} · Universe ${out.universe}. Bấm để mở Cài đặt mạng`}
-            className={`${statusMeta.chip} h-7 cursor-pointer px-3 text-[11px]`}
+            onClick={() => setSettingsOpen(true, 'network', 'dmx')}
+            title={`Trạng thái: ${st?.state ?? 'idle'} · Giao thức: ${out.driver.toUpperCase()} · Đích: ${out.ip}:${out.port} · Universe ${out.universe}. Bấm để mở Cài đặt DMX`}
+            className={`${statusMeta.chip} h-7 cursor-pointer px-2.5 text-[11px]`}
           >
             <span className={`size-1.5 rounded-full ${statusMeta.dot}`} />
-            <StatusIcon size={13} aria-hidden />
+            <StatusIcon size={12} aria-hidden />
             <span>{statusMeta.text}</span>
-            <span className="font-mono opacity-80">· {out.ip}</span>
           </button>
 
           {st?.warning && <span className="kiln-chip warn h-6">{st.warning}</span>}
@@ -489,14 +507,14 @@ export function App() {
             variant="danger"
             onClick={() => void sendCommand({ type: 'estop' })}
           >
-            <span className="font-bold">E-STOP</span>
+            <span className="font-bold">Stop</span>
           </IconButton>
 
           <IconButton
             icon={Settings}
             iconOnly
-            label="Cài đặt mạng DMX & Hệ thống"
-            onClick={() => setSettingsOpen(true)}
+            label="Cài đặt (DMX & Timecode)"
+            onClick={() => setSettingsOpen(true, 'network', 'all')}
           />
         </div>
       </header>
@@ -514,7 +532,7 @@ export function App() {
             <CollapsedTreeRail onExpand={() => setLeftCollapsed(false)} />
           ) : (
             <Panel
-              title="Cây màn"
+              title="Layers"
               collapsed={false}
               collapseSide="left"
               onToggleCollapse={() => setLeftCollapsed(true)}
@@ -527,7 +545,7 @@ export function App() {
           <div
             role="separator"
             aria-orientation="vertical"
-            title="Kéo để chỉnh chiều rộng Cây màn"
+            title="Kéo để chỉnh chiều rộng Layers"
             onPointerDown={(e) => !leftCollapsed && startResize('left', e)}
             className={`group flex items-center justify-center ${
               leftCollapsed ? 'pointer-events-none opacity-0' : 'cursor-col-resize'
@@ -559,7 +577,7 @@ export function App() {
               <span className="h-1 w-14 rounded-full bg-white/10 transition group-hover:w-24 group-hover:bg-brand" />
             </div>
 
-            <Panel title="Điều khiển">
+            <Panel>
               <ControlDeck />
             </Panel>
           </div>
