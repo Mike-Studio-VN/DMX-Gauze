@@ -4,9 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       validate_ref:
-        description: 'Optional ref/tag/SHA (e.g. v1.0.1) to validate without publishing releases'
+        description: 'Optional ref/tag/SHA (e.g. v1.0.1) for validation-only check without publishing or uploading artifacts'
         required: false
         type: string
+      validation_only:
+        description: 'Validation-only mode: run tests/builds/package verification without uploading Actions artifacts'
+        required: false
+        default: false
+        type: boolean
   pull_request:
     branches:
       - main
@@ -62,6 +67,11 @@ jobs:
         run: |
           gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes || true
           gh release upload "${GITHUB_REF_NAME}" release/*/*.exe --clobber
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.validation_only && inputs.validate_ref == '')
+        with:
+          name: dmx-gauze-windows
+          path: release/**/*.exe
 
   build-macos:
     runs-on: macos-latest
@@ -107,3 +117,10 @@ jobs:
         run: |
           gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes || true
           gh release upload "${GITHUB_REF_NAME}" release/*/*.dmg release/*/*.zip --clobber
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.validation_only && inputs.validate_ref == '')
+        with:
+          name: dmx-gauze-macos
+          path: |
+            release/**/*.dmg
+            release/**/*.zip
