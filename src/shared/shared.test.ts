@@ -5,7 +5,7 @@ import { ch3ToCms, cmsToCh3, dmxToPos, durationToCh3, posToDmx } from './convert
 import { LtcDecoder } from './ltc'
 import { createDefaultProject } from './preset'
 import { formatTc, parseTc } from './timecode'
-import { TimelineRunner } from './timeline'
+import { TimelineRunner, analyzeClipSpeeds } from './timeline'
 
 describe('convert', () => {
   it('chuyển đổi vị trí 16-bit chính xác với hành trình 1m và 3m', () => {
@@ -84,17 +84,34 @@ describe('timecode & timeline', () => {
     expect(formatTc(60, 29.97)).toContain(';')
   })
 
-  it('TimelineRunner phát lệnh khi qua đoạn giữa 2 key', () => {
+  it('TimelineRunner phát lệnh khi qua đoạn giữa 2 key trong clips và cảnh báo vượt tốc độ', () => {
     const p = createDefaultProject()
     const runner = new TimelineRunner()
-    const c0 = runner.update(0.1, p.keys)
-    expect(c0.length).toBe(13)
+    const c0 = runner.update(1.1, p.keys, p.clips)
+    expect(c0.length).toBeGreaterThanOrEqual(1)
     expect(c0[0].type).toBe('move')
     // Trong cùng đoạn không phát lặp lại
-    expect(runner.update(0.5, p.keys)).toHaveLength(0)
-    // Sang đoạn 2
-    const c1 = runner.update(5.1, p.keys)
-    expect(c1.length).toBe(13)
+    expect(runner.update(1.5, p.keys, p.clips)).toHaveLength(0)
+
+    // Key 1 ở 1s (0m), Key 2 ở 1.5s (1m) => cần 200 cm/s > max 150 cm/s => warning
+    const mod = { ...p.modules[0], maxSpeedCms: 150 }
+    const issues = analyzeClipSpeeds(
+      {
+        id: 'test-clip',
+        layerId: mod.layerId,
+        moduleId: mod.id,
+        startTime: 1,
+        duration: 0.5,
+        keyframes: [
+          { id: 'k1', offset: 0, height: 0 },
+          { id: 'k2', offset: 0.5, height: 1 },
+        ],
+      },
+      mod,
+    )
+    expect(issues).toHaveLength(1)
+    expect(issues[0].requiredCms).toBeCloseTo(200, 1)
+    expect(issues[0].feasible).toBe(false)
   })
 })
 

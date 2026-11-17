@@ -5,6 +5,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { Box, Eye, Grid, Maximize2, RotateCcw, SlidersHorizontal, Video } from 'lucide-react'
 import type { SnapshotDto } from '@shared/api'
 import { CH, addressRange } from '@shared/dmx'
+import { defaultLayerTransform, defaultModuleTransform } from '@shared/preset'
 import type { Layer, ModuleCfg } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 
@@ -12,8 +13,7 @@ type CameraPreset = 'perspective' | 'front' | 'side' | 'top'
 
 interface PositionedModule {
   mod: ModuleCfg
-  x: number
-  z: number
+  baseX: number
 }
 
 interface ModuleMeshVisuals {
@@ -34,12 +34,7 @@ interface ModuleMeshVisuals {
 
 const RIGGING_TRUSS_HEIGHT = 3.6
 const MODULE_GAP = 0.08
-
-function layerZOffset(idx: number): number {
-  if (idx === 0) return 1.2
-  if (idx === 1) return -1.4
-  return -1.4 - (idx - 1) * 2.2
-}
+const DEG2RAD = Math.PI / 180
 
 export function Stage3D() {
   const { project, selectedIds, snapshot, selectModule } = useAppStore()
@@ -56,15 +51,14 @@ export function Stage3D() {
 
   const positioned = useMemo<PositionedModule[]>(() => {
     const out: PositionedModule[] = []
-    project.layers.forEach((layer, layerIdx) => {
+    project.layers.forEach((layer) => {
       const mods = project.modules.filter((m) => m.layerId === layer.id)
       const totalWidth = mods.reduce((acc, m) => acc + m.width, 0) + Math.max(0, mods.length - 1) * MODULE_GAP
       let cursor = -totalWidth / 2
-      const z = layerZOffset(layerIdx)
       mods.forEach((mod) => {
-        const x = cursor + mod.width / 2
+        const baseX = cursor + mod.width / 2
         cursor += mod.width + MODULE_GAP
-        out.push({ mod, x, z })
+        out.push({ mod, baseX })
       })
     })
     return out
@@ -175,7 +169,7 @@ export function Stage3D() {
     }
     controls.addEventListener('start', cancelCameraTransition)
 
-    // Hệ thống ánh sáng sân khấu 3 điểm
+    // Ánh sáng 3 điểm
     const hemiLight = new THREE.HemisphereLight(0x8db8ff, 0x161d2a, 0.85)
     hemiLight.position.set(0, 10, 0)
     scene.add(hemiLight)
@@ -203,7 +197,7 @@ export function Stage3D() {
     warmStageSpot.position.set(0, 4.5, 2.5)
     scene.add(warmStageSpot)
 
-    // Mặt sàn sân khấu & lưới mét
+    // Sàn sân khấu & lưới
     const stageDeck = new THREE.Mesh(
       new THREE.BoxGeometry(16.5, 0.14, 7.5),
       new THREE.MeshStandardMaterial({ color: 0x111724, roughness: 0.75, metalness: 0.2 }),
@@ -257,7 +251,7 @@ export function Stage3D() {
     }
     const gauzeTexture = createGauzeTexture()
 
-    // Thước kẻ chiều cao (0m từ truss xuống 3m)
+    // Thước kẻ chiều cao
     const rulerGroup = new THREE.Group()
     const rulerMat = new THREE.LineDashedMaterial({
       color: 0x8db8ff,
@@ -279,7 +273,7 @@ export function Stage3D() {
     scene.add(rulerGroup)
     rulerGroupRef.current = rulerGroup
 
-    // Trụ truss hai bên & dầm ngang động theo số lượng layer
+    // Trụ truss hai bên sân khấu
     const towerPillarGeo = new THREE.CylinderGeometry(0.08, 0.08, RIGGING_TRUSS_HEIGHT + 0.3, 12)
     const towerMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.85, roughness: 0.28 })
     ;[-7.6, 7.6].forEach((xPos) => {
@@ -292,33 +286,45 @@ export function Stage3D() {
 
     const overheadTrussGeo = new THREE.BoxGeometry(15.4, 0.18, 0.18)
     const overheadTrussMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.88, roughness: 0.22 })
-    const beamsGroup = new THREE.Group()
-    scene.add(beamsGroup)
-    let lastLayerCount = -1
 
-    // Vật liệu dùng chung cho cụm tời VDF H2 + màn gauze
     const winchHousingMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.48, metalness: 0.55 })
     const clampMat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.2, metalness: 0.9 })
     const cableMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.25, metalness: 0.92 })
     const bottomWeightBarMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.35, metalness: 0.8 })
 
+    // Phân cấp 3D: Scene -> LayerGroup (dầm truss + transform Layer) -> Module rootGroup (neo cạnh trên ở y=0)
+    const layerGroupsMap = new Map<string, THREE.Group>()
     const visualsMap = new Map<string, ModuleMeshVisuals>()
     const raycastTargets: THREE.Object3D[] = []
 
+    const getOrCreateLayerGroup = (layerId: string): THREE.Group => {
+      let g = layerGroupsMap.get(layerId)
+      if (!g) {
+        g = new THREE.Group()
+        const beam = new THREE.Mesh(overheadTrussGeo, overheadTrussMat)
+        beam.position.set(0, 0.16, 0) // dính ngay trên điểm treo tời y=0
+        g.add(beam)
+        scene.add(g)
+        layerGroupsMap.set(layerId, g)
+      }
+      return g
+    }
+
     const createModuleVisual = (mod: ModuleCfg): ModuleMeshVisuals => {
+      // Gốc tọa độ y=0 của rootGroup nằm đúng ở cạnh trên gắn vào Layer
       const rootGroup = new THREE.Group()
       const w = Math.max(0.3, mod.width)
 
       const winchBody = new THREE.Mesh(new THREE.BoxGeometry(w * 0.96, 0.14, 0.14), winchHousingMat)
-      winchBody.position.set(0, RIGGING_TRUSS_HEIGHT, 0)
+      winchBody.position.set(0, 0, 0)
       winchBody.castShadow = !isSoftwareGl
       rootGroup.add(winchBody)
 
       const clampGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.12, 10)
       const leftClamp = new THREE.Mesh(clampGeo, clampMat)
-      leftClamp.position.set(-w * 0.34, RIGGING_TRUSS_HEIGHT + 0.11, 0)
+      leftClamp.position.set(-w * 0.34, 0.11, 0)
       const rightClamp = new THREE.Mesh(clampGeo, clampMat)
-      rightClamp.position.set(w * 0.34, RIGGING_TRUSS_HEIGHT + 0.11, 0)
+      rightClamp.position.set(w * 0.34, 0.11, 0)
       rootGroup.add(leftClamp, rightClamp)
 
       const accentStrip = new THREE.Mesh(
@@ -330,14 +336,14 @@ export function Stage3D() {
           roughness: 0.3,
         }),
       )
-      accentStrip.position.set(0, RIGGING_TRUSS_HEIGHT, 0.073)
+      accentStrip.position.set(0, 0, 0.073)
       rootGroup.add(accentStrip)
 
       const statusLed = new THREE.Mesh(
         new THREE.SphereGeometry(0.02, 10, 10),
         new THREE.MeshStandardMaterial({ color: 0x22c55e, emissive: 0x22c55e, emissiveIntensity: 0.9 }),
       )
-      statusLed.position.set(w * 0.4, RIGGING_TRUSS_HEIGHT + 0.03, 0.075)
+      statusLed.position.set(w * 0.4, 0.03, 0.075)
       rootGroup.add(statusLed)
 
       const cableGeo = new THREE.CylinderGeometry(0.005, 0.005, 1, 6)
@@ -386,12 +392,10 @@ export function Stage3D() {
         new THREE.BoxGeometry(w * 0.98, Math.max(1.2, mod.length + 0.3), 0.24),
         new THREE.MeshBasicMaterial({ visible: false }),
       )
-      hitboxMesh.position.set(0, RIGGING_TRUSS_HEIGHT - Math.max(1.2, mod.length) / 2, 0)
+      hitboxMesh.position.set(0, -Math.max(1.2, mod.length) / 2, 0)
       hitboxMesh.userData = { moduleId: mod.id }
       rootGroup.add(hitboxMesh)
       raycastTargets.push(hitboxMesh)
-
-      scene.add(rootGroup)
 
       return {
         rootGroup,
@@ -511,31 +515,42 @@ export function Stage3D() {
       const snap = snapshotRef.current
       const isLocked = snap?.locked ?? true
 
-      if (currentLayers.length !== lastLayerCount) {
-        lastLayerCount = currentLayers.length
-        beamsGroup.clear()
-        currentLayers.forEach((_, idx) => {
-          const beam = new THREE.Mesh(overheadTrussGeo, overheadTrussMat)
-          beam.position.set(0, RIGGING_TRUSS_HEIGHT + 0.16, layerZOffset(idx))
-          beamsGroup.add(beam)
-        })
+      // Đồng bộ LayerGroups + transform 3D & visible
+      const activeLayerIds = new Set(currentLayers.map((l) => l.id))
+      for (const [id, lg] of layerGroupsMap.entries()) {
+        if (!activeLayerIds.has(id)) {
+          scene.remove(lg)
+          layerGroupsMap.delete(id)
+        }
       }
+      currentLayers.forEach((layer, idx) => {
+        const lg = getOrCreateLayerGroup(layer.id)
+        const tf = layer.transform ?? defaultLayerTransform(idx)
+        lg.visible = layer.visible ?? true
+        lg.position.set(tf.position[0], tf.position[1], tf.position[2])
+        lg.rotation.set(tf.rotation[0] * DEG2RAD, tf.rotation[1] * DEG2RAD, tf.rotation[2] * DEG2RAD)
+        lg.scale.set(tf.scale[0], tf.scale[1], tf.scale[2])
+      })
 
+      // Dọn module bị xoá
       const activeIds = new Set(currentItems.map((p) => p.mod.id))
       for (const [id, vis] of visualsMap.entries()) {
         if (!activeIds.has(id)) {
-          scene.remove(vis.rootGroup)
+          vis.rootGroup.parent?.remove(vis.rootGroup)
           const idx = raycastTargets.indexOf(vis.hitboxMesh)
           if (idx !== -1) raycastTargets.splice(idx, 1)
           visualsMap.delete(id)
         }
       }
 
-      for (const { mod, x, z } of currentItems) {
+      const layerVisMap = new Map(currentLayers.map((l) => [l.id, l.visible ?? true]))
+
+      for (const { mod, baseX } of currentItems) {
+        const lg = getOrCreateLayerGroup(mod.layerId)
         let vis = visualsMap.get(mod.id)
         if (!vis || Math.abs(vis.lastWidth - mod.width) > 0.01 || Math.abs(vis.lastLength - mod.length) > 0.01) {
           if (vis) {
-            scene.remove(vis.rootGroup)
+            vis.rootGroup.parent?.remove(vis.rootGroup)
             const idx = raycastTargets.indexOf(vis.hitboxMesh)
             if (idx !== -1) raycastTargets.splice(idx, 1)
           }
@@ -543,14 +558,28 @@ export function Stage3D() {
           visualsMap.set(mod.id, vis)
         }
 
-        vis.rootGroup.position.set(x, 0, z)
+        if (vis.rootGroup.parent !== lg) lg.add(vis.rootGroup)
+
+        const modVisible = (mod.visible ?? true) && (layerVisMap.get(mod.layerId) ?? true)
+        vis.rootGroup.visible = modVisible
+        if (!modVisible) continue
+
+        // Transform của Module: cạnh trên (local y=0) luôn dính vào Layer
+        const mtf = mod.transform ?? defaultModuleTransform()
+        vis.rootGroup.position.set(baseX + mtf.position[0], 0, mtf.position[2])
+        vis.rootGroup.rotation.set(
+          mtf.rotation[0] * DEG2RAD,
+          mtf.rotation[1] * DEG2RAD,
+          mtf.rotation[2] * DEG2RAD,
+        )
+        vis.rootGroup.scale.set(mtf.scale[0], mtf.scale[1], mtf.scale[2])
 
         const modState = snap?.modules[mod.id]
         const pos = modState?.pos ?? 0
         const isMoving = modState?.moving ?? false
 
         const dropMeters = Math.max(0.04, pos)
-        const topY = RIGGING_TRUSS_HEIGHT - 0.07
+        const topY = -0.07 // ngay dưới hộp tời (trên gốc 0 của module)
         const centerY = topY - dropMeters / 2
         const bottomY = topY - dropMeters
 

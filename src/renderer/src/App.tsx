@@ -6,9 +6,15 @@ import {
   FolderOpen,
   Lock,
   OctagonX,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+  Redo2,
   Save,
   SaveAll,
   Settings,
+  Undo2,
   Unlock,
   Wifi,
   WifiOff,
@@ -21,15 +27,72 @@ import { PropertiesPanel } from './components/PropertiesPanel'
 import { SettingsModal } from './components/SettingsModal'
 import { useAppStore } from './store/useAppStore'
 
-function Panel({ title, children }: { title: string; children?: React.ReactNode }) {
+function Panel({
+  title,
+  collapsed,
+  collapseSide,
+  onToggleCollapse,
+  children,
+}: {
+  title: string
+  collapsed?: boolean
+  collapseSide?: 'left' | 'right'
+  onToggleCollapse?: () => void
+  children?: React.ReactNode
+}) {
+  if (collapsed && onToggleCollapse) {
+    const OpenIcon = collapseSide === 'right' ? PanelRightOpen : PanelLeftOpen
+    return (
+      <section className="flex min-h-0 flex-col items-center rounded-ui border border-line bg-panel py-2">
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          title={`Mở rộng ${title}`}
+          aria-label={`Mở rộng ${title}`}
+          className="cursor-pointer rounded p-1.5 text-info hover:bg-panel-2"
+        >
+          <OpenIcon size={16} />
+        </button>
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          title={`Mở rộng ${title}`}
+          style={{ writingMode: 'vertical-rl' }}
+          className="mt-3 flex-1 cursor-pointer text-[11px] font-semibold tracking-widest text-muted uppercase hover:text-fg"
+        >
+          {title}
+        </button>
+      </section>
+    )
+  }
+
+  const CloseIcon = collapseSide === 'right' ? PanelRightClose : PanelLeftClose
+
   return (
-    <section className="flex min-h-0 flex-col rounded-ui border border-line bg-panel">
-      <h2 className="border-b border-line px-3 py-2 text-xs font-semibold tracking-wide text-muted uppercase">
-        {title}
-      </h2>
-      <div className="min-h-0 flex-1 p-3">{children}</div>
+    <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-ui border border-line bg-panel">
+      <div className="flex items-center justify-between border-b border-line px-3 py-2">
+        <h2 className="text-xs font-semibold tracking-wide text-muted uppercase">{title}</h2>
+        {onToggleCollapse && (
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            title={`Thu gọn ${title}`}
+            aria-label={`Thu gọn ${title}`}
+            className="cursor-pointer rounded p-0.5 text-muted hover:bg-panel-2 hover:text-fg"
+          >
+            <CloseIcon size={14} />
+          </button>
+        )}
+      </div>
+      <div className="min-h-0 min-w-0 flex-1 p-3">{children}</div>
     </section>
   )
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el) return false
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable
 }
 
 export function App() {
@@ -39,9 +102,17 @@ export function App() {
     project,
     projectFilePath,
     dirty,
+    past,
+    future,
+    activeTab,
     snapshot,
     toast,
     init,
+    undo,
+    redo,
+    copySelection,
+    pasteSelection,
+    deleteSelection,
     setSettingsOpen,
     sendCommand,
     newProject,
@@ -52,13 +123,15 @@ export function App() {
   } = useAppStore()
 
   const [menuOpen, setMenuOpen] = useState(false)
+  const [leftCollapsed, setLeftCollapsed] = useState(false)
+  const [rightCollapsed, setRightCollapsed] = useState(false)
   const menuRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     void init()
   }, [init])
 
-  // Đóng menu Project khi click ra ngoài hoặc bấm Escape, và hỗ trợ Cmd/Ctrl+S
+  // Đóng menu Project & Phím tắt toàn cục (Save, Undo/Redo, Copy/Paste/Delete)
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       if (menuOpen && menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -67,10 +140,34 @@ export function App() {
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setMenuOpen(false)
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+      const mod = e.metaKey || e.ctrlKey
+      const key = e.key.toLowerCase()
+
+      if (mod && key === 's') {
         e.preventDefault()
         if (e.shiftKey) void saveAsProject()
         else void saveCurrentProject()
+        return
+      }
+
+      if (isTypingTarget(e.target)) return
+
+      if (mod && key === 'z') {
+        e.preventDefault()
+        if (e.shiftKey) redo()
+        else undo()
+      } else if (mod && key === 'y') {
+        e.preventDefault()
+        redo()
+      } else if (mod && key === 'c') {
+        e.preventDefault()
+        copySelection()
+      } else if (mod && key === 'v') {
+        e.preventDefault()
+        pasteSelection()
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        deleteSelection()
       }
     }
     window.addEventListener('mousedown', onDown)
@@ -79,7 +176,7 @@ export function App() {
       window.removeEventListener('mousedown', onDown)
       window.removeEventListener('keydown', onKey)
     }
-  }, [menuOpen, saveCurrentProject, saveAsProject])
+  }, [menuOpen, saveCurrentProject, saveAsProject, undo, redo, copySelection, pasteSelection, deleteSelection])
 
   const st = snapshot?.status
   const locked = snapshot?.locked ?? true
@@ -245,6 +342,29 @@ export function App() {
         </div>
 
         <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 rounded-ui border border-line bg-panel-2 p-1">
+            <button
+              type="button"
+              disabled={past.length === 0}
+              onClick={undo}
+              title="Hoàn tác (Ctrl+Z)"
+              aria-label="Hoàn tác"
+              className="cursor-pointer rounded p-1.5 text-fg hover:bg-line disabled:cursor-default disabled:opacity-30"
+            >
+              <Undo2 size={15} />
+            </button>
+            <button
+              type="button"
+              disabled={future.length === 0}
+              onClick={redo}
+              title="Làm lại (Ctrl+Y)"
+              aria-label="Làm lại"
+              className="cursor-pointer rounded p-1.5 text-fg hover:bg-line disabled:cursor-default disabled:opacity-30"
+            >
+              <Redo2 size={15} />
+            </button>
+          </div>
+
           <IconButton
             icon={locked ? Lock : Unlock}
             label={locked ? `Mở khoá an toàn (gửi CH4 = ${project.settings.lockValue})` : 'Khoá an toàn (CH4 = 0)'}
@@ -268,12 +388,26 @@ export function App() {
       </header>
 
       {ready ? (
-        <main className="grid min-h-0 flex-1 grid-cols-[270px_1fr_300px] gap-3">
-          <Panel title="Cây màn">
+        <main
+          style={{
+            gridTemplateColumns: `${leftCollapsed ? '42px' : '270px'} minmax(0, 1fr) ${rightCollapsed ? '42px' : '300px'}`,
+          }}
+          className="grid min-h-0 min-w-0 flex-1 gap-3 transition-all"
+        >
+          <Panel
+            title="Cây màn"
+            collapsed={leftCollapsed}
+            collapseSide="left"
+            onToggleCollapse={() => setLeftCollapsed((v) => !v)}
+          >
             <GauzeTree />
           </Panel>
 
-          <div className="grid min-h-0 grid-rows-[1fr_255px] gap-3">
+          <div
+            className={`grid min-h-0 min-w-0 gap-3 ${
+              activeTab === 'timeline' ? 'grid-rows-[minmax(0,1fr)_305px]' : 'grid-rows-[minmax(0,1fr)_255px]'
+            }`}
+          >
             <Panel title="Mô phỏng 3D">
               <Stage3D />
             </Panel>
@@ -282,7 +416,12 @@ export function App() {
             </Panel>
           </div>
 
-          <Panel title="Thuộc tính">
+          <Panel
+            title="Thuộc tính"
+            collapsed={rightCollapsed}
+            collapseSide="right"
+            onToggleCollapse={() => setRightCollapsed((v) => !v)}
+          >
             <PropertiesPanel />
           </Panel>
         </main>

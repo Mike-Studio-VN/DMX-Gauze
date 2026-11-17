@@ -1,7 +1,7 @@
 import type { AppInfo, GauzeBridge, ProjectFileResult, SaveFileResult, SnapshotDto } from '@shared/api'
 import { GauzeCore } from '@shared/core'
 import { MockDriver } from '@shared/drivers'
-import { createDefaultProject } from '@shared/preset'
+import { createDefaultProject, normalizeProject } from '@shared/preset'
 import type { Command, CoreConfig, Project } from '@shared/types'
 
 const STORAGE_KEY = 'dmx-gauze-project-v1'
@@ -36,7 +36,7 @@ function createWebBridge(): GauzeBridge {
         if (raw) {
           const parsed = JSON.parse(raw) as Project
           if (parsed && parsed.version === 1 && Array.isArray(parsed.modules) && Array.isArray(parsed.layers)) {
-            return { project: parsed, filePath: webFileName }
+            return { project: normalizeProject(parsed), filePath: webFileName }
           }
         }
       } catch {
@@ -61,9 +61,10 @@ function createWebBridge(): GauzeBridge {
           try {
             const parsed = JSON.parse(await f.text()) as Project
             if (parsed && parsed.version === 1 && Array.isArray(parsed.modules) && Array.isArray(parsed.layers)) {
-              localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed))
+              const norm = normalizeProject(parsed)
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(norm))
               webFileName = f.name
-              resolve({ project: parsed, filePath: f.name })
+              resolve({ project: norm, filePath: f.name })
             } else resolve(null)
           } catch {
             resolve(null)

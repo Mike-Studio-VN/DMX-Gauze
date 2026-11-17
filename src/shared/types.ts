@@ -1,6 +1,13 @@
 export type DriverId = 'mock' | 'artnet'
 export type Fps = 24 | 25 | 29.97 | 30
 
+export interface Transform3D {
+  position: [number, number, number]
+  /** Góc xoay theo độ (X, Y, Z). */
+  rotation: [number, number, number]
+  scale: [number, number, number]
+}
+
 export interface OutputSettings {
   driver: DriverId
   /** IP đích. Mặc định 255.255.255.255 (broadcast). */
@@ -16,12 +23,16 @@ export interface OutputSettings {
 export interface Layer {
   id: string
   name: string
+  visible?: boolean
+  transform?: Transform3D
 }
 
 export interface ModuleCfg {
   id: string
   name: string
   layerId: string
+  visible?: boolean
+  transform?: Transform3D
   /** Hành trình thả tối đa (m) ứng với DMX 255. */
   length: number
   /** Bề rộng hiển thị 3D (m). */
@@ -62,6 +73,25 @@ export interface TimelineKey {
   targets: Record<string, number>
 }
 
+export interface ClipKeyframe {
+  id: string
+  /** Thời điểm tương đối từ đầu clip (giây). */
+  offset: number
+  /** Chiều cao thả màn (m). */
+  height: number
+}
+
+export interface TimelineClip {
+  id: string
+  layerId: string
+  moduleId: string
+  /** Thời điểm bắt đầu trên timeline (giây). */
+  startTime: number
+  /** Độ dài clip (giây). */
+  duration: number
+  keyframes: ClipKeyframe[]
+}
+
 export interface LtcSettings {
   deviceId: string
   channel: 'left' | 'right'
@@ -83,6 +113,7 @@ export interface Project {
   modules: ModuleCfg[]
   buttons: CueButton[]
   keys: TimelineKey[]
+  clips?: TimelineClip[]
   settings: Settings
 }
 

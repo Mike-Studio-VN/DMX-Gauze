@@ -1,6 +1,34 @@
 import { autoAssign } from './addressing'
 import { ARTNET_PORT, DEFAULT_SPEED, DEFAULT_TARGET_IP, H2_MAX_SPEED_CMS, LOCK_VALUE } from './dmx'
-import type { ModuleCfg, Project, Settings } from './types'
+import type { Layer, ModuleCfg, Project, Settings, TimelineClip, Transform3D } from './types'
+
+export function defaultLayerTransform(index: number): Transform3D {
+  const z = index === 0 ? 1.2 : index === 1 ? -1.4 : -1.4 - (index - 1) * 2.2
+  return { position: [0, 3.6, z], rotation: [0, 0, 0], scale: [1, 1, 1] }
+}
+
+export function defaultModuleTransform(): Transform3D {
+  return { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }
+}
+
+export function normalizeProject(p: Project): Project {
+  const layers: Layer[] = p.layers.map((l, idx) => ({
+    ...l,
+    visible: l.visible ?? true,
+    transform: l.transform ?? defaultLayerTransform(idx),
+  }))
+  const modules: ModuleCfg[] = p.modules.map((m) => ({
+    ...m,
+    visible: m.visible ?? true,
+    transform: m.transform ?? defaultModuleTransform(),
+  }))
+  return {
+    ...p,
+    layers,
+    modules,
+    clips: p.clips ?? [],
+  }
+}
 
 export function createBlankProject(baseSettings?: Settings): Project {
   const layerId = `layer-${Date.now()}`
@@ -8,6 +36,8 @@ export function createBlankProject(baseSettings?: Settings): Project {
     id: `m-${Date.now()}`,
     name: 'Màn 1',
     layerId,
+    visible: true,
+    transform: defaultModuleTransform(),
     length: 1,
     width: 1,
     minHeight: 0,
@@ -35,10 +65,11 @@ export function createBlankProject(baseSettings?: Settings): Project {
       }
   return {
     version: 1,
-    layers: [{ id: layerId, name: 'Lớp 1' }],
+    layers: [{ id: layerId, name: 'Lớp 1', visible: true, transform: defaultLayerTransform(0) }],
     modules: [mod],
     buttons: [],
     keys: [],
+    clips: [],
     settings,
   }
 }
@@ -51,6 +82,8 @@ export function createDefaultProject(): Project {
     id: `m-front-${i + 1}`,
     name: `Trước ${i + 1}`,
     layerId: frontId,
+    visible: true,
+    transform: defaultModuleTransform(),
     length: 1,
     width: 1,
     minHeight: 0,
@@ -64,6 +97,8 @@ export function createDefaultProject(): Project {
     id: 'm-back-1',
     name: 'Sau 1 (3m)',
     layerId: backId,
+    visible: true,
+    transform: defaultModuleTransform(),
     length: 3,
     width: 4,
     minHeight: 0,
@@ -73,12 +108,39 @@ export function createDefaultProject(): Project {
     defaultSpeed: DEFAULT_SPEED,
   }
 
-  const layers = [
-    { id: frontId, name: 'Lớp trước (12 × 1m)' },
-    { id: backId, name: 'Lớp sau (1 × 3m)' },
+  const layers: Layer[] = [
+    { id: frontId, name: 'Lớp trước (12 × 1m)', visible: true, transform: defaultLayerTransform(0) },
+    { id: backId, name: 'Lớp sau (1 × 3m)', visible: true, transform: defaultLayerTransform(1) },
   ]
 
   const modules = autoAssign(layers, [...frontModules, backModule])
+
+  const defaultClips: TimelineClip[] = [
+    {
+      id: 'clip-demo-1',
+      layerId: frontId,
+      moduleId: frontModules[0].id,
+      startTime: 1,
+      duration: 4,
+      keyframes: [
+        { id: 'kf-1', offset: 0, height: 0 },
+        { id: 'kf-2', offset: 2, height: 1 },
+        { id: 'kf-3', offset: 4, height: 0 },
+      ],
+    },
+    {
+      id: 'clip-demo-2',
+      layerId: backId,
+      moduleId: backModule.id,
+      startTime: 2,
+      duration: 6,
+      keyframes: [
+        { id: 'kf-4', offset: 0, height: 0 },
+        { id: 'kf-5', offset: 3, height: 2.4 },
+        { id: 'kf-6', offset: 6, height: 0 },
+      ],
+    },
+  ]
 
   return {
     version: 1,
@@ -110,29 +172,8 @@ export function createDefaultProject(): Project {
         speedValue: 3,
       },
     ],
-    keys: [
-      {
-        id: 'key-1',
-        time: 0,
-        targets: Object.fromEntries(modules.map((m) => [m.id, 0])),
-      },
-      {
-        id: 'key-2',
-        time: 5,
-        targets: {
-          ...Object.fromEntries(frontModules.map((m) => [m.id, 1])),
-          [backModule.id]: 1.5,
-        },
-      },
-      {
-        id: 'key-3',
-        time: 10,
-        targets: {
-          ...Object.fromEntries(frontModules.map((m) => [m.id, 0])),
-          [backModule.id]: 3,
-        },
-      },
-    ],
+    keys: [],
+    clips: defaultClips,
     settings: {
       output: {
         driver: 'mock',

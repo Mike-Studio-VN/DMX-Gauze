@@ -1,13 +1,100 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, HelpCircle, Lock, Unlock } from 'lucide-react'
+import { AlertCircle, Eye, EyeOff, HelpCircle, Layers, Lock, RotateCcw, Unlock } from 'lucide-react'
 import { CH, addressRange } from '@shared/dmx'
 import { ch3ToCms } from '@shared/convert'
+import { defaultLayerTransform, defaultModuleTransform } from '@shared/preset'
+import type { Transform3D } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 
+function TransformEditor({
+  tf,
+  lockY = false,
+  onChange,
+  onReset,
+}: {
+  tf: Transform3D
+  lockY?: boolean
+  onChange: (next: Transform3D) => void
+  onReset: () => void
+}) {
+  const axes = ['X', 'Y', 'Z'] as const
+
+  const updateAxis = (field: keyof Transform3D, idx: 0 | 1 | 2, val: number) => {
+    const arr: [number, number, number] = [...tf[field]]
+    arr[idx] = field === 'scale' ? Math.max(0.1, val || 0.1) : val || 0
+    if (lockY && field === 'position' && idx === 1) arr[1] = 0
+    onChange({ ...tf, [field]: arr })
+  }
+
+  return (
+    <div className="space-y-2 rounded-lg border border-line bg-panel-2/60 p-2.5">
+      <div className="flex items-center justify-between">
+        <span className="font-medium text-info">Transform 3D</span>
+        <button
+          type="button"
+          onClick={onReset}
+          title="Đưa Position / Rotation / Scale về mặc định"
+          className="inline-flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted hover:bg-line hover:text-fg"
+        >
+          <RotateCcw size={11} />
+          Mặc định
+        </button>
+      </div>
+
+      {(
+        [
+          ['position', 'Vị trí (m)', 0.1],
+          ['rotation', 'Xoay (°)', 5],
+          ['scale', 'Tỉ lệ (Scale)', 0.1],
+        ] as const
+      ).map(([field, label, step]) => (
+        <div key={field} className="space-y-1">
+          <div className="flex items-center justify-between text-[11px] text-muted">
+            <span>{label}</span>
+            {lockY && field === 'position' && <span className="text-[10px] text-brand">Y dính vào Layer</span>}
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            {axes.map((ax, i) => {
+              const disabled = lockY && field === 'position' && i === 1
+              return (
+                <label key={ax} className="flex items-center gap-1 rounded border border-line bg-bg px-1.5 py-0.5">
+                  <span className="text-[10px] font-semibold text-muted">{ax}</span>
+                  <input
+                    type="number"
+                    step={step}
+                    disabled={disabled}
+                    value={disabled ? 0 : Number(tf[field][i].toFixed(2))}
+                    onChange={(e) => updateAxis(field, i as 0 | 1 | 2, Number(e.target.value))}
+                    className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none disabled:opacity-45"
+                  />
+                </label>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function PropertiesPanel() {
-  const { project, selectedIds, snapshot, updateModule, setAddressMode, notify } = useAppStore()
+  const {
+    project,
+    selectedIds,
+    selectedLayerId,
+    snapshot,
+    updateLayer,
+    toggleLayerVisibility,
+    updateModule,
+    setAddressMode,
+    notify,
+  } = useAppStore()
+
+  const activeLayer = selectedLayerId ? project.layers.find((l) => l.id === selectedLayerId) ?? null : null
+  const activeLayerIdx = activeLayer ? project.layers.findIndex((l) => l.id === activeLayer.id) : 0
+
   const selected = project.modules.filter((m) => selectedIds.includes(m.id))
-  const single = selected.length === 1 ? selected[0] : null
+  const single = !activeLayer && selected.length === 1 ? selected[0] : null
   const isAuto = project.settings.addressMode === 'auto'
 
   const [addrInput, setAddrInput] = useState('')
@@ -20,8 +107,51 @@ export function PropertiesPanel() {
     }
   }, [single?.id, single?.startAddress]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Đang chọn Layer -> chỉnh Transform 3D & thuộc tính Layer
+  if (activeLayer) {
+    const tf = activeLayer.transform ?? defaultLayerTransform(activeLayerIdx)
+    const visible = activeLayer.visible ?? true
+    return (
+      <div className="flex h-full flex-col gap-3 overflow-y-auto pr-1 text-xs">
+        <div className="flex items-center justify-between rounded-lg border border-info/40 bg-info/10 p-2.5">
+          <div className="flex items-center gap-2 font-semibold text-info">
+            <Layers size={15} />
+            <span>Thuộc tính Layer</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => toggleLayerVisibility(activeLayer.id)}
+            className="inline-flex cursor-pointer items-center gap-1 rounded bg-panel-2 px-2 py-1 text-[11px] text-fg hover:bg-line"
+          >
+            {visible ? <Eye size={12} className="text-ok" /> : <EyeOff size={12} className="text-warn" />}
+            {visible ? 'Đang hiện' : 'Đang ẩn'}
+          </button>
+        </div>
+
+        <label className="space-y-1">
+          <span className="text-muted">Tên Layer</span>
+          <input
+            value={activeLayer.name}
+            onChange={(e) => updateLayer(activeLayer.id, { name: e.target.value }, `layer-name-${activeLayer.id}`)}
+            className="w-full rounded border border-line bg-bg px-2.5 py-1.5 text-sm font-medium text-fg"
+          />
+        </label>
+
+        <TransformEditor
+          tf={tf}
+          onChange={(nextTf) => updateLayer(activeLayer.id, { transform: nextTf }, `layer-tf-${activeLayer.id}`)}
+          onReset={() => updateLayer(activeLayer.id, { transform: defaultLayerTransform(activeLayerIdx) })}
+        />
+
+        <p className="text-[11px] text-muted">
+          Toàn bộ module trong lớp này giữ cạnh trên dính vào thanh truss của Layer và di chuyển/xoay/scale theo Layer.
+        </p>
+      </div>
+    )
+  }
+
   if (selected.length === 0) {
-    return <p className="text-xs text-muted">Chọn một hoặc nhiều module bên Cây màn để chỉnh thông số.</p>
+    return <p className="text-xs text-muted">Chọn một Layer hoặc Module bên Cây màn để chỉnh thông số.</p>
   }
 
   if (!single) {
@@ -71,23 +201,42 @@ export function PropertiesPanel() {
           </label>
         </div>
 
-        <label className="block space-y-1">
-          <span className="text-muted">Tốc độ mặc định (CH3: 1–255)</span>
-          <input
-            type="number"
-            min="1"
-            max="255"
-            defaultValue={first.defaultSpeed}
-            onBlur={(e) => {
-              const v = Number(e.target.value)
-              if (!Number.isNaN(v)) {
-                selected.forEach((m) => updateModule(m.id, { defaultSpeed: v }))
-                notify(`Đã đặt CH3 mặc định = ${v}`, 'info')
-              }
-            }}
-            className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg"
-          />
-        </label>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="space-y-1">
+            <span className="text-muted">Tốc độ tối đa (cm/s)</span>
+            <input
+              type="number"
+              min="10"
+              max="500"
+              defaultValue={first.maxSpeedCms}
+              onBlur={(e) => {
+                const v = Number(e.target.value)
+                if (!Number.isNaN(v)) {
+                  selected.forEach((m) => updateModule(m.id, { maxSpeedCms: v }))
+                  notify(`Đã đặt tốc độ tối đa = ${v} cm/s`, 'info')
+                }
+              }}
+              className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-muted">CH3 mặc định</span>
+            <input
+              type="number"
+              min="1"
+              max="255"
+              defaultValue={first.defaultSpeed}
+              onBlur={(e) => {
+                const v = Number(e.target.value)
+                if (!Number.isNaN(v)) {
+                  selected.forEach((m) => updateModule(m.id, { defaultSpeed: v }))
+                  notify(`Đã đặt CH3 mặc định = ${v}`, 'info')
+                }
+              }}
+              className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg"
+            />
+          </label>
+        </div>
       </div>
     )
   }
@@ -100,6 +249,7 @@ export function PropertiesPanel() {
   const ch2 = frame[baseIdx + CH.FINE] ?? 0
   const ch3 = frame[baseIdx + CH.SPEED] ?? single.defaultSpeed
   const ch4 = frame[baseIdx + CH.LOCK] ?? 0
+  const modTf = single.transform ?? defaultModuleTransform()
 
   const handleAddrChange = (raw: string) => {
     setAddrInput(raw)
@@ -113,12 +263,12 @@ export function PropertiesPanel() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-3 overflow-y-auto pr-1 text-xs">
+    <div className="flex h-full flex-col gap-2.5 overflow-y-auto pr-1 text-xs">
       <label className="space-y-1">
         <span className="text-muted">Tên module</span>
         <input
           value={single.name}
-          onChange={(e) => updateModule(single.id, { name: e.target.value })}
+          onChange={(e) => updateModule(single.id, { name: e.target.value }, `mod-name-${single.id}`)}
           className="w-full rounded border border-line bg-bg px-2.5 py-1.5 text-sm font-medium text-fg"
         />
       </label>
@@ -195,7 +345,7 @@ export function PropertiesPanel() {
             step="0.1"
             min="0.2"
             value={single.length}
-            onChange={(e) => updateModule(single.id, { length: Number(e.target.value) || 0.2 })}
+            onChange={(e) => updateModule(single.id, { length: Number(e.target.value) || 0.2 }, `mod-len-${single.id}`)}
             className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg tabular-nums"
           />
         </label>
@@ -207,13 +357,13 @@ export function PropertiesPanel() {
             step="0.1"
             min="0.2"
             value={single.width}
-            onChange={(e) => updateModule(single.id, { width: Number(e.target.value) || 0.2 })}
+            onChange={(e) => updateModule(single.id, { width: Number(e.target.value) || 0.2 }, `mod-w-${single.id}`)}
             className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg tabular-nums"
           />
         </label>
       </div>
 
-      <div className="space-y-2 rounded-lg border border-line bg-panel-2/60 p-2.5">
+      <div className="space-y-1.5 rounded-lg border border-line bg-panel-2/60 p-2.5">
         <div className="font-medium text-fg">Giới hạn chiều cao an toàn</div>
         <div className="grid grid-cols-2 gap-2">
           <label className="space-y-1">
@@ -224,7 +374,7 @@ export function PropertiesPanel() {
               min="0"
               max={single.maxHeight}
               value={single.minHeight}
-              onChange={(e) => updateModule(single.id, { minHeight: Number(e.target.value) || 0 })}
+              onChange={(e) => updateModule(single.id, { minHeight: Number(e.target.value) || 0 }, `mod-min-${single.id}`)}
               className="w-full rounded border border-line bg-bg px-2 py-1 text-fg tabular-nums"
             />
           </label>
@@ -236,7 +386,7 @@ export function PropertiesPanel() {
               min={single.minHeight}
               max={single.length}
               value={single.maxHeight}
-              onChange={(e) => updateModule(single.id, { maxHeight: Number(e.target.value) || 0 })}
+              onChange={(e) => updateModule(single.id, { maxHeight: Number(e.target.value) || 0 }, `mod-max-${single.id}`)}
               className="w-full rounded border border-line bg-bg px-2 py-1 text-fg tabular-nums"
             />
           </label>
@@ -245,13 +395,18 @@ export function PropertiesPanel() {
 
       <div className="grid grid-cols-2 gap-2">
         <label className="space-y-1">
-          <span className="text-muted">Tốc độ tối đa (cm/s)</span>
+          <span className="flex items-center gap-1 text-muted">
+            Tốc độ tối đa (cm/s)
+            <span title="Vận tốc tối đa motor theo spec (H2 = 120 cm/s). Timeline đối chiếu thông số này để cảnh báo nếu quá nhanh.">
+              <HelpCircle size={12} />
+            </span>
+          </span>
           <input
             type="number"
             min="10"
             max="500"
             value={single.maxSpeedCms}
-            onChange={(e) => updateModule(single.id, { maxSpeedCms: Number(e.target.value) || 120 })}
+            onChange={(e) => updateModule(single.id, { maxSpeedCms: Number(e.target.value) || 120 }, `mod-spd-${single.id}`)}
             className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg tabular-nums"
           />
         </label>
@@ -267,11 +422,18 @@ export function PropertiesPanel() {
             min="1"
             max="255"
             value={single.defaultSpeed}
-            onChange={(e) => updateModule(single.id, { defaultSpeed: Number(e.target.value) || 100 })}
+            onChange={(e) => updateModule(single.id, { defaultSpeed: Number(e.target.value) || 100 }, `mod-ch3-${single.id}`)}
             className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg tabular-nums"
           />
         </label>
       </div>
+
+      <TransformEditor
+        tf={modTf}
+        lockY
+        onChange={(nextTf) => updateModule(single.id, { transform: nextTf }, `mod-tf-${single.id}`)}
+        onReset={() => updateModule(single.id, { transform: defaultModuleTransform() })}
+      />
 
       <div className="mt-auto space-y-2 rounded-lg border border-line bg-bg/70 p-2.5">
         <div className="flex items-center justify-between">

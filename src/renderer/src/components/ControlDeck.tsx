@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'motion/react'
 import {
   ArrowDown,
@@ -8,22 +8,15 @@ import {
   Clock,
   Edit3,
   LayoutGrid,
-  Mic,
-  MicOff,
-  Pause,
-  Play,
   Plus,
-  RotateCcw,
   SlidersHorizontal,
   Square,
   Trash2,
 } from 'lucide-react'
-import { LtcDecoder } from '@shared/ltc'
 import { clamp } from '@shared/convert'
-import { FPS_OPTIONS, formatTc, parseTc, tcToSeconds } from '@shared/timecode'
-import { TimelineRunner } from '@shared/timeline'
-import type { CueButton, Fps, ModuleCfg, SpeedUnit, TimelineKey } from '@shared/types'
+import type { CueButton, ModuleCfg, SpeedUnit } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
+import { TimelineEditor } from './TimelineEditor'
 
 function ActionBtn({
   icon: Icon,
@@ -33,7 +26,7 @@ function ActionBtn({
   variant = 'ghost',
   active = false,
 }: {
-  icon: typeof Play
+  icon: typeof ArrowUp
   label: string
   hint: string
   onClick: () => void
@@ -68,12 +61,31 @@ function ActionBtn({
 }
 
 function ModeButtons() {
-  const { project, snapshot, saveButton, deleteButton, sendCommand, notify } = useAppStore()
+  const { project, snapshot, selectedButtonId, selectButton, saveButton, deleteButton, sendCommand, notify } =
+    useAppStore()
   const [editing, setEditing] = useState<CueButton | null>(null)
   const [layerHeights, setLayerHeights] = useState<Record<string, string>>({})
   const [lastFired, setLastFired] = useState<string | null>(null)
 
+  // Hỗ trợ Enter/F2 để sửa nút đang chọn
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return
+      if (e.key === 'F2' && selectedButtonId && !editing) {
+        const found = project.buttons.find((b) => b.id === selectedButtonId)
+        if (found) {
+          e.preventDefault()
+          setLayerHeights({})
+          setEditing(found)
+        }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedButtonId, editing, project.buttons])
+
   const fire = async (b: CueButton) => {
+    selectButton(b.id)
     setLastFired(b.id)
     for (const s of b.steps) {
       const res = await sendCommand({
@@ -335,7 +347,7 @@ function ModeButtons() {
   return (
     <div className="flex h-full flex-col gap-2">
       <div className="flex items-center justify-between text-xs text-muted">
-        <span>Bấm nút để chạy cấu hình đã lưu (animation xác nhận)</span>
+        <span>Bấm nút để chạy · Ctrl+C / Ctrl+V sao chép · F2 sửa · Delete xoá</span>
         <button
           type="button"
           onClick={openNew}
@@ -348,7 +360,7 @@ function ModeButtons() {
 
       <div className="grid min-h-0 flex-1 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3 lg:grid-cols-4">
         {project.buttons.map((b) => {
-          const active = lastFired === b.id
+          const active = lastFired === b.id || selectedButtonId === b.id
           const stepIds = new Set(b.steps.map((s) => s.moduleId))
           const fullLayers = project.layers.filter((l) => {
             const mods = project.modules.filter((m) => m.layerId === l.id)
@@ -363,6 +375,11 @@ function ModeButtons() {
             <motion.div
               key={b.id}
               whileTap={{ scale: 0.95 }}
+              onClick={() => selectButton(b.id)}
+              onDoubleClick={() => {
+                setLayerHeights({})
+                setEditing(b)
+              }}
               className={`group relative flex flex-col justify-between rounded-ui border p-2.5 transition ${
                 active ? 'border-brand bg-brand/15' : 'border-line bg-panel-2/70 hover:border-info/60'
               }`}
@@ -376,19 +393,23 @@ function ModeButtons() {
               <div className="mt-2 flex justify-end gap-1 opacity-0 transition group-hover:opacity-100">
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation()
                     setLayerHeights({})
                     setEditing(b)
                   }}
-                  title="Sửa nút"
+                  title="Sửa nút (F2)"
                   className="cursor-pointer rounded p-1 text-muted hover:bg-line hover:text-fg"
                 >
                   <Edit3 size={12} />
                 </button>
                 <button
                   type="button"
-                  onClick={() => deleteButton(b.id)}
-                  title="Xoá nút"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    deleteButton(b.id)
+                  }}
+                  title="Xoá nút (Delete)"
                   className="cursor-pointer rounded p-1 text-muted hover:bg-danger/20 hover:text-danger"
                 >
                   <Trash2 size={12} />
@@ -523,251 +544,6 @@ function ModeManual() {
   )
 }
 
-function ModeTimeline() {
-  const { project, snapshot, updateTimelineSettings, addKey, deleteKey, sendCommand, notify } = useAppStore()
-  const fps = project.settings.timeline.fps
-  const [time, setTime] = useState(project.settings.timeline.startTime)
-  const [playing, setPlaying] = useState(false)
-  const [ltcActive, setLtcActive] = useState(false)
-  const [ltcStatus, setLtcStatus] = useState<'off' | 'lock' | 'freewheel' | 'lost'>('off')
-  const [tcInput, setTcInput] = useState(formatTc(project.settings.timeline.startTime, fps))
-
-  const runnerRef = useRef(new TimelineRunner())
-  const timeRef = useRef(time)
-  timeRef.current = time
-  const keysRef = useRef(project.keys)
-  keysRef.current = project.keys
-
-  const maxTime = Math.max(20, ...project.keys.map((k) => k.time + 5))
-
-  // Đồng hồ nội bộ khi Play
-  useEffect(() => {
-    if (!playing || ltcActive) return
-    let raf = 0
-    let last = performance.now()
-    const step = (now: number) => {
-      const dt = (now - last) / 1000
-      last = now
-      const next = Math.min(maxTime, timeRef.current + dt)
-      setTime(next)
-      const cmds = runnerRef.current.update(next, keysRef.current)
-      for (const c of cmds) void sendCommand(c)
-      if (next >= maxTime) setPlaying(false)
-      else raf = requestAnimationFrame(step)
-    }
-    raf = requestAnimationFrame(step)
-    return () => cancelAnimationFrame(raf)
-  }, [playing, ltcActive, maxTime, sendCommand])
-
-  // Nhận LTC Audio Input qua Web Audio API
-  useEffect(() => {
-    if (!ltcActive) {
-      setLtcStatus('off')
-      return
-    }
-    let stopped = false
-    let ctx: AudioContext | null = null
-    let stream: MediaStream | null = null
-    let lastFrameAt = 0
-
-    const startLtc = async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: project.settings.ltc.deviceId ? { deviceId: { exact: project.settings.ltc.deviceId } } : true,
-        })
-        if (stopped) return
-        ctx = new AudioContext()
-        const src = ctx.createMediaStreamSource(stream)
-        const proc = ctx.createScriptProcessor(2048, 2, 1)
-        const dec = new LtcDecoder(
-          ctx.sampleRate,
-          (f) => {
-            lastFrameAt = performance.now()
-            setLtcStatus('lock')
-            const sec = tcToSeconds(f, fps) + project.settings.ltc.offsetFrames / fps
-            setTime(sec)
-            const cmds = runnerRef.current.update(sec, keysRef.current)
-            for (const c of cmds) void sendCommand(c)
-          },
-          fps === 29.97 ? 30 : fps,
-        )
-        proc.onaudioprocess = (ev) => {
-          const chIdx = project.settings.ltc.channel === 'right' && ev.inputBuffer.numberOfChannels > 1 ? 1 : 0
-          dec.push(ev.inputBuffer.getChannelData(chIdx))
-        }
-        src.connect(proc)
-        proc.connect(ctx.destination)
-        setLtcStatus('lost')
-      } catch (err) {
-        notify(`Không mở được ngõ âm thanh LTC: ${(err as Error).message}`, 'error')
-        setLtcActive(false)
-      }
-    }
-    void startLtc()
-
-    const watch = setInterval(() => {
-      if (!lastFrameAt) return
-      const gapMs = performance.now() - lastFrameAt
-      const fwMs = (project.settings.ltc.freewheelFrames / fps) * 1000
-      if (gapMs > fwMs) setLtcStatus('lost')
-      else if (gapMs > 80) setLtcStatus('freewheel')
-    }, 80)
-
-    return () => {
-      stopped = true
-      clearInterval(watch)
-      stream?.getTracks().forEach((t) => t.stop())
-      void ctx?.close()
-    }
-  }, [ltcActive, fps, project.settings.ltc, sendCommand, notify])
-
-  const applyStartTc = () => {
-    const sec = parseTc(tcInput, fps)
-    if (sec === null) {
-      notify('Timecode không hợp lệ (định dạng hh:mm:ss:ff)', 'warn')
-      return
-    }
-    updateTimelineSettings({ startTime: sec })
-    runnerRef.current.reset()
-    setTime(sec)
-  }
-
-  const addKeyAtCurrent = () => {
-    const targets: Record<string, number> = {}
-    for (const m of project.modules) {
-      targets[m.id] = Number((snapshot?.modules[m.id]?.pos ?? 0).toFixed(2))
-    }
-    const key: TimelineKey = { id: `k-${Date.now()}`, time: Number(time.toFixed(2)), targets }
-    addKey(key)
-    notify(`Đã tạo Key tại ${formatTc(time, fps)}`, 'info')
-  }
-
-  return (
-    <div className="flex h-full flex-col gap-2 text-xs">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="rounded bg-bg px-2.5 py-1 font-mono text-base font-bold text-brand tabular-nums">
-            {formatTc(time, fps)}
-          </span>
-
-          <ActionBtn
-            icon={playing ? Pause : Play}
-            label={playing ? 'Tạm dừng' : 'Chạy'}
-            hint="Chạy timeline bằng đồng hồ nội bộ"
-            variant="brand"
-            onClick={() => {
-              setLtcActive(false)
-              setPlaying(!playing)
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => {
-              setPlaying(false)
-              runnerRef.current.reset()
-              setTime(project.settings.timeline.startTime)
-            }}
-            title="Về timecode bắt đầu"
-            className="cursor-pointer rounded-md border border-line bg-panel-2 p-2 text-muted hover:text-fg"
-          >
-            <RotateCcw size={14} />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setPlaying(false)
-              setLtcActive(!ltcActive)
-            }}
-            title="Nhận xung LTC từ ngõ vào âm thanh (Line-in / USB Audio)"
-            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1.5 font-medium ${
-              ltcActive ? 'border-ok bg-ok/15 text-ok' : 'border-line bg-panel-2 text-muted hover:text-fg'
-            }`}
-          >
-            {ltcActive ? <Mic size={14} /> : <MicOff size={14} />}
-            LTC {ltcStatus === 'lock' ? '· Đã khoá' : ltcStatus === 'freewheel' ? '· Freewheel' : ltcActive ? '· Chờ tín hiệu' : 'Tắt'}
-          </button>
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          <input
-            value={tcInput}
-            onChange={(e) => setTcInput(e.target.value)}
-            onBlur={applyStartTc}
-            title="Timecode bắt đầu (hh:mm:ss:ff)"
-            className="w-24 rounded border border-line bg-bg px-2 py-1 font-mono text-fg"
-          />
-          <select
-            value={fps}
-            onChange={(e) => updateTimelineSettings({ fps: Number(e.target.value) as Fps })}
-            title="Khung hình / giây (FPS)"
-            className="rounded border border-line bg-bg px-2 py-1 text-fg"
-          >
-            {FPS_OPTIONS.map((f) => (
-              <option key={f} value={f}>
-                {f} fps
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={addKeyAtCurrent}
-            title="Lưu vị trí hiện tại của các màn thành 1 Key tại timecode này"
-            className="inline-flex cursor-pointer items-center gap-1 rounded bg-info px-2.5 py-1 font-semibold text-slate-950"
-          >
-            <Plus size={14} />
-            Tạo Key
-          </button>
-        </div>
-      </div>
-
-      <input
-        type="range"
-        min={0}
-        max={maxTime}
-        step={0.04}
-        value={time}
-        onChange={(e) => {
-          const t = Number(e.target.value)
-          runnerRef.current.reset()
-          setTime(t)
-        }}
-        className="w-full accent-brand"
-      />
-
-      <div className="flex min-h-0 flex-1 gap-2 overflow-x-auto pb-1">
-        {project.keys.map((k, idx) => (
-          <div
-            key={k.id}
-            onClick={() => {
-              runnerRef.current.reset()
-              setTime(k.time)
-            }}
-            className="flex min-w-36 cursor-pointer flex-col justify-between rounded-lg border border-line bg-panel-2/70 p-2 hover:border-brand"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-semibold text-info">Key {idx + 1}</span>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  deleteKey(k.id)
-                }}
-                className="cursor-pointer text-muted hover:text-danger"
-                title="Xoá Key"
-              >
-                <Trash2 size={12} />
-              </button>
-            </div>
-            <div className="font-mono text-xs text-brand tabular-nums">{formatTc(k.time, fps)}</div>
-            <div className="text-[11px] text-muted">{Object.keys(k.targets).length} module</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 export function ControlDeck() {
   const { activeTab, setActiveTab } = useAppStore()
 
@@ -802,7 +578,7 @@ export function ControlDeck() {
       <div className="min-h-0 flex-1">
         {activeTab === 'buttons' && <ModeButtons />}
         {activeTab === 'manual' && <ModeManual />}
-        {activeTab === 'timeline' && <ModeTimeline />}
+        {activeTab === 'timeline' && <TimelineEditor />}
       </div>
     </div>
   )

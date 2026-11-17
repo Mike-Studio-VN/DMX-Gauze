@@ -2,7 +2,7 @@ import { app, dialog } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ProjectFileResult, SaveFileResult } from '@shared/api'
-import { createDefaultProject } from '@shared/preset'
+import { createDefaultProject, normalizeProject } from '@shared/preset'
 import type { Project } from '@shared/types'
 
 let currentFilePath: string | null = null
@@ -16,7 +16,7 @@ function parseProjectJson(raw: string): Project {
   if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.modules) || !Array.isArray(parsed.layers)) {
     throw new Error('File dự án không hợp lệ')
   }
-  return parsed
+  return normalizeProject(parsed)
 }
 
 export async function loadSavedProject(): Promise<ProjectFileResult> {
