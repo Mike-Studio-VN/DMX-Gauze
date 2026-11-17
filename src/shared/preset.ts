@@ -1,5 +1,9 @@
 import { autoAssign } from './addressing'
 import { ARTNET_PORT, DEFAULT_SPEED, DEFAULT_TARGET_IP, H2_MAX_SPEED_CMS, LOCK_VALUE } from './dmx'
+import { KINET_PORT, SACN_PORT, defaultPortForDriver } from './protocols'
+import { FPS_OPTIONS, LTC_FPS_OPTIONS } from './timecode'
+
+export const CURRENT_SCHEMA_VERSION = 2
 import type {
   ClipKeyframe,
   CueButton,
@@ -7,6 +11,7 @@ import type {
   DriverId,
   Fps,
   Layer,
+  LtcFps,
   ModuleCfg,
   OutputSettings,
   Project,
@@ -17,7 +22,8 @@ import type {
 } from './types'
 
 const VALID_DRIVERS = new Set<DriverId>(['artnet', 'sacn', 'kinet', 'enttec-pro', 'enttec-mk2', 'serial', 'mock'])
-const VALID_FPS = new Set<Fps>([24, 25, 29.97, 30])
+const VALID_FPS = new Set<Fps>(FPS_OPTIONS)
+const VALID_LTC_FPS = new Set<LtcFps>(LTC_FPS_OPTIONS)
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -65,16 +71,27 @@ function validateTransform(v: unknown, label: string, fallback: Transform3D): Tr
   }
 }
 
-function validateSettings(rawSettings: unknown): Settings {
+function validateSettings(rawSettings: unknown, legacySchema: boolean): Settings {
   if (!isRecord(rawSettings)) failProject('thiếu hoặc sai settings')
   if (!isRecord(rawSettings.output)) failProject('thiếu hoặc sai settings.output')
   const rawOut = rawSettings.output
   const driver = rawOut.driver as DriverId
   if (!VALID_DRIVERS.has(driver)) failProject('settings.output.driver không hợp lệ')
+  const ip = reqString(rawOut.ip, 'settings.output.ip')
+  // Giữ nguyên custom port; chỉ migrate port 6454 trên dự án legacy v1.0.0 (schemaVersion < 2) khi dùng sACN/KiNET
+  // vì v1.0.0 từng dịch 6454 -> 5568/6038 lúc gửi mà không ghi lại port vào file dự án.
+  let port =
+    rawOut.port === undefined || rawOut.port === null
+      ? (defaultPortForDriver(driver) ?? ARTNET_PORT)
+      : reqFinite(rawOut.port, 'settings.output.port', 1, 65535, true)
+  if (legacySchema && port === ARTNET_PORT) {
+    if (driver === 'sacn') port = SACN_PORT
+    else if (driver === 'kinet') port = KINET_PORT
+  }
   const output: OutputSettings = {
     driver,
-    ip: reqString(rawOut.ip, 'settings.output.ip'),
-    port: reqFinite(rawOut.port, 'settings.output.port', 1, 65535, true),
+    ip,
+    port,
     net: reqFinite(rawOut.net, 'settings.output.net', 0, 127, true),
     subnet: reqFinite(rawOut.subnet, 'settings.output.subnet', 0, 15, true),
     universe: reqFinite(rawOut.universe, 'settings.output.universe', 0, 15, true),
@@ -126,6 +143,11 @@ function validateSettings(rawSettings: unknown): Settings {
     freewheelFrames: reqFinite(rawLtc.freewheelFrames, 'settings.ltc.freewheelFrames', 0, 600),
     offsetFrames: reqFinite(rawLtc.offsetFrames, 'settings.ltc.offsetFrames', -600, 600),
   }
+  if (rawLtc.fps !== undefined) {
+    const ltcFps = rawLtc.fps as LtcFps
+    if (!VALID_LTC_FPS.has(ltcFps)) failProject('settings.ltc.fps không hợp lệ')
+    ltc.fps = ltcFps
+  }
 
   if (!isRecord(rawSettings.timeline)) failProject('thiếu hoặc sai settings.timeline')
   const rawTl = rawSettings.timeline
@@ -153,7 +175,9 @@ export function normalizeProject(raw: unknown): Project {
   if (!Array.isArray(raw.layers)) failProject('thiếu mảng layers')
   if (!Array.isArray(raw.modules)) failProject('thiếu mảng modules')
 
-  const settings = validateSettings(raw.settings)
+  const schemaVer =
+    typeof raw.schemaVersion === 'number' && Number.isFinite(raw.schemaVersion) ? raw.schemaVersion : 1
+  const settings = validateSettings(raw.settings, schemaVer < CURRENT_SCHEMA_VERSION)
 
   const layers: Layer[] = raw.layers.map((item, idx) => {
     if (!isRecord(item)) failProject(`layers[${idx}] phải là object`)
@@ -209,6 +233,10 @@ export function normalizeProject(raw: unknown): Project {
         steps,
         speedUnit: b.speedUnit,
         speedValue: reqFinite(b.speedValue, `buttons[${idx}].speedValue`, 0.01),
+        ...(b.slotIndex !== undefined
+          ? { slotIndex: reqFinite(b.slotIndex, `buttons[${idx}].slotIndex`, 0, 128, true) }
+          : {}),
+        ...(b.loop !== undefined ? { loop: reqOptionalBool(b.loop, `buttons[${idx}].loop`, false) } : {}),
       }
     })
   }
@@ -270,6 +298,7 @@ export function normalizeProject(raw: unknown): Project {
 
   return {
     version: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     layers,
     modules,
     buttons,
@@ -314,6 +343,7 @@ export function createBlankProject(baseSettings?: Settings): Project {
       }
   return {
     version: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     layers: [{ id: layerId, name: 'Lớp 1', visible: true, transform: defaultLayerTransform(0) }],
     modules: [mod],
     buttons: [],
@@ -399,6 +429,7 @@ export function createDefaultProject(): Project {
 
   return {
     version: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     layers,
     modules,
     buttons: [

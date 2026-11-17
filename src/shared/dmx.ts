@@ -30,3 +30,8 @@ export function isValidIPv4(s: string): boolean {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s.trim())
   return !!m && m.slice(1).every((p) => Number(p) <= 255)
 }
+
+export function isLoopbackTarget(ip: string): boolean {
+  const s = ip.trim().toLowerCase()
+  return s === 'localhost' || s === '::1' || s === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(s)
+}

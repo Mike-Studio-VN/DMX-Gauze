@@ -2,13 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import * as THREE from 'three';
+import { computeManualMotionProgress, resolveCueButtonBaselines } from '@shared/convert';
 import { createDefaultProject } from '@shared/preset';
 import { pickFirstVisibleHit } from '@shared/stage3d';
+import { FPS_OPTIONS } from '@shared/timecode';
 import type { TimelineClip } from '@shared/types';
 import { PropertiesPanel } from './components/PropertiesPanel';
 import { GauzeTree } from './components/GauzeTree';
+import { KilnSelect } from './components/KilnSelect';
 import { SettingsModal } from './components/SettingsModal';
-import { ModeManual } from './components/ControlDeck';
+import { ModeButtons, ModeManual } from './components/ControlDeck';
 import { createWebBridge } from './services/bridge';
 import { useAppStore } from './store/useAppStore';
 
@@ -1066,5 +1069,189 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     // Cả 3 nút đều chia sẻ cùng 1 data-wave-pct="62" khi đang dừng giữa chừng
     const pctMatches = manualHtml.match(/data-wave-pct="62"/g) ?? [];
     expect(pctMatches).toHaveLength(3);
+  });
+
+  it('ModeButtons renders 4-col Cue Pad grid and CueButton layer/module editing moves to PropertiesPanel', () => {
+    setupBrowserEnv();
+    const project = createDefaultProject();
+    project.buttons[0] = { ...project.buttons[0], loop: true, slotIndex: 0 };
+
+    const modId = project.buttons[0].steps[0].moduleId;
+    useAppStore.setState({
+      project,
+      activeTab: 'buttons',
+      focusScope: 'buttons',
+      selectedButtonId: project.buttons[1]?.id ?? project.buttons[0].id,
+      lastFiredButtonId: project.buttons[0].id,
+      lastFiredButtonBaselines: { [modId]: { start: 0, goal: 1 } },
+      snapshot: {
+        t: Date.now(),
+        locked: false,
+        frame: [],
+        modules: { [modId]: { pos: 0.65, target: 1, ch3: 100, moving: true } },
+        status: { state: 'idle', driver: 'mock', ip: '', port: 6454, portAddress: 0, sendHz: 0, nodes: [], message: null, warning: null },
+      },
+    });
+
+    const customHtml = renderToStaticMarkup(
+      React.createElement(ModeButtons, { overrideState: useAppStore.getState() }),
+    );
+    expect(customHtml).toContain('cue-pad-slot');
+    // Cue cũ đang chạy giữ viền xanh + body xanh đậm nhưng bar xanh tối hơn (cue-pad-prev)
+    expect(customHtml).toContain('cue-pad group active cue-pad-prev');
+    // Slider bar chiều cao bằng nền text module (role="progressbar" bọc dải footer MODULES) & chạy theo tiến trình thực tế (65%)
+    expect(customHtml).toContain('role="progressbar"');
+    expect(customHtml).toContain('data-cue-progress="65"');
+    // Hình vuông trước tên cue đổi thành nút Play / Pause
+    expect(customHtml).toContain(`Tạm dừng ${project.buttons[0].name}`);
+    expect(customHtml).toContain(`Phát ${project.buttons[1].name}`);
+    // Cue được click vào bar chỉ sáng bar (bar-selected), không ảnh hưởng body (không có active)
+    expect(customHtml).toContain('cue-pad group bar-selected');
+    // Bar có draggable để kéo thả đổi vị trí
+    expect(customHtml).toContain('draggable="true"');
+    // Ô trống không có nút tạo cue khi ấn vào
+    expect(customHtml).toContain('cue-pad cue-pad-empty');
+    expect(customHtml).not.toContain('Tạo nút Cue ở ô');
+    expect(customHtml).toContain('Tạo Cue');
+    expect(customHtml).toContain(`${project.buttons[0].steps.length} MODULES`);
+    expect(customHtml).toContain('4S');
+    // Không còn chỉnh Layer/Module ở ControlDeck (panel timeline/custom) nữa
+    expect(customHtml).not.toContain('Cả layer (m):');
+
+    // Kéo thả bar sang ô cue khác để đổi vị trí (swap hoặc chuyển sang ô trống)
+    useAppStore.getState().moveButtonToSlot(project.buttons[0].id, 2);
+    const swapped = useAppStore.getState().project.buttons;
+    expect(swapped.find((b) => b.id === project.buttons[0].id)?.slotIndex).toBe(2);
+    expect(swapped.find((b) => b.id === project.buttons[2]?.id)?.slotIndex).toBe(0);
+    useAppStore.getState().moveButtonToSlot(project.buttons[0].id, 7);
+    expect(
+      useAppStore.getState().project.buttons.find((b) => b.id === project.buttons[0].id)?.slotIndex,
+    ).toBe(7);
+
+    // Pause rồi ấn Play lại: giữ nguyên mốc start ban đầu để slider chạy tiếp từ % đang dừng (không nhảy về 0%)
+    const steps = [{ moduleId: modId, position: 1 }];
+    const initialBaselines = resolveCueButtonBaselines(
+      steps,
+      project.modules,
+      { modules: { [modId]: { pos: 0, target: 0, ch3: 100, moving: false } } },
+      null,
+    );
+    const pausedSnap = { modules: { [modId]: { pos: 0.45, target: 0.45, ch3: 100, moving: false } } };
+    const resumedBaselines = resolveCueButtonBaselines(steps, project.modules, pausedSnap, initialBaselines);
+    expect(resumedBaselines[modId].start).toBe(0);
+    expect(Math.round(computeManualMotionProgress(resumedBaselines, project.modules, pausedSnap).progress * 100)).toBe(45);
+
+    useAppStore.setState({
+      selectedButtonId: project.buttons[0].id,
+      lastFiredButtonId: null,
+      lastFiredButtonBaselines: {},
+      snapshot: null,
+    });
+
+    const propsHtml = renderToStaticMarkup(
+      React.createElement(PropertiesPanel, { overrideState: useAppStore.getState() }),
+    );
+    expect(propsHtml).toContain('NÚT CUE');
+    expect(propsHtml).toContain('LAYER &amp; MODULE CHẠY');
+    expect(propsHtml).toContain('Chế độ đơn vị chiều cao');
+    expect(propsHtml).toContain('Đổi đơn vị m / %');
+    expect(propsHtml).toContain('text-center');
+    expect(propsHtml).toContain('Áp dụng cho các layer');
+    expect(propsHtml).not.toContain('Lấy 3D');
+    expect(propsHtml).not.toContain('LOOP');
+    expect(propsHtml).toContain(project.layers[0].name);
+    expect(propsHtml).toContain(project.modules[0].name);
+  });
+
+  it('auto-updates UDP port on protocol switch and renders themed KilnSelect dropdowns + aligned rows in SettingsModal', () => {
+    setupBrowserEnv();
+    const project = createDefaultProject();
+    project.settings.output.driver = 'artnet';
+    project.settings.output.port = 6454;
+    project.settings.timeline.fps = 60;
+
+    // Network tab: uses custom KilnSelect (no native <select>), flex-col aligned fields,
+    // and surfaces localhost Art-Net info + status warning in UI
+    project.settings.output.ip = '127.0.0.1';
+    useAppStore.setState({
+      project,
+      settingsOpen: true,
+      settingsTab: 'network',
+      snapshot: {
+        t: Date.now(),
+        locked: false,
+        frame: [],
+        modules: {},
+        status: {
+          state: 'searching',
+          driver: 'artnet',
+          ip: '127.0.0.1',
+          port: 6454,
+          portAddress: 0,
+          sendHz: 25,
+          nodes: [],
+          message: null,
+          warning: 'Cổng 6454 đang bận — đã tắt nghe ArtPollReply, vẫn gửi ArtDmx bình thường.',
+        },
+      },
+    });
+    const netSettingsHtml = renderToStaticMarkup(
+      React.createElement(SettingsModal, { overrideState: useAppStore.getState() }),
+    );
+    expect(netSettingsHtml).not.toContain('<select');
+    expect(netSettingsHtml).toContain('role="combobox"');
+    expect(netSettingsHtml).toContain('Art-Net');
+    expect(netSettingsHtml).toContain('grid-cols-2 items-end gap-3');
+    expect(netSettingsHtml).toContain('Cổng 6454 đang bận');
+    expect(netSettingsHtml).toContain('Đích localhost: app gửi ArtDmx qua cổng động');
+
+    // Open KilnSelect renders grouped theme menu & 40/50/60 fps options
+    const openDriverHtml = renderToStaticMarkup(
+      React.createElement(KilnSelect, {
+        value: 'artnet',
+        defaultOpen: true,
+        onChange: () => {},
+        options: [
+          { value: 'artnet', label: 'Art-Net', badge: 'Ưu tiên', description: 'UDP mạng LAN', group: 'Mạng LAN' },
+          { value: 'sacn', label: 'sACN E1.31', description: 'UDP Multicast / Unicast', group: 'Mạng LAN' },
+          { value: 'mock', label: 'Mock', description: 'Mô phỏng nội bộ', group: 'Thử nghiệm' },
+        ],
+      }),
+    );
+    expect(openDriverHtml).toContain('role="listbox"');
+    expect(openDriverHtml).toContain('Mạng LAN');
+    expect(openDriverHtml).toContain('Ưu tiên');
+    expect(openDriverHtml).toContain('Thử nghiệm');
+
+    const openFpsHtml = renderToStaticMarkup(
+      React.createElement(KilnSelect, {
+        value: '60',
+        defaultOpen: true,
+        onChange: () => {},
+        options: FPS_OPTIONS.map((f) => ({ value: String(f), label: `${f} fps` })),
+      }),
+    );
+    expect(openFpsHtml).toContain('40 fps');
+    expect(openFpsHtml).toContain('50 fps');
+    expect(openFpsHtml).toContain('60 fps');
+
+    useAppStore.setState({ project, settingsOpen: true, settingsTab: 'ltc' });
+    const ltcSettingsHtml = renderToStaticMarkup(
+      React.createElement(SettingsModal, { overrideState: useAppStore.getState() }),
+    );
+    expect(ltcSettingsHtml).not.toContain('<select');
+    expect(ltcSettingsHtml).toContain('60 fps');
+    expect(ltcSettingsHtml).toContain('không khớp chuẩn LTC SMPTE');
+    expect(ltcSettingsHtml).toContain('30 fps');
+
+    useAppStore.getState().updateOutputSettings({ driver: 'sacn' });
+    expect(useAppStore.getState().project.settings.output.port).toBe(5568);
+    expect(useAppStore.getState().project.settings.output.sacnUniverse).toBe(1);
+
+    useAppStore.getState().updateOutputSettings({ driver: 'artnet' });
+    expect(useAppStore.getState().project.settings.output.port).toBe(6454);
+
+    useAppStore.getState().updateOutputSettings({ driver: 'kinet' });
+    expect(useAppStore.getState().project.settings.output.port).toBe(6038);
   });
 });

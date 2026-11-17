@@ -1,5 +1,5 @@
 import { buildArtDmx, portAddress } from './artnet'
-import { CH, CHANNELS_PER_MODULE, DMX_UNIVERSE_SIZE } from './dmx'
+import { ARTNET_PORT, CH, CHANNELS_PER_MODULE, DMX_UNIVERSE_SIZE } from './dmx'
 import { cmsToCh3, ch3ToCms, clamp, durationToCh3, posToDmx } from './convert'
 import type { DriverFactory, DriverEvents, OutputDriver } from './drivers'
 import type {
@@ -343,7 +343,7 @@ export class GauzeCore {
       state,
       driver: o?.driver ?? 'mock',
       ip: o?.ip ?? '',
-      port: o?.port ?? 6454,
+      port: o?.port ?? ARTNET_PORT,
       portAddress: o ? portAddress(o.net, o.subnet, o.universe) : 0,
       sendHz: this.measuredHz,
       nodes: live,

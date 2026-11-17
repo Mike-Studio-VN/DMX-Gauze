@@ -214,4 +214,76 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
       warnSpy.mockRestore();
     }
   });
+
+  it('migrates legacy v1.0.0 sACN/KiNET 6454 -> 5568/6038 while preserving custom ports across v1.0.0 and schemaVersion 2', async () => {
+    const autosavePath = path.join(electronState.userDataDir, 'project.json');
+
+    // 1) Legacy v1.0.0 sACN project (no schemaVersion) with stored port 6454 -> migrates to effective v1.0.0 port 5568.
+    const legacySacn = createDefaultProject();
+    delete legacySacn.schemaVersion;
+    legacySacn.settings.output.driver = 'sacn';
+    legacySacn.settings.output.port = 6454;
+    await fs.writeFile(autosavePath, JSON.stringify(legacySacn, null, 2), 'utf8');
+    const loadedSacnLegacy = await loadSavedProject();
+    expect(loadedSacnLegacy.project.settings.output.port).toBe(5568);
+    expect(loadedSacnLegacy.project.schemaVersion).toBe(2);
+    expect(JSON.parse(await fs.readFile(autosavePath, 'utf8')).settings.output.port).toBe(5568);
+
+    // 2) Legacy v1.0.0 KiNET project (no schemaVersion) with stored port 6454 -> migrates to effective v1.0.0 port 6038.
+    const legacyKinet = createDefaultProject();
+    delete legacyKinet.schemaVersion;
+    legacyKinet.settings.output.driver = 'kinet';
+    legacyKinet.settings.output.port = 6454;
+    await fs.writeFile(autosavePath, JSON.stringify(legacyKinet, null, 2), 'utf8');
+    const loadedKinetLegacy = await loadSavedProject();
+    expect(loadedKinetLegacy.project.settings.output.port).toBe(6038);
+    expect(loadedKinetLegacy.project.schemaVersion).toBe(2);
+
+    // 3) Legacy v1.0.0 broadcast Art-Net deliberately on 5568 (no schemaVersion) -> preserved unchanged.
+    const broadcast5568 = createDefaultProject();
+    delete broadcast5568.schemaVersion;
+    broadcast5568.settings.output.driver = 'artnet';
+    broadcast5568.settings.output.port = 5568;
+    broadcast5568.settings.timeline.fps = 25;
+    await fs.writeFile(autosavePath, JSON.stringify(broadcast5568, null, 2), 'utf8');
+
+    const loaded5568 = await loadSavedProject();
+    expect(loaded5568.project.settings.output.driver).toBe('artnet');
+    expect(loaded5568.project.settings.output.port).toBe(5568);
+    expect(loaded5568.project.settings.timeline.fps).toBe(25);
+    expect(JSON.parse(await fs.readFile(autosavePath, 'utf8')).settings.output.port).toBe(5568);
+
+    // 4) Explicit v1.0.1 (schemaVersion: 2) custom port 6454 on sACN and KiNET -> preserved across save/reload!
+    const explicitSacn6454 = createDefaultProject();
+    explicitSacn6454.settings.output.driver = 'sacn';
+    explicitSacn6454.settings.output.port = 6454;
+    await saveProjectToDisk(explicitSacn6454);
+    const loadedExplicitSacn = await loadSavedProject();
+    expect(loadedExplicitSacn.project.settings.output.port).toBe(6454);
+
+    // Saved project missing output.port falls back to protocol default (6454 for Art-Net).
+    const missingPort = createDefaultProject();
+    missingPort.settings.output.driver = 'artnet';
+    delete (missingPort.settings.output as { port?: number }).port;
+    await fs.writeFile(autosavePath, JSON.stringify(missingPort, null, 2), 'utf8');
+    const loadedDefault = await loadSavedProject();
+    expect(loadedDefault.project.settings.output.port).toBe(6454);
+
+    const hiFps = createDefaultProject();
+    hiFps.settings.timeline.fps = 60;
+    hiFps.settings.ltc.fps = 25;
+    await saveProjectToDisk(hiFps);
+    const loadedHi = await loadSavedProject();
+    expect(loadedHi.project.settings.timeline.fps).toBe(60);
+    expect(loadedHi.project.settings.ltc.fps).toBe(25);
+
+    // Existing saved project with custom receiver IP + Art-Net port 6038 is also preserved.
+    const savedCustomReceiver = createDefaultProject();
+    savedCustomReceiver.settings.output.driver = 'artnet';
+    savedCustomReceiver.settings.output.ip = '192.168.1.50';
+    savedCustomReceiver.settings.output.port = 6038;
+    await fs.writeFile(autosavePath, JSON.stringify(savedCustomReceiver, null, 2), 'utf8');
+    const loadedCustomReceiver = await loadSavedProject();
+    expect(loadedCustomReceiver.project.settings.output.port).toBe(6038);
+  });
 });

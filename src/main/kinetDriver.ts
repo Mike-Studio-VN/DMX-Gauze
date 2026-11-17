@@ -25,7 +25,7 @@ export class KinetDriver implements OutputDriver {
   ) {}
 
   private targetPort(): number {
-    return this.cfg.port > 0 && this.cfg.port !== 6454 ? this.cfg.port : KINET_PORT
+    return this.cfg.port > 0 ? this.cfg.port : KINET_PORT
   }
 
   start(): void {

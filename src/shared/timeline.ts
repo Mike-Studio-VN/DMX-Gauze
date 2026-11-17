@@ -1,5 +1,5 @@
 import { clamp } from './convert'
-import { parseTc } from './timecode'
+import { parseTc, snapDeltaToFps, snapTimeToFps } from './timecode'
 import type { ClipKeyframe, Command, Fps, ModuleCfg, Snapshot, TimelineClip, TimelineKey } from './types'
 
 const MIN_DURATION = 0.05
@@ -299,12 +299,13 @@ export function resolveClipStartNoOverlap(
   duration: number,
   preferredStart: number,
   ignoreClipId?: string,
+  fps?: Fps,
 ): number {
-  const desired = Math.max(0, preferredStart)
+  const desired = fps ? snapTimeToFps(preferredStart, fps) : Math.max(0, preferredStart)
   const others = sameModuleClips
     .filter((c) => c.id !== ignoreClipId)
     .sort((a, b) => a.startTime - b.startTime)
-  if (others.length === 0) return Number(desired.toFixed(2))
+  if (others.length === 0) return Number(desired.toFixed(4))
 
   const intervals: Array<[number, number]> = []
   let cursor = 0
@@ -320,14 +321,19 @@ export function resolveClipStartNoOverlap(
   for (const [gapStart, gapEnd] of intervals) {
     if (gapEnd - gapStart + 1e-6 < duration) continue
     const maxAllowed = gapEnd === Number.POSITIVE_INFINITY ? desired : gapEnd - duration
-    const cand = Math.max(gapStart, Math.min(desired, maxAllowed))
+    const rawCand = Math.max(gapStart, Math.min(desired, maxAllowed))
+    const snappedCand = fps ? snapTimeToFps(rawCand, fps) : rawCand
+    const cand =
+      snappedCand >= gapStart - 1e-6 && snappedCand <= maxAllowed + 1e-6
+        ? snappedCand
+        : rawCand
     const dist = Math.abs(cand - desired)
     if (dist < bestDist - 1e-6) {
       bestDist = dist
       bestStart = cand
     }
   }
-  return Number(Math.max(0, bestStart).toFixed(2))
+  return Number(Math.max(0, bestStart).toFixed(4))
 }
 
 /** Giới hạn trái/phải khi trim moment để không chồng chéo moment liền kề. */
@@ -341,8 +347,8 @@ export function resolveClipBoundsNoOverlap(
   const prev = idx > 0 ? sorted[idx - 1] : null
   const next = idx < sorted.length - 1 ? sorted[idx + 1] : null
   return {
-    minStart: prev ? Number((prev.startTime + prev.duration).toFixed(2)) : 0,
-    maxEnd: next ? Number(next.startTime.toFixed(2)) : Number.POSITIVE_INFINITY,
+    minStart: prev ? Number((prev.startTime + prev.duration).toFixed(4)) : 0,
+    maxEnd: next ? Number(next.startTime.toFixed(4)) : Number.POSITIVE_INFINITY,
   }
 }
 
@@ -368,7 +374,7 @@ export function syncModuleClipsContinuity(
   let cursor = 0
   for (let i = 0; i < modClips.length; i++) {
     const c = modClips[i]
-    const startTime = Number(Math.max(cursor, Math.max(0, c.startTime)).toFixed(2))
+    const startTime = Number(Math.max(cursor, Math.max(0, c.startTime)).toFixed(4))
     modClips[i] = { ...c, startTime }
     cursor = startTime + Math.max(MIN_DURATION, c.duration)
   }
@@ -504,25 +510,25 @@ export function updateClipKeyframeTimelineTime(
 ): { startTime: number; duration: number; keyframes: ClipKeyframe[] } {
   const minAllowed = bounds ? bounds.minStart : 0
   const maxAllowed = bounds && Number.isFinite(bounds.maxEnd) ? bounds.maxEnd : Number.POSITIVE_INFINITY
-  const targetAbs = Math.max(minAllowed, Math.min(maxAllowed, Number(rawTimelineTime.toFixed(2))))
+  const targetAbs = Math.max(minAllowed, Math.min(maxAllowed, Number(rawTimelineTime.toFixed(4))))
 
   const absPoints = clip.keyframes
     .map((k) => ({
       ...k,
-      absTime: k.id === keyframeId ? targetAbs : Number((clip.startTime + k.offset).toFixed(2)),
+      absTime: k.id === keyframeId ? targetAbs : Number((clip.startTime + k.offset).toFixed(4)),
     }))
     .sort((a, b) => a.absTime - b.absTime)
 
-  let startTime = Number(Math.max(minAllowed, absPoints[0]?.absTime ?? clip.startTime).toFixed(2))
+  let startTime = Number(Math.max(minAllowed, absPoints[0]?.absTime ?? clip.startTime).toFixed(4))
   const lastAbs = absPoints[absPoints.length - 1]?.absTime ?? startTime + MIN_CLIP_DUR
-  const duration = Number(Math.max(MIN_CLIP_DUR, lastAbs - startTime).toFixed(2))
+  const duration = Number(Math.max(MIN_CLIP_DUR, lastAbs - startTime).toFixed(4))
   if (Number.isFinite(maxAllowed) && startTime + duration > maxAllowed) {
-    startTime = Number(Math.max(minAllowed, maxAllowed - duration).toFixed(2))
+    startTime = Number(Math.max(minAllowed, maxAllowed - duration).toFixed(4))
   }
 
   const keyframes = absPoints.map(({ absTime, ...kf }) => ({
     ...kf,
-    offset: Number(Math.max(0, Math.min(duration, absTime - startTime)).toFixed(2)),
+    offset: Number(Math.max(0, Math.min(duration, absTime - startTime)).toFixed(4)),
   }))
   if (keyframes.length >= 2) {
     keyframes[0].offset = 0
@@ -539,16 +545,16 @@ export function updateClipStartTime(
   bounds?: { minStart: number; maxEnd: number },
 ): Partial<TimelineClip> | null {
   if (!Number.isFinite(rawStart)) return null
-  const minStart = Math.max(0, Number((bounds?.minStart ?? 0).toFixed(2)))
+  const minStart = Math.max(0, Number((bounds?.minStart ?? 0).toFixed(4)))
   if (bounds && Number.isFinite(bounds.maxEnd)) {
-    const boundMax = Number(bounds.maxEnd.toFixed(2))
+    const boundMax = Number(bounds.maxEnd.toFixed(4))
     if (boundMax - minStart < clip.duration - 1e-6) return null
   }
   const maxStart =
     bounds && Number.isFinite(bounds.maxEnd)
-      ? Math.max(minStart, Number((bounds.maxEnd - clip.duration).toFixed(2)))
+      ? Math.max(minStart, Number((bounds.maxEnd - clip.duration).toFixed(4)))
       : Number.POSITIVE_INFINITY
-  const startTime = Number(clamp(rawStart, minStart, maxStart).toFixed(2))
+  const startTime = Number(clamp(rawStart, minStart, maxStart).toFixed(4))
   return { startTime }
 }
 
@@ -561,21 +567,21 @@ export function updateClipEndTime(
 ): Partial<TimelineClip> | null {
   if (!Number.isFinite(rawEnd)) return null
   const safeMinDur = Math.max(MIN_DURATION, minDur)
-  const minEnd = Number((clip.startTime + safeMinDur).toFixed(2))
+  const minEnd = Number((clip.startTime + safeMinDur).toFixed(4))
   if (bounds && Number.isFinite(bounds.maxEnd)) {
-    const boundMax = Number(bounds.maxEnd.toFixed(2))
+    const boundMax = Number(bounds.maxEnd.toFixed(4))
     if (boundMax < minEnd - 1e-6) return null
   }
   const maxEnd =
     bounds && Number.isFinite(bounds.maxEnd)
-      ? Number(bounds.maxEnd.toFixed(2))
+      ? Number(bounds.maxEnd.toFixed(4))
       : Number.POSITIVE_INFINITY
-  const clampedEnd = clamp(Number(rawEnd.toFixed(2)), minEnd, maxEnd)
-  const duration = Math.max(safeMinDur, Number((clampedEnd - clip.startTime).toFixed(2)))
+  const clampedEnd = clamp(Number(rawEnd.toFixed(4)), minEnd, maxEnd)
+  const duration = Math.max(safeMinDur, Number((clampedEnd - clip.startTime).toFixed(4)))
   const ratio = duration / Math.max(0.01, clip.duration)
   const keyframes = clip.keyframes.map((k) => ({
     ...k,
-    offset: Number((k.offset * ratio).toFixed(2)),
+    offset: Number((k.offset * ratio).toFixed(4)),
   }))
   return { duration, keyframes }
 }
@@ -1113,6 +1119,7 @@ export function buildMultiClipShiftPatch(
   selectedIds: readonly string[],
   rawDeltaSec: number,
   origStarts?: ReadonlyMap<string, number>,
+  fps?: Fps,
 ): { clips: TimelineClip[]; delta: number } | null {
   if (!Number.isFinite(rawDeltaSec) || selectedIds.length === 0) return null
   const selSet = new Set(selectedIds)
@@ -1140,11 +1147,12 @@ export function buildMultiClipShiftPatch(
   }
 
   if (minDelta > maxDelta + 1e-6) return null
-  const delta = Number(clamp(rawDeltaSec, minDelta, maxDelta).toFixed(2))
+  const candidateDelta = fps ? snapDeltaToFps(rawDeltaSec, fps) : rawDeltaSec
+  const delta = Number(clamp(candidateDelta, minDelta, maxDelta).toFixed(4))
   const nextClips = clips.map((c) => {
     if (!selSet.has(c.id)) return c
     const baseStart = origStarts?.get(c.id) ?? c.startTime
-    return { ...c, startTime: Number(Math.max(0, baseStart + delta).toFixed(2)) }
+    return { ...c, startTime: Number(Math.max(0, baseStart + delta).toFixed(4)) }
   })
   return { clips: nextClips, delta }
 }

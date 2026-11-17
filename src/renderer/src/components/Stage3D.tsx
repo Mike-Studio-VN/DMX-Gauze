@@ -106,7 +106,7 @@ function computeLayerSpan(items: PositionedModule[]): { minX: number; maxX: numb
 export function Stage3D() {
   const { project, selectedIds, snapshot, selectModule } = useAppStore()
   const mountRef = useRef<HTMLDivElement | null>(null)
-  const [cameraPreset, setCameraPreset] = useState<CameraPreset>('perspective')
+  const [cameraPreset, setCameraPreset] = useState<CameraPreset>('front')
   const [showElevationRuler, setShowElevationRuler] = useState(true)
   const [hoveredModule, setHoveredModule] = useState<{
     id: string
@@ -210,10 +210,10 @@ export function Stage3D() {
     pmremGenerator.dispose()
 
     const camera = new THREE.PerspectiveCamera(42, initialW / initialH, 0.1, 100)
-    camera.position.set(7.5, 3.6, 8.8)
+    camera.position.set(0, 2.1, 9.8)
 
     const controls = new OrbitControls(camera, renderer.domElement)
-    controls.target.set(0, 2.0, 0)
+    controls.target.set(0, 2.1, 0)
     controls.enableDamping = !isSoftwareGl
     controls.dampingFactor = 0.08
     controls.maxPolarAngle = Math.PI * 0.495
@@ -939,7 +939,7 @@ export function Stage3D() {
         <button
           type="button"
           title="Đặt lại góc nhìn mặc định"
-          onClick={() => applyCameraPreset('perspective')}
+          onClick={() => applyCameraPreset('front')}
           className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-full text-[#C2B3A4] hover:bg-white/10 hover:text-fg"
         >
           <RotateCcw className="h-3.5 w-3.5" />

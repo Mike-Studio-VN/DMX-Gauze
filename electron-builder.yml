@@ -6,7 +6,9 @@ directories:
 files:
   - out/**/*
   - package.json
+  - build/icon.png
 mac:
+  icon: build/icon.icns
   category: public.app-category.utilities
   identity: null
   target:
@@ -16,6 +18,7 @@ mac:
       arch: [arm64, x64]
   artifactName: ${productName}-${version}-mac-${arch}.${ext}
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch: [x64]

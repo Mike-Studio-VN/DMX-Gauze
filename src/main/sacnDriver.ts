@@ -23,7 +23,7 @@ export class SacnDriver implements OutputDriver {
   }
 
   private targetPort(): number {
-    return this.cfg.port > 0 && this.cfg.port !== 6454 ? this.cfg.port : SACN_PORT
+    return this.cfg.port > 0 ? this.cfg.port : SACN_PORT
   }
 
   private targetIp(): string {

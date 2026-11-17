@@ -7,6 +7,7 @@ import {
   Clock,
   Layers,
   Link2,
+  Magnet,
   Pause,
   Play,
   Plus,
@@ -20,7 +21,16 @@ import {
 import { clamp } from '@shared/convert'
 import { addressRange } from '@shared/dmx'
 import { LtcClockTracker, LtcDecoder } from '@shared/ltc'
-import { FPS_OPTIONS, formatTc, tcToSeconds } from '@shared/timecode'
+import {
+  FPS_OPTIONS,
+  formatTc,
+  isStandardLtcFps,
+  nominalFps,
+  realFps,
+  resolveLtcFps,
+  snapTimeToFps,
+  tcToSeconds,
+} from '@shared/timecode'
 import {
   LinearFollowPlanner,
   analyzeClipSpeeds,
@@ -116,6 +126,8 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   } = useAppStore()
 
   const fps = project.settings.timeline.fps
+  const ltcMatched = isStandardLtcFps(fps)
+  const effectiveLtcFps = resolveLtcFps(fps, project.settings.ltc.fps)
   const clips = useMemo(() => project.clips ?? [], [project.clips])
   const [time, setTime] = useState(project.settings.timeline.startTime)
 
@@ -125,6 +137,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   const [playing, setPlaying] = useState(false)
   const [ltcActive, setLtcActive] = useState(false)
   const [ltcStatus, setLtcStatus] = useState<'off' | 'lock' | 'freewheel' | 'lost'>('off')
+  const [snapToFrame, setSnapToFrame] = useState(true)
   const [pxPerSec, setPxPerSec] = useState(64)
   const [editingHead, setEditingHead] = useState(false)
   const [headInput, setHeadInput] = useState('')
@@ -261,7 +274,8 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
             if (stopped) return
             hasDecoded = true
             const nowMs = performance.now()
-            const rawSec = tcToSeconds(f, fps) + project.settings.ltc.offsetFrames / fps
+            const ltcRate = realFps(effectiveLtcFps)
+            const rawSec = tcToSeconds(f, effectiveLtcFps) + project.settings.ltc.offsetFrames / ltcRate
             const sec = clamp(clock.onDecodedFrame(rawSec, nowMs), 0, maxTime)
             if (prevLtcSecRef.current !== null && Math.abs(sec - prevLtcSecRef.current) > 0.25) {
               planner.reset()
@@ -275,7 +289,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
               dispatchFollowRef.current(sec, 0.06)
             }
           },
-          fps === 29.97 ? 30 : fps,
+          nominalFps(effectiveLtcFps),
         )
         proc.onaudioprocess = (ev) => {
           const chIdx = project.settings.ltc.channel === 'right' && ev.inputBuffer.numberOfChannels > 1 ? 1 : 0
@@ -293,7 +307,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
 
     const watch = setInterval(() => {
       if (stopped || !hasDecoded) return
-      const res = clock.poll(performance.now(), fps, project.settings.ltc.freewheelFrames)
+      const res = clock.poll(performance.now(), realFps(effectiveLtcFps), project.settings.ltc.freewheelFrames)
       setLtcStatus(res.status)
       if (res.timeSec !== null) {
         const clampedSec = clamp(res.timeSec, 0, maxTime)
@@ -322,7 +336,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       stream?.getTracks().forEach((t) => t.stop())
       void ctx?.close()
     }
-  }, [ltcActive, fps, maxTime, project.settings.ltc, notify])
+  }, [ltcActive, effectiveLtcFps, maxTime, project.settings.ltc, notify])
 
   const previewTimelineAt = (t: number) => {
     linearPlannerRef.current.reset()
@@ -342,6 +356,9 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     }
   }
 
+  const quantizeTime = (sec: number) =>
+    snapToFrame ? snapTimeToFps(sec, fps) : Math.max(0, Number(sec.toFixed(2)))
+
   const commitHeadInput = () => {
     if (headCanceledRef.current) {
       headCanceledRef.current = false
@@ -350,7 +367,8 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     }
     const parsed = parseTimelineSecondsInput(headInput, fps)
     if (parsed !== null) {
-      const clampedT = clamp(Number(parsed.toFixed(2)), 0, maxTime)
+      const targetSec = snapToFrame ? snapTimeToFps(parsed, fps) : Number(parsed.toFixed(4))
+      const clampedT = clamp(targetSec, 0, maxTime)
       seekTo(clampedT, true)
       previewTimelineAt(clampedT)
     }
@@ -358,7 +376,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   }
 
   const scrubRulerFromClientX = (clientX: number, rectLeft: number) => {
-    const t = Number(((clientX - rectLeft) / pxPerSec).toFixed(2))
+    const t = quantizeTime((clientX - rectLeft) / pxPerSec)
     const latestT = clamp(t, 0, maxTime)
     seekTo(latestT, true)
     return latestT
@@ -437,41 +455,55 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       if (!clipDraggedRef.current && Math.abs(ev.clientX - startX) < 3) return
       clipDraggedRef.current = true
       const dxSec = (ev.clientX - startX) / pxPerSec
+      const activeSnapFps = snapToFrame && !ev.altKey ? fps : undefined
       if (isMultiMove && origStarts) {
-        const appliedDelta = moveSelectedClipsByDelta(origStarts, dxSec, multiDragKey)
+        const appliedDelta = moveSelectedClipsByDelta(origStarts, dxSec, multiDragKey, activeSnapFps)
         if (appliedDelta !== null) {
           const nextS = Math.max(0, origStart + appliedDelta)
           const sign = appliedDelta >= 0 ? '+' : ''
-          updateTooltip(ev, `${nextS.toFixed(2)}s → ${(nextS + origDur).toFixed(2)}s (${sign}${appliedDelta.toFixed(2)}s)`)
+          updateTooltip(
+            ev,
+            `${formatTc(nextS, fps)} · ${nextS.toFixed(2)}s → ${(nextS + origDur).toFixed(2)}s (${sign}${appliedDelta.toFixed(2)}s)`,
+          )
         }
         return
       }
       const sameModClips = clipsRef.current.filter((c) => c.moduleId === clip.moduleId)
       if (mode === 'move') {
-        const nextStart = resolveClipStartNoOverlap(sameModClips, origDur, origStart + dxSec, clip.id)
+        const nextStart = resolveClipStartNoOverlap(sameModClips, origDur, origStart + dxSec, clip.id, activeSnapFps)
         updateClip(clip.id, { startTime: nextStart }, `clip-move-${clip.id}`)
-        updateTooltip(ev, `${nextStart.toFixed(2)}s → ${(nextStart + origDur).toFixed(2)}s`)
+        updateTooltip(ev, `${formatTc(nextStart, fps)} · ${nextStart.toFixed(2)}s → ${(nextStart + origDur).toFixed(2)}s`)
       } else if (mode === 'trim-right') {
         const bounds = resolveClipBoundsNoOverlap(sameModClips, clip)
         const maxDur = Number.isFinite(bounds.maxEnd)
           ? Math.max(MIN_CLIP_DUR, bounds.maxEnd - origStart)
           : Number.POSITIVE_INFINITY
-        const nextDur = Math.min(maxDur, Math.max(MIN_CLIP_DUR, Number((origDur + dxSec).toFixed(2))))
+        const rawEnd = origStart + origDur + dxSec
+        const snappedEnd = activeSnapFps ? snapTimeToFps(rawEnd, activeSnapFps) : Number(rawEnd.toFixed(2))
+        const nextDur = Math.min(maxDur, Math.max(MIN_CLIP_DUR, Number((snappedEnd - origStart).toFixed(4))))
         const ratio = nextDur / Math.max(0.01, origDur)
-        const nextKfs = origKfs.map((k) => ({ ...k, offset: Number((k.offset * ratio).toFixed(2)) }))
+        const nextKfs = origKfs.map((k) => ({ ...k, offset: Number((k.offset * ratio).toFixed(4)) }))
         updateClip(clip.id, { duration: nextDur, keyframes: nextKfs }, `clip-trim-${clip.id}`)
-        updateTooltip(ev, `${origStart.toFixed(2)}s → ${(origStart + nextDur).toFixed(2)}s (${nextDur.toFixed(2)}s)`)
+        updateTooltip(
+          ev,
+          `${formatTc(origStart + nextDur, fps)} · ${origStart.toFixed(2)}s → ${(origStart + nextDur).toFixed(2)}s (${nextDur.toFixed(2)}s)`,
+        )
       } else {
         const bounds = resolveClipBoundsNoOverlap(sameModClips, clip)
-        const minShift = bounds.minStart - origStart
-        const maxShift = origDur - MIN_CLIP_DUR
-        const clampedShift = Math.max(minShift, Math.min(maxShift, dxSec))
-        const nextStart = Number((origStart + clampedShift).toFixed(2))
-        const nextDur = Number((origDur - clampedShift).toFixed(2))
+        const origEnd = origStart + origDur
+        const rawStart = origStart + dxSec
+        const snappedStart = activeSnapFps ? snapTimeToFps(rawStart, activeSnapFps) : Number(rawStart.toFixed(2))
+        const nextStart = Number(
+          Math.max(bounds.minStart, Math.min(origEnd - MIN_CLIP_DUR, snappedStart)).toFixed(4),
+        )
+        const nextDur = Number(Math.max(MIN_CLIP_DUR, origEnd - nextStart).toFixed(4))
         const ratio = nextDur / Math.max(0.01, origDur)
-        const nextKfs = origKfs.map((k) => ({ ...k, offset: Number((k.offset * ratio).toFixed(2)) }))
+        const nextKfs = origKfs.map((k) => ({ ...k, offset: Number((k.offset * ratio).toFixed(4)) }))
         updateClip(clip.id, { startTime: nextStart, duration: nextDur, keyframes: nextKfs }, `clip-trim-${clip.id}`)
-        updateTooltip(ev, `${nextStart.toFixed(2)}s → ${(nextStart + nextDur).toFixed(2)}s (${nextDur.toFixed(2)}s)`)
+        updateTooltip(
+          ev,
+          `${formatTc(nextStart, fps)} · ${nextStart.toFixed(2)}s → ${(nextStart + nextDur).toFixed(2)}s (${nextDur.toFixed(2)}s)`,
+        )
       }
     }
 
@@ -518,11 +550,15 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       const tNorm = clamp((localX - DOT_PAD_X) / usableW, 0, 1)
       const hNorm = clamp(1 - (localY - DOT_PAD_Y) / usableH, 0, 1)
 
+      const rawAbs = clip.startTime + tNorm * clip.duration
+      const snappedOff = snapToFrame
+        ? Number((snapTimeToFps(rawAbs, fps) - clip.startTime).toFixed(4))
+        : Number((tNorm * clip.duration).toFixed(2))
       const nextOffset = isFirst
         ? 0
         : isLast
           ? clip.duration
-          : clamp(Number((tNorm * clip.duration).toFixed(2)), 0.05, Math.max(0.05, clip.duration - 0.05))
+          : clamp(snappedOff, 0.05, Math.max(0.05, clip.duration - 0.05))
       const nextHeight = Number((minH + hNorm * (maxH - minH)).toFixed(2))
 
       const nextKfs = baseKfs
@@ -549,7 +585,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       id: clipId,
       layerId,
       moduleId: mod.id,
-      startTime: Math.max(0, Number(startSec.toFixed(2))),
+      startTime: Math.max(0, Number(startSec.toFixed(4))),
       duration: dur,
       curveMode: 'smooth',
       keyframes,
@@ -568,7 +604,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     if (!mod) return
 
     const rect = e.currentTarget.getBoundingClientRect()
-    const dropSec = Math.max(0, Number(((e.clientX - rect.left) / pxPerSec).toFixed(2)))
+    const dropSec = quantizeTime((e.clientX - rect.left) / pxPerSec)
     createDefaultWaveClip(mod, layerId, dropSec)
   }
 
@@ -578,7 +614,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   const addKeyframeToSelected = () => {
     if (!selectedClip || !selectedClipMod) return
     const rel = clamp(
-      Number((time - selectedClip.startTime).toFixed(2)),
+      Number((time - selectedClip.startTime).toFixed(4)),
       0,
       Math.max(selectedClip.duration, time - selectedClip.startTime),
     )
@@ -618,7 +654,13 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     const kfId = `kf-${Date.now()}-${Math.random().toString(36).slice(2, 4)}`
     const nextKf: ClipKeyframe = {
       id: kfId,
-      offset: Number((tNorm * clip.duration).toFixed(2)),
+      offset: clamp(
+        snapToFrame
+          ? Number((snapTimeToFps(clip.startTime + tNorm * clip.duration, fps) - clip.startTime).toFixed(4))
+          : Number((tNorm * clip.duration).toFixed(2)),
+        0,
+        clip.duration,
+      ),
       height: Number((minH + hNorm * (maxH - minH)).toFixed(2)),
     }
     const kfs = [...clip.keyframes, nextKf].sort((a, b) => a.offset - b.offset)
@@ -793,13 +835,21 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
               if (ltcActive) {
                 setLtcActive(false)
               } else {
+                if (!ltcMatched) {
+                  notify(
+                    `Timeline ${fps} fps vượt chuẩn LTC (24/25/29.97/30). LTC đang giữ rate riêng ${effectiveLtcFps} fps.`,
+                    'warn',
+                  )
+                }
                 setLtcStatus('lost')
                 setLtcActive(true)
               }
             }}
             title={
               !ltcActive
-                ? 'Bấm để đồng bộ với bộ Timecode ngoài (LTC)'
+                ? ltcMatched
+                  ? 'Bấm để đồng bộ với bộ Timecode ngoài (LTC)'
+                  : `Bấm để đồng bộ LTC (cảnh báo: Timeline ${fps} fps vượt chuẩn LTC — giữ rate riêng ${effectiveLtcFps} fps)`
                 : isLtcLive
                   ? 'Đang kết nối bộ Timecode ngoài (Live) · Bấm để ngắt đồng bộ'
                   : 'Không kết nối được bộ Timecode ngoài · Bấm để tắt đồng bộ'
@@ -829,6 +879,18 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
               </>
             )}
           </button>
+
+          {!ltcMatched && (
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true, 'ltc')}
+              title={`LTC chuẩn chỉ 24/25/29.97/30 fps (không hỗ trợ ${fps} fps). LTC giữ rate riêng ${effectiveLtcFps} fps.`}
+              className="inline-flex h-5 cursor-pointer items-center gap-1 rounded-full bg-warn/15 px-2 text-[10px] font-medium text-warn shadow-[inset_0_0_0_1px_rgba(255,203,114,0.35)]"
+            >
+              <AlertTriangle size={10} />
+              <span>LTC {effectiveLtcFps}fps</span>
+            </button>
+          )}
 
           <output>{formatTc(time, fps)}</output>
 
@@ -939,6 +1001,25 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
             onClick={() => setPxPerSec((z) => Math.min(150, z + 12))}
           >
             <ZoomIn size={13} />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSnapToFrame((v) => !v)}
+            aria-pressed={snapToFrame}
+            title={
+              snapToFrame
+                ? `Đang bật Snap theo khung hình (${fps} fps) · Giữ Alt khi kéo để bỏ qua tạm thời`
+                : 'Đang tắt Snap theo khung hình · Bấm để bật'
+            }
+            className={`kiln-btn h-7 px-2 text-[10.5px] ${
+              snapToFrame
+                ? 'bg-brand/20 text-[#FFB26B] shadow-[inset_0_0_0_1px_rgba(247,132,46,.38)]'
+                : 'text-muted'
+            }`}
+          >
+            <Magnet size={12} />
+            <span>Snap</span>
           </button>
 
           <select
@@ -1325,7 +1406,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
                           onDrop={(e) => handleDropModule(e, layer.id, mod)}
                           onDoubleClick={(e) => {
                             const rect = e.currentTarget.getBoundingClientRect()
-                            const dropSec = Math.max(0, Number(((e.clientX - rect.left) / pxPerSec).toFixed(2)))
+                            const dropSec = quantizeTime((e.clientX - rect.left) / pxPerSec)
                             createDefaultWaveClip(mod, layer.id, dropSec)
                           }}
                           style={{ width: timelineWidth }}

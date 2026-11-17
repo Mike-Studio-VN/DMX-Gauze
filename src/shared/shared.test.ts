@@ -862,4 +862,168 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
     expect(updateClipStartTime(clip, 0.5, { minStart: 1.2, maxEnd: 7.5 })).toEqual({ startTime: 1.2 })
     expect(updateClipStartTime(clip, 5, { minStart: 1.2, maxEnd: 7.5 })).toEqual({ startTime: 3.5 })
   })
+
+  it('hỗ trợ timeline 40/50/60 fps: timecode, snap, kéo moment, LTC giữ rate riêng, migrate Art-Net+5568 -> 6454 và DMX giữ 25 Hz', async () => {
+    const {
+      FPS_OPTIONS,
+      LTC_FPS_OPTIONS,
+      formatTc,
+      isStandardLtcFps,
+      parseTc,
+      resolveLtcFps,
+      snapDeltaToFps,
+      snapTimeToFps,
+    } = await import('./timecode')
+    const {
+      buildMultiClipShiftPatch,
+      resolveClipStartNoOverlap,
+      syncModuleClipsContinuity,
+    } = await import('./timeline')
+    const { normalizeProject } = await import('./preset')
+    const { resolveOutputSettingsPatch } = await import('./protocols')
+    const { DMX_TRANSPORT_HZ } = await import('./core')
+
+    expect(FPS_OPTIONS).toEqual([24, 25, 29.97, 30, 40, 50, 60])
+    expect(LTC_FPS_OPTIONS).toEqual([24, 25, 29.97, 30])
+    expect(DMX_TRANSPORT_HZ).toBe(25)
+
+    // Timecode & snap ở 40, 50, 60 fps
+    expect(formatTc(1.025, 40)).toBe('00:00:01:01')
+    expect(parseTc('00:00:01:39', 40)).toBeCloseTo(1.975, 4)
+    expect(parseTc('00:00:01:40', 40)).toBeNull()
+    expect(snapTimeToFps(0.024, 40)).toBe(0.025)
+
+    expect(formatTc(1.02, 50)).toBe('00:00:01:01')
+    expect(parseTc('00:00:01:49', 50)).toBeCloseTo(1.98, 4)
+    expect(parseTc('00:00:01:50', 50)).toBeNull()
+    expect(snapTimeToFps(0.021, 50)).toBe(0.02)
+
+    const f60 = snapTimeToFps(0.017, 60)
+    expect(f60).toBe(0.0167)
+    expect(formatTc(f60, 60)).toBe('00:00:00:01')
+    expect(formatTc(59 / 60, 60)).toBe('00:00:00:59')
+    expect(parseTc('00:00:00:59', 60)).toBeCloseTo(59 / 60, 4)
+    expect(parseTc('00:00:00:60', 60)).toBeNull()
+    expect(snapDeltaToFps(0.034, 60)).toBe(0.0333)
+
+    // Kéo moment & sync giữ chính xác toạ độ snap của 40/60 fps (không bị làm tròn sai về 2 số thập phân)
+    const c1 = {
+      id: 'm40-1',
+      layerId: 'l1',
+      moduleId: 'm1',
+      startTime: 0.025,
+      duration: 1,
+      keyframes: [
+        { id: 'k1', offset: 0, height: 0 },
+        { id: 'k2', offset: 1, height: 1 },
+      ],
+    }
+    const c2 = {
+      id: 'm40-2',
+      layerId: 'l1',
+      moduleId: 'm1',
+      startTime: 2,
+      duration: 1,
+      keyframes: [
+        { id: 'k3', offset: 0, height: 1 },
+        { id: 'k4', offset: 1, height: 0 },
+      ],
+    }
+    expect(resolveClipStartNoOverlap([c2], 1, 0.024, undefined, 40)).toBe(0.025)
+    expect(resolveClipStartNoOverlap([c2], 1, 0.017, undefined, 60)).toBe(0.0167)
+    const synced40 = syncModuleClipsContinuity([c1, c2], 'm1')
+    expect(synced40[0].startTime).toBe(0.025)
+
+    const shifted60 = buildMultiClipShiftPatch(
+      [{ ...c1, startTime: 1 }],
+      ['m40-1'],
+      0.017,
+      new Map([['m40-1', 1]]),
+      60,
+    )!
+    expect(shifted60.delta).toBe(0.0167)
+    expect(shifted60.clips[0].startTime).toBe(1.0167)
+
+    // LTC chuẩn chỉ 24/25/29.97/30: khi timeline >30 fps thì LTC giữ rate riêng, không giả vờ hỗ trợ 40/50/60
+    expect(isStandardLtcFps(30)).toBe(true)
+    expect(isStandardLtcFps(40)).toBe(false)
+    expect(isStandardLtcFps(50)).toBe(false)
+    expect(isStandardLtcFps(60)).toBe(false)
+    expect(resolveLtcFps(60)).toBe(30)
+    expect(resolveLtcFps(50, 25)).toBe(25)
+    expect(resolveLtcFps(25)).toBe(25)
+
+    // 1) Legacy v1.0.0 (không có schemaVersion) sACN/KiNET với port 6454 -> migrate về 5568/6038 theo đúng hành vi gửi v1.0.0
+    const legacySacn6454 = createDefaultProject()
+    delete legacySacn6454.schemaVersion
+    legacySacn6454.settings.output.driver = 'sacn'
+    legacySacn6454.settings.output.port = 6454
+    const normLegacySacn = normalizeProject(legacySacn6454)
+    expect(normLegacySacn.settings.output.port).toBe(5568)
+    expect(normLegacySacn.schemaVersion).toBe(2)
+
+    const legacyKinet6454 = createDefaultProject()
+    delete legacyKinet6454.schemaVersion
+    legacyKinet6454.settings.output.driver = 'kinet'
+    legacyKinet6454.settings.output.port = 6454
+    const normLegacyKinet = normalizeProject(legacyKinet6454)
+    expect(normLegacyKinet.settings.output.port).toBe(6038)
+    expect(normLegacyKinet.schemaVersion).toBe(2)
+
+    // 2) Legacy v1.0.0 với custom port khác (vd Art-Net 5568/6038, sACN 6038, KiNET 5568) vẫn giữ nguyên
+    const legacyBroadcastArtNet5568 = createDefaultProject()
+    delete legacyBroadcastArtNet5568.schemaVersion
+    legacyBroadcastArtNet5568.settings.output.driver = 'artnet'
+    legacyBroadcastArtNet5568.settings.output.port = 5568
+    expect(normalizeProject(legacyBroadcastArtNet5568).settings.output.port).toBe(5568)
+
+    const legacySacn6038 = createDefaultProject()
+    delete legacySacn6038.schemaVersion
+    legacySacn6038.settings.output.driver = 'sacn'
+    legacySacn6038.settings.output.port = 6038
+    expect(normalizeProject(legacySacn6038).settings.output.port).toBe(6038)
+
+    // 3) Dự án mới v1.0.1 (schemaVersion: 2): mọi custom port dương (kể cả sACN 6454, KiNET 6454, Art-Net 5568/6038) đều được giữ nguyên
+    const explicitSacn6454 = createDefaultProject()
+    explicitSacn6454.settings.output = resolveOutputSettingsPatch(explicitSacn6454.settings.output, { driver: 'sacn', port: 6454 })
+    expect(normalizeProject(explicitSacn6454).settings.output.port).toBe(6454)
+
+    const explicitKinet6454 = createDefaultProject()
+    explicitKinet6454.settings.output = resolveOutputSettingsPatch(explicitKinet6454.settings.output, { driver: 'kinet', port: 6454 })
+    expect(normalizeProject(explicitKinet6454).settings.output.port).toBe(6454)
+
+    const broadcastArtNet6038 = createDefaultProject()
+    broadcastArtNet6038.settings.output.driver = 'artnet'
+    broadcastArtNet6038.settings.output.port = 6038
+    expect(normalizeProject(broadcastArtNet6038).settings.output.port).toBe(6038)
+
+    const missingArtNetPort = createDefaultProject()
+    missingArtNetPort.settings.output.driver = 'artnet'
+    delete (missingArtNetPort.settings.output as { port?: number }).port
+    const filledArtNet = normalizeProject(missingArtNetPort)
+    expect(filledArtNet.settings.output.port).toBe(6454)
+
+    const customArtNet = createDefaultProject()
+    customArtNet.settings.output.driver = 'artnet'
+    customArtNet.settings.output.port = 6455
+    expect(normalizeProject(customArtNet).settings.output.port).toBe(6455)
+
+    // Lưu / mở project 60 fps + ltc.fps riêng, từ chối ltc.fps > 30
+    const hiFps = createDefaultProject()
+    hiFps.settings.timeline.fps = 60
+    hiFps.settings.ltc.fps = 25
+    const normHi = normalizeProject(hiFps)
+    expect(normHi.settings.timeline.fps).toBe(60)
+    expect(normHi.settings.ltc.fps).toBe(25)
+    const badLtcFps = createDefaultProject()
+    ;(badLtcFps.settings.ltc as { fps?: number }).fps = 60
+    expect(() => normalizeProject(badLtcFps)).toThrow()
+
+    // Đổi giao thức thì port tự đổi theo, sACN map sacnUniverse ?? universe + 1
+    const sacnOut = resolveOutputSettingsPatch(filledArtNet.settings.output, { driver: 'sacn' })
+    expect(sacnOut.port).toBe(5568)
+    expect(sacnOut.sacnUniverse).toBe(filledArtNet.settings.output.universe + 1)
+    const backToArtNet = resolveOutputSettingsPatch(sacnOut, { driver: 'artnet' })
+    expect(backToArtNet.port).toBe(6454)
+  })
 })

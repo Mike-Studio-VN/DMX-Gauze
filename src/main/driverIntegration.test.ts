@@ -49,12 +49,18 @@ const mocks = vi.hoisted(() => ({
     },
   },
   udp: {
+    failBindPorts: new Set<number>(),
     sockets: [] as Array<{
+      boundPort: number | null;
+      boundAddress: string | null;
+      reuseAddr: boolean;
       closed: boolean;
       pendingSends: PendingUdpSend[];
       completedSends: PendingUdpSend[];
+      emitter: EventEmitter;
     }>,
     reset() {
+      this.failBindPorts.clear();
       this.sockets = [];
     },
   },
@@ -127,21 +133,36 @@ vi.mock('node:fs', () => {
 });
 
 vi.mock('node:dgram', () => {
-  const createSocket = vi.fn(() => {
+  const createSocket = vi.fn((opts?: { type?: string; reuseAddr?: boolean }) => {
     const ee = new EventEmitter() as EventEmitter & {
-      bind: (port: number, cb?: () => void) => void;
+      bind: (port: number, addrOrCb?: string | (() => void), maybeCb?: () => void) => void;
       setBroadcast: (flag: boolean) => void;
       setMulticastTTL: (ttl: number) => void;
       send: (pkt: Uint8Array, port: number, ip: string, cb?: (err?: Error | null) => void) => void;
       close: () => void;
     };
     const record = {
+      boundPort: null as number | null,
+      boundAddress: null as string | null,
+      reuseAddr: Boolean(opts?.reuseAddr),
       closed: false,
       pendingSends: [] as PendingUdpSend[],
       completedSends: [] as PendingUdpSend[],
+      emitter: ee,
     };
     mocks.udp.sockets.push(record);
-    ee.bind = (_port: number, cb?: () => void) => {
+    ee.bind = (port: number, addrOrCb?: string | (() => void), maybeCb?: () => void) => {
+      const address = typeof addrOrCb === 'string' ? addrOrCb : null;
+      const cb = typeof addrOrCb === 'function' ? addrOrCb : maybeCb;
+      record.boundPort = port;
+      record.boundAddress = address;
+      if (mocks.udp.failBindPorts.has(port)) {
+        queueMicrotask(() => {
+          const err = Object.assign(new Error(`bind EADDRINUSE 0.0.0.0:${port}`), { code: 'EADDRINUSE' });
+          ee.emit('error', err);
+        });
+        return;
+      }
       if (cb) queueMicrotask(() => cb());
     };
     ee.setBroadcast = () => {};
@@ -461,5 +482,195 @@ describe('Core + Async Driver integration cleanup & drain tests', () => {
     } finally {
       Object.defineProperty(process, 'platform', { value: origPlatform, configurable: true });
     }
+  });
+
+  it('ArtNetDriver honors explicit custom ports (5568/6038), keeps 6454 free on loopback 127.0.0.1:6454 while receiving source-port replies, and SacnDriver binds 0', async () => {
+    const { buildArtPollReply } = await import('@shared/artnet');
+    const ev = { onNode: vi.fn(), onError: vi.fn(), onWarn: vi.fn() };
+
+    // 1) Explicit custom Art-Net ports (5568, 6038) must NOT be silently rewritten to 6454.
+    const artnet5568 = new ArtNetDriver({ ...udpOutput('artnet', '127.0.0.1'), port: 5568 }, ev);
+    artnet5568.start();
+    const sock5568 = mocks.udp.sockets[0];
+    expect(sock5568.boundPort).toBe(0);
+    await vi.waitFor(() => {
+      artnet5568.poll();
+      artnet5568.send(0, 0, new Uint8Array([10, 20, 30, 77]));
+      expect(sock5568.pendingSends.length).toBe(2);
+    });
+    expect(sock5568.pendingSends[0].port).toBe(5568);
+    expect(sock5568.pendingSends[1].port).toBe(5568);
+    // Custom target port 5568 allows 6454 ArtPollReply discovery listener without colliding with target port
+    const rxFor5568 = mocks.udp.sockets[1];
+    expect(rxFor5568.boundPort).toBe(6454);
+    sock5568.pendingSends.splice(0).forEach((s) => s.cb(null));
+    artnet5568.stop();
+
+    mocks.udp.reset();
+    const artnet6038 = new ArtNetDriver({ ...udpOutput('artnet', '192.168.1.20'), port: 6038 }, ev);
+    artnet6038.start();
+    const sock6038 = mocks.udp.sockets[0];
+    await vi.waitFor(() => {
+      artnet6038.send(0, 0, new Uint8Array([1, 2, 3, 77]));
+      expect(sock6038.pendingSends.length).toBe(1);
+    });
+    expect(sock6038.pendingSends[0].port).toBe(6038);
+    sock6038.pendingSends.splice(0).forEach((s) => s.cb(null));
+    artnet6038.stop();
+
+    // 2) Loopback target on standard port 6454: never binds/steals 6454, receives ArtPollReply on ephemeral source socket.
+    mocks.udp.reset();
+    const artnetLocal = new ArtNetDriver({ ...udpOutput('artnet', '127.0.0.1'), port: 6454 }, ev);
+    artnetLocal.start();
+    const localSendSock = mocks.udp.sockets[0];
+    expect(localSendSock.boundPort).toBe(0);
+
+    await vi.waitFor(() => {
+      artnetLocal.poll();
+      artnetLocal.send(0, 0, new Uint8Array([10, 20, 30, 77]));
+      expect(localSendSock.pendingSends.length).toBe(2);
+    });
+    expect(mocks.udp.sockets).toHaveLength(1); // Never binds 6454 when receiver is on 127.0.0.1:6454
+    expect(localSendSock.pendingSends[0].port).toBe(6454);
+    expect(localSendSock.pendingSends[1].port).toBe(6454);
+
+    const localReply = buildArtPollReply([127, 0, 0, 1], 'LocalNode', 'Local Art-Net Node');
+    localSendSock.emitter.emit('message', Buffer.from(localReply), { address: '127.0.0.1', port: 6454 });
+    expect(ev.onNode).toHaveBeenCalledWith(expect.objectContaining({ ip: '127.0.0.1', name: 'LocalNode' }));
+
+    localSendSock.pendingSends.splice(0).forEach((s) => s.cb(null));
+    artnetLocal.stop();
+
+    // 3) SacnDriver binds ephemeral port 0 (no conflict with TD dmx_in on 127.0.0.1:5568) and maps universe = sacnUniverse ?? universe + 1.
+    mocks.udp.failBindPorts.clear();
+    mocks.udp.reset();
+    const sacnDefaultUni = new SacnDriver(
+      { ...udpOutput('sacn', '127.0.0.1'), universe: 0, sacnUniverse: undefined, sacnMulticast: false },
+      ev,
+    );
+    sacnDefaultUni.start();
+    const sacnSock = mocks.udp.sockets[0];
+    expect(sacnSock.boundPort).toBe(0);
+    await vi.waitFor(() => {
+      sacnDefaultUni.send(0, 0, new Uint8Array([10, 20, 30, 77]));
+      expect(sacnSock.pendingSends.length).toBe(1);
+    });
+    const pkt1 = sacnSock.pendingSends.shift()!;
+    expect(pkt1.ip).toBe('127.0.0.1');
+    expect(pkt1.port).toBe(5568);
+    expect((pkt1.pkt[113] << 8) | pkt1.pkt[114]).toBe(1); // universe 0 + 1 = 1
+    pkt1.cb(null);
+    sacnDefaultUni.stop();
+
+    const sacnExplicitUni = new SacnDriver(
+      { ...udpOutput('sacn', '127.0.0.1'), port: 6038, universe: 0, sacnUniverse: 5, sacnMulticast: false },
+      ev,
+    );
+    sacnExplicitUni.start();
+    const sacnSock2 = mocks.udp.sockets[1];
+    await vi.waitFor(() => {
+      sacnExplicitUni.send(0, 0, new Uint8Array([10, 20, 30, 77]));
+      expect(sacnSock2.pendingSends.length).toBe(1);
+    });
+    const pkt2 = sacnSock2.pendingSends.shift()!;
+    expect(pkt2.port).toBe(6038); // Preserves explicit custom port 6038 on sACN
+    expect((pkt2.pkt[113] << 8) | pkt2.pkt[114]).toBe(5);
+    pkt2.cb(null);
+    sacnExplicitUni.stop();
+
+    // 4) KinetDriver also honors custom ports (5568, 6454) rather than replacing them with 6038.
+    const { KinetDriver } = await import('./kinetDriver');
+    const kinetCustom = new KinetDriver({ ...udpOutput('kinet', '127.0.0.1'), port: 5568 }, ev);
+    kinetCustom.start();
+    const kinetSock = mocks.udp.sockets[2];
+    await vi.waitFor(() => {
+      kinetCustom.send(0, 0, new Uint8Array([10, 20, 30, 77]));
+      expect(kinetSock.pendingSends.length).toBe(1);
+    });
+    expect(kinetSock.pendingSends[0].port).toBe(5568);
+    kinetSock.pendingSends.splice(0).forEach((s) => s.cb(null));
+    kinetCustom.stop();
+
+    // 5) Startup warning persistence: GauzeCore.configure() calls start() then poll() synchronously BEFORE
+    //    async sock.bind(0) callback resolves; active loopback discovery warning must NOT be cleared by ready callback!
+    mocks.udp.reset();
+    const core = new GauzeCore((cfg, driverEv) => new ArtNetDriver(cfg, driverEv));
+    core.configure({
+      modules: [makeMod('m1', 1)],
+      output: udpOutput('artnet', '127.0.0.1'),
+      lockValue: 77,
+    });
+    const coreSock = mocks.udp.sockets[0];
+    expect(coreSock.boundPort).toBe(0);
+    // Allow async sock.bind(0) callback -> markReady() to run
+    await vi.waitFor(() => {
+      core.pollNow();
+      expect(coreSock.pendingSends.length).toBeGreaterThanOrEqual(1);
+    });
+    expect(core.snapshot().status.warning).toContain('Đích localhost:6454');
+    coreSock.pendingSends.splice(0).forEach((s) => s.cb(null));
+    core.stop();
+  });
+
+  it('ArtNetDriver keeps sending ArtDmx when port 6454 is busy on non-loopback target, warns cleanly, and listens for ArtPollReply when free', async () => {
+    const { buildArtPollReply } = await import('@shared/artnet');
+
+    // Busy 6454: rxSock fails with EADDRINUSE -> emits onWarn, disables ArtPollReply listener, sendSock still sends ArtDmx!
+    mocks.udp.failBindPorts.add(6454);
+    const evBusy = { onNode: vi.fn(), onError: vi.fn(), onWarn: vi.fn() };
+    const busyDriver = new ArtNetDriver({ ...udpOutput('artnet', '192.168.1.50'), port: 6454 }, evBusy);
+    busyDriver.start();
+    const busySendSock = mocks.udp.sockets[0];
+    expect(busySendSock.boundPort).toBe(0);
+
+    await vi.waitFor(() => {
+      busyDriver.poll();
+      expect(mocks.udp.sockets).toHaveLength(2);
+    });
+    const busyRxSock = mocks.udp.sockets[1];
+    expect(busyRxSock.boundPort).toBe(6454);
+
+    await vi.waitFor(() => {
+      expect(busyRxSock.closed).toBe(true);
+      expect(evBusy.onWarn).toHaveBeenCalledWith(expect.stringContaining('Cổng 6454 đang bận'));
+    });
+
+    // send() must still succeed even though 6454 listener failed!
+    busyDriver.send(0, 1, new Uint8Array([128, 0, 100, 77]));
+    const dmxSend = busySendSock.pendingSends.find((s) => s.pkt[8] === 0x00 && s.pkt[9] === 0x50);
+    expect(dmxSend).toBeDefined();
+    expect(dmxSend!.ip).toBe('192.168.1.50');
+    expect(dmxSend!.port).toBe(6454);
+    expect(evBusy.onError).not.toHaveBeenCalledWith(expect.any(String));
+
+    busySendSock.pendingSends.splice(0).forEach((s) => s.cb(null));
+    busyDriver.stop();
+    expect(busySendSock.closed).toBe(true);
+
+    // Free 6454 on non-loopback target: poll() binds 6454 and receives ArtPollReply
+    mocks.udp.failBindPorts.clear();
+    mocks.udp.reset();
+    const evFree = { onNode: vi.fn(), onError: vi.fn(), onWarn: vi.fn() };
+    const freeDriver = new ArtNetDriver({ ...udpOutput('artnet', '192.168.1.50'), port: 6454 }, evFree);
+    freeDriver.start();
+    await vi.waitFor(() => {
+      freeDriver.poll();
+      expect(mocks.udp.sockets).toHaveLength(2);
+    });
+    const freeSendSock = mocks.udp.sockets[0];
+    const freeRxSock = mocks.udp.sockets[1];
+    expect(freeSendSock.boundPort).toBe(0);
+    expect(freeRxSock.boundPort).toBe(6454);
+
+    const replyPkt = buildArtPollReply([192, 168, 1, 50], 'StageNode', 'Stage Art-Net Node');
+    freeRxSock.emitter.emit('message', Buffer.from(replyPkt), { address: '192.168.1.50', port: 6454 });
+    expect(evFree.onNode).toHaveBeenCalledWith(
+      expect.objectContaining({ ip: '192.168.1.50', name: 'StageNode' }),
+    );
+
+    freeSendSock.pendingSends.splice(0).forEach((s) => s.cb(null));
+    freeDriver.stop();
+    expect(freeRxSock.closed).toBe(true);
+    expect(freeSendSock.closed).toBe(true);
   });
 });

@@ -46,7 +46,7 @@ import {
   updateClipKeyframeTimelineTime,
   updateClipStartTime,
 } from '@shared/timeline'
-import type { ModuleCfg, TimelineClip, Transform3D } from '@shared/types'
+import type { CueButton, Layer, ModuleCfg, SpeedUnit, TimelineClip, Transform3D } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 
 function TransformEditor({
@@ -162,7 +162,7 @@ function MomentCurveGraph({
     const tNorm = clamp((svgX - CURVE_PAD.left) / Math.max(1, usableW), 0, 1)
     const hNorm = clamp(1 - (svgY - CURVE_PAD.top) / Math.max(1, usableH), 0, 1)
     return {
-      offset: Number((tNorm * clip.duration).toFixed(2)),
+      offset: Number((tNorm * clip.duration).toFixed(4)),
       height: Number((minH + hNorm * (maxH - minH)).toFixed(2)),
     }
   }
@@ -415,10 +415,10 @@ function MomentEditor({
   const bounds = resolveClipBoundsNoOverlap(sameModClips, clip)
   const issues = analyzeClipSpeeds(clip, mod)
   const bad = issues.find((i) => !i.feasible)
-  const endTime = Number((clip.startTime + clip.duration).toFixed(2))
-  const minEndTime = Number((clip.startTime + 0.4).toFixed(2))
+  const endTime = Number((clip.startTime + clip.duration).toFixed(4))
+  const minEndTime = Number((clip.startTime + 0.4).toFixed(4))
   const maxStartTime = Number.isFinite(bounds.maxEnd)
-    ? Math.max(bounds.minStart, Number((bounds.maxEnd - clip.duration).toFixed(2)))
+    ? Math.max(bounds.minStart, Number((bounds.maxEnd - clip.duration).toFixed(4)))
     : Number.POSITIVE_INFINITY
   const [draftStart, setDraftStart] = useState<{ clipId: string; raw: string } | null>(null)
   const [draftEnd, setDraftEnd] = useState<{ clipId: string; raw: string } | null>(null)
@@ -651,12 +651,12 @@ function MomentEditor({
         <div className="space-y-1.5">
           {sorted.map((kf, idx) => {
             const active = selectedKeyId === kf.id
-            const timelineTime = Number((clip.startTime + kf.offset).toFixed(2))
+            const timelineTime = Number((clip.startTime + kf.offset).toFixed(4))
             const pct = heightToPercent(kf.height, mod)
-            const prevTimelineTime = idx > 0 ? Number((clip.startTime + sorted[idx - 1].offset).toFixed(2)) : bounds.minStart
+            const prevTimelineTime = idx > 0 ? Number((clip.startTime + sorted[idx - 1].offset).toFixed(4)) : bounds.minStart
             const nextTimelineTime =
               idx < sorted.length - 1
-                ? Number((clip.startTime + sorted[idx + 1].offset).toFixed(2))
+                ? Number((clip.startTime + sorted[idx + 1].offset).toFixed(4))
                 : bounds.maxEnd
 
             return (
@@ -772,6 +772,333 @@ function MomentEditor({
   )
 }
 
+function CueButtonEditor({
+  btn,
+  layers,
+  modules,
+  snapshotModules,
+  onSave,
+  onDelete,
+  onBack,
+}: {
+  btn: CueButton
+  layers: Layer[]
+  modules: ModuleCfg[]
+  snapshotModules: Record<string, { pos: number }>
+  onSave: (next: CueButton, coalesceKey?: string) => void
+  onDelete: () => void
+  onBack: () => void
+}) {
+  const [heightUnit, setHeightUnit] = useState<'m' | 'pct'>('m')
+  const [globalHeight, setGlobalHeight] = useState('1')
+  const stepMap = new Map(btn.steps.map((s) => [s.moduleId, s.position]))
+  const refMod = modules[0] ?? { minHeight: 0, maxHeight: 1, length: 1 }
+
+  const switchHeightUnit = (nextUnit: 'm' | 'pct') => {
+    if (nextUnit === heightUnit) return
+    const cur = Number(globalHeight)
+    if (Number.isFinite(cur)) {
+      const converted =
+        nextUnit === 'pct'
+          ? heightToPercent(cur, refMod)
+          : Number(percentToHeight(cur, refMod).toFixed(2))
+      setGlobalHeight(String(converted))
+    }
+    setHeightUnit(nextUnit)
+  }
+
+  const toggleModule = (m: ModuleCfg) => {
+    const exists = btn.steps.some((s) => s.moduleId === m.id)
+    const steps = exists
+      ? btn.steps.filter((s) => s.moduleId !== m.id)
+      : [...btn.steps, { moduleId: m.id, position: Number((snapshotModules[m.id]?.pos ?? m.minHeight).toFixed(2)) }]
+    onSave({ ...btn, steps })
+  }
+
+  const setModuleHeight = (m: ModuleCfg, rawPos: number) => {
+    const pos = Number(clamp(rawPos, m.minHeight, m.maxHeight).toFixed(2))
+    const exists = btn.steps.some((s) => s.moduleId === m.id)
+    const steps = exists
+      ? btn.steps.map((s) => (s.moduleId === m.id ? { ...s, position: pos } : s))
+      : [...btn.steps, { moduleId: m.id, position: pos }]
+    onSave({ ...btn, steps }, `cue-mod-${btn.id}-${m.id}`)
+  }
+
+  const toggleLayerInButton = (layerId: string) => {
+    const mods = modules.filter((m) => m.layerId === layerId)
+    const modIds = new Set(mods.map((m) => m.id))
+    const allChecked = mods.length > 0 && mods.every((m) => stepMap.has(m.id))
+    if (allChecked) {
+      onSave({ ...btn, steps: btn.steps.filter((s) => !modIds.has(s.moduleId)) })
+      return
+    }
+    const nextSteps = [...btn.steps]
+    for (const m of mods) {
+      if (!nextSteps.some((s) => s.moduleId === m.id)) {
+        nextSteps.push({ moduleId: m.id, position: Number((snapshotModules[m.id]?.pos ?? m.minHeight).toFixed(2)) })
+      }
+    }
+    onSave({ ...btn, steps: nextSteps })
+  }
+
+  const applyAllSelectedLayersHeight = (rawVal: number) => {
+    const modById = new Map(modules.map((m) => [m.id, m]))
+    const toTargetHeight = (m: ModuleCfg) => {
+      const nextPos = heightUnit === 'pct' ? percentToHeight(rawVal, m) : rawVal
+      return Number(clamp(nextPos, m.minHeight, m.maxHeight).toFixed(2))
+    }
+    if (btn.steps.length > 0) {
+      const steps = btn.steps.map((s) => {
+        const m = modById.get(s.moduleId)
+        return m ? { ...s, position: toTargetHeight(m) } : s
+      })
+      onSave({ ...btn, steps })
+      return
+    }
+    const steps = modules.map((m) => ({
+      moduleId: m.id,
+      position: toTargetHeight(m),
+    }))
+    onSave({ ...btn, steps })
+  }
+
+  return (
+    <div className="flex h-full flex-col gap-3 overflow-y-auto pr-0.5 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-line pb-2.5">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onBack}
+            title="Quay lại thông số Module / Layer"
+            className="kiln-btn h-6 px-2.5 text-[11px] text-[#C2B3A4]"
+          >
+            <ArrowLeft size={12} />
+            Module
+          </button>
+          <span className="kiln-chip cue uppercase">NÚT CUE ({btn.steps.length})</span>
+        </div>
+        <button
+          type="button"
+          onClick={onDelete}
+          title="Xoá nút Cue (Delete)"
+          aria-label="Xoá nút Cue"
+          className="cursor-pointer rounded-full p-1 text-muted hover:bg-danger/20 hover:text-danger"
+        >
+          <Trash2 size={14} />
+        </button>
+      </div>
+
+      <label className="block space-y-1.5">
+        <span className="text-[11px] text-[#C2B3A4]">Tên nút Cue</span>
+        <input
+          value={btn.name}
+          onChange={(e) => onSave({ ...btn, name: e.target.value }, `cue-name-${btn.id}`)}
+          placeholder="Tên nút điều khiển"
+          className="kiln-field h-9 w-full px-3 text-xs"
+        />
+      </label>
+
+      <div className="space-y-1.5 border-b border-line pb-3">
+        <span className="text-[11px] text-[#C2B3A4]">Thời lượng chạy</span>
+        <div className="flex items-center gap-2">
+          <div className="kiln-seg flex-1">
+            {(
+              [
+                ['sec', 'Giây (s)'],
+                ['cms', 'cm/s'],
+              ] as const
+            ).map(([unit, label]) => (
+              <button
+                key={unit}
+                type="button"
+                onClick={() => onSave({ ...btn, speedUnit: unit as SpeedUnit })}
+                className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${btn.speedUnit === unit ? 'on' : ''}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <input
+            type="number"
+            min="0.5"
+            step="0.5"
+            aria-label="Giá trị tốc độ hoặc thời gian nút Cue"
+            value={btn.speedValue}
+            onChange={(e) =>
+              onSave({ ...btn, speedValue: Math.max(0.1, Number(e.target.value) || 1) }, `cue-spd-${btn.id}`)
+            }
+            className="kiln-field h-8 w-24 px-3 text-right text-xs tabular-nums"
+          />
+        </div>
+      </div>
+
+      <div className="space-y-2.5">
+        <span className="block text-[11px] font-semibold tracking-wide text-muted uppercase">
+          LAYER &amp; MODULE CHẠY
+        </span>
+
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() =>
+                onSave({
+                  ...btn,
+                  steps: modules.map((m) => ({
+                    moduleId: m.id,
+                    position: Number((stepMap.get(m.id) ?? snapshotModules[m.id]?.pos ?? m.minHeight).toFixed(2)),
+                  })),
+                })
+              }
+              className="kiln-btn kiln-btn-cue h-7 px-3 text-[11px]"
+            >
+              Chọn hết
+            </button>
+            <button
+              type="button"
+              onClick={() => onSave({ ...btn, steps: [] })}
+              className="kiln-btn h-7 px-3 text-[11px]"
+            >
+              Bỏ chọn
+            </button>
+          </div>
+
+          <div className="kiln-seg" role="group" aria-label="Chế độ đơn vị chiều cao">
+            {(
+              [
+                ['m', 'm'],
+                ['pct', '%'],
+              ] as const
+            ).map(([unit, label]) => (
+              <button
+                key={unit}
+                type="button"
+                onClick={() => switchHeightUnit(unit)}
+                aria-pressed={heightUnit === unit}
+                className={`kiln-seg-btn h-7 px-2.5 text-[11px] font-semibold ${heightUnit === unit ? 'on' : ''}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="kiln-field flex h-8 w-24 items-center rounded-full px-2.5">
+            <input
+              type="number"
+              step={heightUnit === 'pct' ? '1' : '0.1'}
+              min="0"
+              max={heightUnit === 'pct' ? '100' : undefined}
+              aria-label={`Chiều cao áp dụng cho các layer (${heightUnit === 'pct' ? '%' : 'm'})`}
+              value={globalHeight}
+              onChange={(e) => setGlobalHeight(e.target.value)}
+              className="w-full min-w-0 border-0 bg-transparent text-center text-xs text-fg tabular-nums outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => switchHeightUnit(heightUnit === 'm' ? 'pct' : 'm')}
+              title="Đổi đơn vị m / %"
+              className="shrink-0 cursor-pointer pl-1 text-[11px] font-medium text-muted hover:text-fg"
+            >
+              {heightUnit === 'pct' ? '%' : 'm'}
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => applyAllSelectedLayersHeight(Number(globalHeight) || 0)}
+            className="kiln-btn kiln-btn-cue h-8 flex-1 justify-start px-3.5 text-[11.5px] font-semibold"
+          >
+            Áp dụng cho các layer
+          </button>
+        </div>
+
+        <div className="space-y-2.5">
+          {layers.map((layer) => {
+            const mods = modules.filter((m) => m.layerId === layer.id)
+            const selectedCount = mods.filter((m) => stepMap.has(m.id)).length
+            const allChecked = mods.length > 0 && selectedCount === mods.length
+
+            return (
+              <div key={layer.id} className="kiln-layer space-y-1.5 p-2.5">
+                <div className="flex items-center justify-between gap-2 pb-1">
+                  <label className="flex cursor-pointer items-center gap-2 font-semibold text-info">
+                    <input
+                      type="checkbox"
+                      checked={allChecked}
+                      onChange={() => toggleLayerInButton(layer.id)}
+                      className="h-4 w-4 rounded accent-brand"
+                    />
+                    <span>{layer.name}</span>
+                  </label>
+                  <span className="text-[11px] text-muted tabular-nums">
+                    {selectedCount}/{mods.length}
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  {mods.map((m) => {
+                    const checked = stepMap.has(m.id)
+                    const pos = stepMap.get(m.id) ?? m.minHeight
+                    const displayVal = heightUnit === 'pct' ? heightToPercent(pos, m) : pos
+                    return (
+                      <div
+                        key={m.id}
+                        className={`flex h-8 items-center justify-between gap-2 rounded-full px-2.5 transition ${
+                          checked
+                            ? 'bg-black/35 shadow-[inset_0_0_0_1.5px_#f7842e]'
+                            : 'bg-black/15 opacity-60 shadow-[inset_0_0_0_1px_var(--line)]'
+                        }`}
+                      >
+                        <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleModule(m)}
+                            className="h-4 w-4 shrink-0 rounded accent-brand"
+                          />
+                          <span className="truncate text-[11.5px]" title={`${m.name} (${m.minHeight}–${m.maxHeight}m)`}>
+                            {m.name}
+                          </span>
+                        </label>
+                        <div className="flex h-6 w-20 items-center rounded-full bg-white/[0.06] px-2 focus-within:ring-1 focus-within:ring-brand">
+                          <input
+                            type="number"
+                            step={heightUnit === 'pct' ? '1' : '0.1'}
+                            min={heightUnit === 'pct' ? 0 : m.minHeight}
+                            max={heightUnit === 'pct' ? 100 : m.maxHeight}
+                            aria-label={`${m.name} (${heightUnit === 'pct' ? '%' : 'm'})`}
+                            value={displayVal}
+                            onChange={(e) => {
+                              const raw = Number(e.target.value) || 0
+                              const nextM = heightUnit === 'pct' ? percentToHeight(raw, m) : raw
+                              setModuleHeight(m, nextM)
+                            }}
+                            className="w-full min-w-0 border-0 bg-transparent text-center text-[11.5px] text-fg tabular-nums outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => switchHeightUnit(heightUnit === 'm' ? 'pct' : 'm')}
+                            title="Đổi đơn vị m / %"
+                            className="shrink-0 cursor-pointer pl-0.5 text-[10.5px] font-medium text-muted hover:text-fg"
+                          >
+                            {heightUnit === 'pct' ? '%' : 'm'}
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function PropertiesPanel(props: {
   overrideState?: Partial<ReturnType<typeof useAppStore.getState>>
 }) {
@@ -779,8 +1106,10 @@ export function PropertiesPanel(props: {
   const storeState = useAppStore()
   const {
     project,
+    focusScope,
     selectedIds,
     selectedLayerId,
+    selectedButtonId,
     selectedClipId,
     selectedClipIds,
     selectedKeyId,
@@ -793,6 +1122,10 @@ export function PropertiesPanel(props: {
     updateModulesBatch,
     setModulesDmxLoop,
     setAddressMode,
+    selectButton,
+    saveButton,
+    deleteButton,
+    setFocusScope,
     selectTimelineClip,
     selectTimelineKey,
     updateClip,
@@ -805,6 +1138,10 @@ export function PropertiesPanel(props: {
     notify,
   } = overrideState ? { ...storeState, ...overrideState } : storeState
 
+  const activeButton =
+    focusScope === 'buttons' && selectedButtonId
+      ? project.buttons.find((b) => b.id === selectedButtonId) ?? null
+      : null
   const selectedClips = (project.clips ?? []).filter((c) => selectedClipIds.includes(c.id))
   const activeClip = selectedClipId ? (project.clips ?? []).find((c) => c.id === selectedClipId) ?? null : null
   const activeClipMod = activeClip ? project.modules.find((m) => m.id === activeClip.moduleId) ?? null : null
@@ -830,6 +1167,24 @@ export function PropertiesPanel(props: {
       setAddrError(null)
     }
   }, [single?.id, single?.startAddress]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Trang cấu hình nút Cue (Custom): chọn Layer/Module & chiều cao trực tiếp trên panel Thông số
+  if (activeButton) {
+    return (
+      <CueButtonEditor
+        btn={activeButton}
+        layers={project.layers}
+        modules={project.modules}
+        snapshotModules={snapshot?.modules ?? {}}
+        onSave={saveButton}
+        onDelete={() => deleteButton(activeButton.id)}
+        onBack={() => {
+          selectButton(null)
+          setFocusScope('tree')
+        }}
+      />
+    )
+  }
 
   // Trang thuộc tính nhóm khi chọn nhiều Moment bằng kéo vùng chuột phải
   if (selectedClips.length > 1) {

@@ -1,4 +1,4 @@
-import type { Fps } from './types'
+import type { Fps, LtcFps } from './types'
 
 export interface Tc {
   h: number
@@ -7,7 +7,19 @@ export interface Tc {
   f: number
 }
 
-export const FPS_OPTIONS: Fps[] = [24, 25, 29.97, 30]
+export const LTC_FPS_OPTIONS: LtcFps[] = [24, 25, 29.97, 30]
+export const FPS_OPTIONS: Fps[] = [24, 25, 29.97, 30, 40, 50, 60]
+
+export function isStandardLtcFps(fps: Fps): fps is LtcFps {
+  return fps === 24 || fps === 25 || fps === 29.97 || fps === 30
+}
+
+/** Trả về tốc độ khung LTC hợp lệ (24/25/29.97/30); khi timeline >30 fps giữ rate riêng cho LTC. */
+export function resolveLtcFps(timelineFps: Fps, ltcFps?: LtcFps): LtcFps {
+  if (ltcFps !== undefined && isStandardLtcFps(ltcFps)) return ltcFps
+  if (isStandardLtcFps(timelineFps)) return timelineFps
+  return 30
+}
 
 export function nominalFps(fps: Fps): number {
   return fps === 29.97 ? 30 : fps
@@ -15,6 +27,21 @@ export function nominalFps(fps: Fps): number {
 
 export function realFps(fps: Fps): number {
   return fps === 29.97 ? 30000 / 1001 : fps
+}
+
+export function snapTimeToFps(sec: number, fps: Fps): number {
+  if (!Number.isFinite(sec)) return 0
+  const safe = Math.max(0, sec)
+  const rate = realFps(fps)
+  const frames = Math.round(safe * rate)
+  return Number((frames / rate).toFixed(4))
+}
+
+export function snapDeltaToFps(deltaSec: number, fps: Fps): number {
+  if (!Number.isFinite(deltaSec)) return 0
+  const rate = realFps(fps)
+  const frames = Math.round(deltaSec * rate)
+  return Number((frames / rate).toFixed(4))
 }
 
 export function isDropFrame(fps: Fps): boolean {

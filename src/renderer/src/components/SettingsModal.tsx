@@ -1,11 +1,31 @@
 import { useEffect, useState } from 'react'
-import { Bell, Network, RefreshCw, Shield, Sliders, Volume2, X } from 'lucide-react'
-import { isValidIPv4 } from '@shared/dmx'
+import {
+  AlertTriangle,
+  Bell,
+  LayoutGrid,
+  Link2,
+  Network,
+  Radio,
+  RefreshCw,
+  Shield,
+  Sliders,
+  Volume2,
+  X,
+} from 'lucide-react'
+import { ARTNET_PORT, isLoopbackTarget, isValidIPv4 } from '@shared/dmx'
 import { KINET_PORT, SACN_PORT, sacnMulticastIp } from '@shared/protocols'
-import { FPS_OPTIONS, formatTc, parseTc } from '@shared/timecode'
-import type { DriverId, Fps } from '@shared/types'
+import {
+  FPS_OPTIONS,
+  LTC_FPS_OPTIONS,
+  formatTc,
+  isStandardLtcFps,
+  parseTc,
+  resolveLtcFps,
+} from '@shared/timecode'
+import type { DriverId, Fps, LtcFps } from '@shared/types'
 import { getBridge } from '../services/bridge'
 import { type SettingsTab, useAppStore } from '../store/useAppStore'
+import { KilnSelect, type KilnSelectOption } from './KilnSelect'
 
 export function SettingsModal(props: {
   overrideState?: Partial<ReturnType<typeof useAppStore.getState>>
@@ -100,9 +120,62 @@ export function SettingsModal(props: {
   const isSerialDriver = out.driver === 'enttec-pro' || out.driver === 'enttec-mk2' || out.driver === 'serial'
   const isNetworkDriver = !isSerialDriver
 
+  const driverOptions: KilnSelectOption[] = [
+    {
+      value: 'artnet',
+      label: 'Art-Net',
+      badge: 'Ưu tiên',
+      description: 'UDP mạng LAN',
+      group: 'Mạng LAN',
+      icon: <Radio size={15} />,
+    },
+    {
+      value: 'sacn',
+      label: 'sACN E1.31',
+      description: 'UDP Multicast / Unicast',
+      group: 'Mạng LAN',
+      icon: <Radio size={15} />,
+    },
+    {
+      value: 'kinet',
+      label: 'KiNET v1/v2',
+      description: 'Color Kinetics UDP',
+      group: 'Mạng LAN',
+      icon: <Radio size={15} />,
+    },
+    {
+      value: 'enttec-pro',
+      label: 'Enttec DMX USB Pro',
+      description: 'USB Serial',
+      group: 'USB / Serial',
+      icon: <Link2 size={15} />,
+    },
+    {
+      value: 'enttec-mk2',
+      label: 'Enttec DMX USB Pro Mk2',
+      description: 'Dual Port',
+      group: 'USB / Serial',
+      icon: <Link2 size={15} />,
+    },
+    {
+      value: 'serial',
+      label: 'Generic Serial / RS-485',
+      description: 'Cổng nối tiếp',
+      group: 'USB / Serial',
+      icon: <Link2 size={15} />,
+    },
+    {
+      value: 'mock',
+      label: 'Mock',
+      description: 'Mô phỏng nội bộ',
+      group: 'Thử nghiệm',
+      icon: <LayoutGrid size={15} />,
+    },
+  ]
+
   const handleDriverChange = (next: DriverId) => {
     if (next === 'artnet') {
-      updateOutputSettings({ driver: 'artnet', port: 6454 })
+      updateOutputSettings({ driver: 'artnet', port: ARTNET_PORT })
     } else if (next === 'sacn') {
       updateOutputSettings({
         driver: 'sacn',
@@ -184,7 +257,7 @@ export function SettingsModal(props: {
 
             <div className="mt-auto px-3 pb-1 text-[9.5px] leading-relaxed font-medium tracking-wider text-muted uppercase">
               DMX GAUZE ENGINE
-              <br />v{info?.version ?? '1.0.0'} · {info?.runtime ?? 'web'}
+              <br />v{info?.version ?? '1.0.1'} · {info?.runtime ?? 'web'}
             </div>
           </nav>
 
@@ -242,38 +315,36 @@ export function SettingsModal(props: {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="space-y-1.5">
-                    <span className="text-[11px] text-[#C2B3A4]">Giao thức xuất DMX (Ưu tiên Art-Net)</span>
-                    <select
+                <div className="grid grid-cols-2 items-end gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex min-h-[18px] items-center justify-between gap-2">
+                      <span className="text-[11px] leading-4 text-[#C2B3A4]">Giao thức xuất DMX (Ưu tiên Art-Net)</span>
+                    </div>
+                    <KilnSelect
+                      ariaLabel="Giao thức xuất DMX"
                       value={out.driver}
-                      onChange={(e) => handleDriverChange(e.target.value as DriverId)}
-                      className="kiln-field h-9 w-full px-3 text-xs"
-                    >
-                      <option value="artnet">Art-Net (UDP mạng LAN — Ưu tiên)</option>
-                      <option value="sacn">sACN E1.31 (UDP Multicast / Unicast)</option>
-                      <option value="kinet">KiNET v1/v2 (Color Kinetics UDP)</option>
-                      <option value="enttec-pro">Enttec DMX USB Pro (USB Serial)</option>
-                      <option value="enttec-mk2">Enttec DMX USB Pro Mk2 (Dual Port)</option>
-                      <option value="serial">Generic Serial / RS-485</option>
-                      <option value="mock">Mock (Mô phỏng nội bộ)</option>
-                    </select>
-                  </label>
+                      options={driverOptions}
+                      onChange={(val) => handleDriverChange(val as DriverId)}
+                    />
+                  </div>
 
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[11px] text-[#C2B3A4]">Tần số phát frame DMX</span>
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex min-h-[18px] items-center justify-between gap-2">
+                      <span className="text-[11px] leading-4 text-[#C2B3A4]">Tần số phát frame DMX</span>
                       {out.sendHz !== 25 && (
                         <button
                           type="button"
                           onClick={() => updateOutputSettings({ sendHz: 25 })}
-                          className="cursor-pointer rounded-full bg-brand/20 px-2 py-0.5 text-[10px] font-semibold text-[#FFB26B] hover:bg-brand/30"
+                          className="cursor-pointer rounded-full bg-brand/20 px-2 py-0.5 text-[10px] leading-none font-semibold text-[#FFB26B] hover:bg-brand/30"
                         >
                           Đồng bộ file 25 Hz
                         </button>
                       )}
                     </div>
-                    <div className="kiln-field flex h-9 items-center justify-between px-3 text-xs tabular-nums">
+                    <div
+                      title="Tần số phát frame DMX cố định ở 25 Hz (40 ms/frame) để đồng bộ chuyển động motor ổn định"
+                      className="kiln-field flex h-9 items-center justify-between px-3 text-xs tabular-nums"
+                    >
                       <span className="font-semibold text-fg">25 Hz</span>
                       <span className="text-[11px] text-muted">Cố định · 40 ms/frame</span>
                     </div>
@@ -344,8 +415,8 @@ export function SettingsModal(props: {
 
                     {out.driver === 'sacn' ? (
                       <div className="grid grid-cols-3 gap-2.5">
-                        <label className="space-y-1.5">
-                          <span className="text-[11px] text-[#C2B3A4]">Port UDP sACN</span>
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-[11px] leading-4 text-[#C2B3A4]">Port UDP sACN</span>
                           <input
                             type="number"
                             min="1"
@@ -355,8 +426,8 @@ export function SettingsModal(props: {
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
-                        <label className="space-y-1.5">
-                          <span className="text-[11px] text-[#C2B3A4]">sACN Universe (1–63999)</span>
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-[11px] leading-4 text-[#C2B3A4]">sACN Universe (1–63999)</span>
                           <input
                             type="number"
                             min="1"
@@ -370,8 +441,8 @@ export function SettingsModal(props: {
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
-                        <label className="space-y-1.5">
-                          <span className="text-[11px] text-[#C2B3A4]">Ưu tiên (Priority 0–200)</span>
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-[11px] leading-4 text-[#C2B3A4]">Ưu tiên (Priority 0–200)</span>
                           <input
                             type="number"
                             min="0"
@@ -388,8 +459,8 @@ export function SettingsModal(props: {
                       </div>
                     ) : out.driver === 'kinet' ? (
                       <div className="grid grid-cols-4 gap-2.5">
-                        <label className="space-y-1.5">
-                          <span className="text-[11px] text-[#C2B3A4]">Port UDP KiNET</span>
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-[11px] leading-4 text-[#C2B3A4]">Port UDP KiNET</span>
                           <input
                             type="number"
                             min="1"
@@ -399,19 +470,21 @@ export function SettingsModal(props: {
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
-                        <label className="space-y-1.5">
-                          <span className="text-[11px] text-[#C2B3A4]">Phiên bản</span>
-                          <select
-                            value={out.kinetVersion ?? 2}
-                            onChange={(e) => updateOutputSettings({ kinetVersion: Number(e.target.value) as 1 | 2 })}
-                            className="kiln-field h-8 w-full px-2 text-xs"
-                          >
-                            <option value={2}>KiNET v2 (PORT_OUT)</option>
-                            <option value={1}>KiNET v1 (DMXOUT)</option>
-                          </select>
-                        </label>
-                        <label className="space-y-1.5">
-                          <span className="text-[11px] text-[#C2B3A4]">Cổng Port (1–16)</span>
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-[11px] leading-4 text-[#C2B3A4]">Phiên bản</span>
+                          <KilnSelect
+                            ariaLabel="Phiên bản KiNET"
+                            size="sm"
+                            value={String(out.kinetVersion ?? 2)}
+                            options={[
+                              { value: '2', label: 'KiNET v2', description: 'PORT_OUT' },
+                              { value: '1', label: 'KiNET v1', description: 'DMXOUT' },
+                            ]}
+                            onChange={(val) => updateOutputSettings({ kinetVersion: Number(val) as 1 | 2 })}
+                          />
+                        </div>
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-[11px] leading-4 text-[#C2B3A4]">Cổng Port (1–16)</span>
                           <input
                             type="number"
                             min="1"
@@ -423,8 +496,8 @@ export function SettingsModal(props: {
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
-                        <label className="space-y-1.5">
-                          <span className="text-[11px] text-[#C2B3A4]">Universe</span>
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-[11px] leading-4 text-[#C2B3A4]">Universe</span>
                           <input
                             type="number"
                             min="0"
@@ -439,19 +512,19 @@ export function SettingsModal(props: {
                       </div>
                     ) : (
                       <div className="grid grid-cols-4 gap-2.5">
-                        <label className="space-y-1.5">
-                          <span className="text-[11px] text-[#C2B3A4]">Port UDP</span>
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-[11px] leading-4 text-[#C2B3A4]">Port UDP Art-Net</span>
                           <input
                             type="number"
                             min="1"
                             max="65535"
-                            value={out.port}
-                            onChange={(e) => updateOutputSettings({ port: Number(e.target.value) || 6454 })}
+                            value={out.port || ARTNET_PORT}
+                            onChange={(e) => updateOutputSettings({ port: Number(e.target.value) || ARTNET_PORT })}
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
-                        <label className="space-y-1.5">
-                          <span className="text-[11px] text-[#C2B3A4]">Net (0–127)</span>
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-[11px] leading-4 text-[#C2B3A4]">Net (0–127)</span>
                           <input
                             type="number"
                             min="0"
@@ -463,8 +536,8 @@ export function SettingsModal(props: {
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
-                        <label className="space-y-1.5">
-                          <span className="text-[11px] text-[#C2B3A4]">Subnet (0–15)</span>
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-[11px] leading-4 text-[#C2B3A4]">Subnet (0–15)</span>
                           <input
                             type="number"
                             min="0"
@@ -476,8 +549,8 @@ export function SettingsModal(props: {
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
-                        <label className="space-y-1.5">
-                          <span className="text-[11px] text-[#C2B3A4]">Universe (0–15)</span>
+                        <label className="flex flex-col gap-1.5">
+                          <span className="text-[11px] leading-4 text-[#C2B3A4]">Universe (0–15)</span>
                           <input
                             type="number"
                             min="0"
@@ -497,26 +570,25 @@ export function SettingsModal(props: {
                 {isSerialDriver && (
                   <div className="space-y-3 rounded-xl bg-white/[0.03] p-3 shadow-[inset_0_0_0_1px_var(--line)]">
                     <div className="grid grid-cols-2 gap-3">
-                      <label className="space-y-1.5">
-                        <span className="text-[11px] text-[#C2B3A4]">Cổng USB / COM phát hiện</span>
-                        <select
-                          value={serialPorts.includes(out.serialPort ?? '') ? out.serialPort : ''}
-                          onChange={(e) => e.target.value && updateOutputSettings({ serialPort: e.target.value })}
-                          className="kiln-field h-8 w-full px-2.5 text-xs"
-                        >
-                          <option value="">
-                            {serialPorts.length === 0 ? 'Không tìm thấy thiết bị USB' : 'Chọn cổng tự động...'}
-                          </option>
-                          {serialPorts.map((p) => (
-                            <option key={p} value={p}>
-                              {p}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-[11px] leading-4 text-[#C2B3A4]">Cổng USB / COM phát hiện</span>
+                        <KilnSelect
+                          ariaLabel="Cổng USB / COM phát hiện"
+                          size="sm"
+                          value={serialPorts.includes(out.serialPort ?? '') ? (out.serialPort ?? '') : ''}
+                          options={[
+                            {
+                              value: '',
+                              label: serialPorts.length === 0 ? 'Không tìm thấy thiết bị USB' : 'Chọn cổng tự động...',
+                            },
+                            ...serialPorts.map((p) => ({ value: p, label: p })),
+                          ]}
+                          onChange={(val) => val && updateOutputSettings({ serialPort: val })}
+                        />
+                      </div>
 
-                      <label className="space-y-1.5">
-                        <span className="text-[11px] text-[#C2B3A4]">Đường dẫn cổng (COM / /dev/cu.*)</span>
+                      <label className="flex flex-col gap-1.5">
+                        <span className="text-[11px] leading-4 text-[#C2B3A4]">Đường dẫn cổng (COM / /dev/cu.*)</span>
                         <input
                           value={out.serialPort ?? ''}
                           onChange={(e) => updateOutputSettings({ serialPort: e.target.value })}
@@ -527,48 +599,55 @@ export function SettingsModal(props: {
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
-                      <label className="space-y-1.5">
-                        <span className="text-[11px] text-[#C2B3A4]">Baud Rate</span>
-                        <select
-                          value={out.baudRate ?? (out.driver === 'serial' ? 250000 : 57600)}
-                          onChange={(e) => updateOutputSettings({ baudRate: Number(e.target.value) })}
-                          className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
-                        >
-                          <option value={57600}>57600 (Enttec Pro / Mk2)</option>
-                          <option value={115200}>115200 (USB Serial)</option>
-                          <option value={250000}>250000 (Chuẩn DMX512 RS-485)</option>
-                        </select>
-                      </label>
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-[11px] leading-4 text-[#C2B3A4]">Baud Rate</span>
+                        <KilnSelect
+                          ariaLabel="Baud Rate"
+                          size="sm"
+                          tabular
+                          value={String(out.baudRate ?? (out.driver === 'serial' ? 250000 : 57600))}
+                          options={[
+                            { value: '57600', label: '57600', description: 'Enttec Pro / Mk2' },
+                            { value: '115200', label: '115200', description: 'USB Serial' },
+                            { value: '250000', label: '250000', description: 'Chuẩn DMX512 RS-485' },
+                          ]}
+                          onChange={(val) => updateOutputSettings({ baudRate: Number(val) })}
+                        />
+                      </div>
 
                       {out.driver === 'enttec-mk2' && (
-                        <label className="space-y-1.5">
-                          <span className="text-[11px] text-[#C2B3A4]">Cổng DMX trên Enttec Mk2</span>
-                          <select
-                            value={out.enttecMk2Port ?? 1}
-                            onChange={(e) => updateOutputSettings({ enttecMk2Port: Number(e.target.value) as 1 | 2 })}
-                            className="kiln-field h-8 w-full px-2.5 text-xs"
-                          >
-                            <option value={1}>Port 1 (Label 0x06)</option>
-                            <option value={2}>Port 2 (Label 0xA9)</option>
-                          </select>
-                        </label>
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-[11px] leading-4 text-[#C2B3A4]">Cổng DMX trên Enttec Mk2</span>
+                          <KilnSelect
+                            ariaLabel="Cổng DMX trên Enttec Mk2"
+                            size="sm"
+                            value={String(out.enttecMk2Port ?? 1)}
+                            options={[
+                              { value: '1', label: 'Port 1', description: 'Label 0x06' },
+                              { value: '2', label: 'Port 2', description: 'Label 0xA9' },
+                            ]}
+                            onChange={(val) => updateOutputSettings({ enttecMk2Port: Number(val) as 1 | 2 })}
+                          />
+                        </div>
                       )}
 
                       {out.driver === 'serial' && (
-                        <label className="space-y-1.5">
-                          <span className="text-[11px] text-[#C2B3A4]">Định dạng khung Serial</span>
-                          <select
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-[11px] leading-4 text-[#C2B3A4]">Định dạng khung Serial</span>
+                          <KilnSelect
+                            ariaLabel="Định dạng khung Serial"
+                            size="sm"
                             value={out.serialFormat ?? 'raw'}
-                            onChange={(e) =>
-                              updateOutputSettings({ serialFormat: e.target.value as 'raw' | 'enttec' | 'ascii' })
+                            options={[
+                              { value: 'raw', label: 'DMX512 RAW', description: 'StartCode 0 + 512 ch' },
+                              { value: 'enttec', label: 'Enttec Framing', description: '0x7E ... 0xE7' },
+                              { value: 'ascii', label: 'ASCII Text', description: 'DMX:c1,c2,...' },
+                            ]}
+                            onChange={(val) =>
+                              updateOutputSettings({ serialFormat: val as 'raw' | 'enttec' | 'ascii' })
                             }
-                            className="kiln-field h-8 w-full px-2.5 text-xs"
-                          >
-                            <option value="raw">DMX512 RAW (StartCode 0 + 512 ch)</option>
-                            <option value="enttec">Enttec Framing (0x7E ... 0xE7)</option>
-                            <option value="ascii">ASCII Text (DMX:c1,c2,...)</option>
-                          </select>
-                        </label>
+                          />
+                        </div>
                       )}
                     </div>
                   </div>
@@ -578,6 +657,12 @@ export function SettingsModal(props: {
                   <div className="mb-1.5 text-[11px] font-medium text-muted">
                     Thiết bị / Node DMX phản hồi realtime ({nodes.length})
                   </div>
+                  {snapshot?.status.warning && (
+                    <div className="mb-2 flex items-start gap-2 rounded-lg bg-warn/10 px-2.5 py-1.5 text-[11px] text-warn shadow-[inset_0_0_0_1px_rgba(255,203,114,0.3)]">
+                      <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                      <span>{snapshot.status.warning}</span>
+                    </div>
+                  )}
                   {nodes.length === 0 ? (
                     <div className="text-[11px] text-muted">
                       {isSerialDriver
@@ -586,7 +671,9 @@ export function SettingsModal(props: {
                           ? 'sACN E1.31 đang chờ gửi khung đầu tiên.'
                           : out.driver === 'kinet'
                             ? 'Chưa nhận được KiNET PollReply. Kiểm tra IP thiết bị hoặc gửi trực tiếp tới IP PSU.'
-                            : 'Chưa nhận được ArtPollReply nào. Kiểm tra cùng subnet hoặc firewall nếu dùng thiết bị thật.'}
+                            : isLoopbackTarget(out.ip)
+                              ? 'Đích localhost: app gửi ArtDmx qua cổng động và không bind 6454 để tránh tranh receiver cục bộ. Trạng thái discovery không xác định (không đồng nghĩa receiver offline); chỉ nhận ArtPollReply chuẩn 6454 khi receiver chạy cổng khác 6454, hoặc nhận phản hồi bổ sung qua cổng nguồn động.'
+                              : 'Chưa nhận được ArtPollReply nào. Kiểm tra cùng subnet hoặc firewall nếu dùng thiết bị thật.'}
                     </div>
                   ) : (
                     <div className="space-y-1.5">
@@ -656,29 +743,68 @@ export function SettingsModal(props: {
               </div>
             )}
 
-            {tab === 'ltc' && (
+            {tab === 'ltc' && (() => {
+              const ltcMatched = isStandardLtcFps(tl.fps)
+              const effectiveLtcFps = resolveLtcFps(tl.fps, project.settings.ltc.fps)
+              return (
               <div className="space-y-4">
                 <div className="text-[11px] font-semibold tracking-wide text-muted uppercase">
                   Đồng bộ Timecode &amp; LTC Audio
                 </div>
 
+                {!ltcMatched && (
+                  <div className="flex items-start gap-2 rounded-xl bg-warn/10 px-3 py-2 text-[11px] text-warn shadow-[inset_0_0_0_1px_rgba(255,203,114,0.35)]">
+                    <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                    <div>
+                      <div className="font-semibold">Timeline {tl.fps} fps không khớp chuẩn LTC SMPTE</div>
+                      <div className="text-[#E7D4B5]">
+                        LTC chuẩn chỉ hỗ trợ 24 / 25 / 29.97 / 30 fps. LTC In/Out đang giữ rate riêng ở{' '}
+                        <strong>{effectiveLtcFps} fps</strong> (không giả vờ hỗ trợ {tl.fps} fps).
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-3">
-                  <label className="space-y-1.5">
-                    <span className="text-[11px] text-[#C2B3A4]">Tốc độ khung hình (FPS)</span>
-                    <select
-                      value={tl.fps}
-                      onChange={(e) => updateTimelineSettings({ fps: Number(e.target.value) as Fps })}
-                      className="kiln-field h-9 w-full px-2.5 text-xs"
-                    >
-                      {FPS_OPTIONS.map((f) => (
-                        <option key={f} value={f}>
-                          {f} fps{f === 29.97 ? ' (Drop Frame)' : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-[11px] text-[#C2B3A4]">Timecode bắt đầu (hh:mm:ss:ff)</span>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px] leading-4 text-[#C2B3A4]">Tốc độ khung hình Timeline (FPS)</span>
+                    <KilnSelect
+                      ariaLabel="Tốc độ khung hình Timeline"
+                      tabular
+                      value={String(tl.fps)}
+                      options={FPS_OPTIONS.map((f) => ({
+                        value: String(f),
+                        label: `${f} fps`,
+                        badge: f === 29.97 ? 'Drop Frame' : f > 30 ? 'High FPS' : undefined,
+                      }))}
+                      onChange={(val) => updateTimelineSettings({ fps: Number(val) as Fps })}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px] leading-4 text-[#C2B3A4]">Tốc độ khung LTC In/Out (chuẩn SMPTE)</span>
+                    <KilnSelect
+                      ariaLabel="Tốc độ khung LTC In/Out"
+                      tabular
+                      value={project.settings.ltc.fps !== undefined ? String(project.settings.ltc.fps) : 'auto'}
+                      options={[
+                        {
+                          value: 'auto',
+                          label: ltcMatched ? 'Theo Timeline' : 'Giữ rate riêng',
+                          badge: `${effectiveLtcFps} fps`,
+                        },
+                        ...LTC_FPS_OPTIONS.map((f) => ({
+                          value: String(f),
+                          label: `${f} fps`,
+                          badge: f === 29.97 ? 'Drop Frame' : undefined,
+                        })),
+                      ]}
+                      onChange={(val) =>
+                        updateLtcSettings({ fps: val === 'auto' ? undefined : (Number(val) as LtcFps) })
+                      }
+                    />
+                  </div>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-[11px] leading-4 text-[#C2B3A4]">Timecode bắt đầu (hh:mm:ss:ff)</span>
                     <input
                       value={startTcText}
                       onChange={(e) => setStartTcText(e.target.value)}
@@ -689,34 +815,35 @@ export function SettingsModal(props: {
                     />
                   </label>
 
-                  <label className="space-y-1.5">
-                    <span className="text-[11px] text-[#C2B3A4]">Thiết bị thu âm (Line-in / USB)</span>
-                    <select
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px] leading-4 text-[#C2B3A4]">Thiết bị thu âm (Line-in / USB)</span>
+                    <KilnSelect
+                      ariaLabel="Thiết bị thu âm"
                       value={project.settings.ltc.deviceId}
-                      onChange={(e) => updateLtcSettings({ deviceId: e.target.value })}
-                      className="kiln-field h-9 w-full px-2.5 text-xs"
-                    >
-                      <option value="">Thiết bị mặc định hệ thống</option>
-                      {audioInputs.map((d) => (
-                        <option key={d.deviceId} value={d.deviceId}>
-                          {d.label || `Audio Input (${d.deviceId.slice(0, 6)})`}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-[11px] text-[#C2B3A4]">Kênh âm thanh</span>
-                    <select
+                      options={[
+                        { value: '', label: 'Thiết bị mặc định hệ thống' },
+                        ...audioInputs.map((d) => ({
+                          value: d.deviceId,
+                          label: d.label || `Audio Input (${d.deviceId.slice(0, 6)})`,
+                        })),
+                      ]}
+                      onChange={(val) => updateLtcSettings({ deviceId: val })}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px] leading-4 text-[#C2B3A4]">Kênh âm thanh</span>
+                    <KilnSelect
+                      ariaLabel="Kênh âm thanh"
                       value={project.settings.ltc.channel}
-                      onChange={(e) => updateLtcSettings({ channel: e.target.value as 'left' | 'right' })}
-                      className="kiln-field h-9 w-full px-2.5 text-xs"
-                    >
-                      <option value="left">Trái (Left)</option>
-                      <option value="right">Phải (Right)</option>
-                    </select>
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-[11px] text-[#C2B3A4]">Freewheel khi mất tín hiệu (frames)</span>
+                      options={[
+                        { value: 'left', label: 'Trái (Left)' },
+                        { value: 'right', label: 'Phải (Right)' },
+                      ]}
+                      onChange={(val) => updateLtcSettings({ channel: val as 'left' | 'right' })}
+                    />
+                  </div>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-[11px] leading-4 text-[#C2B3A4]">Freewheel khi mất tín hiệu (frames)</span>
                     <input
                       type="number"
                       min="0"
@@ -726,8 +853,8 @@ export function SettingsModal(props: {
                       className="kiln-field h-9 w-full px-3 text-xs tabular-nums"
                     />
                   </label>
-                  <label className="space-y-1.5">
-                    <span className="text-[11px] text-[#C2B3A4]">Bù trễ (Offset frames)</span>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-[11px] leading-4 text-[#C2B3A4]">Bù trễ (Offset frames)</span>
                     <input
                       type="number"
                       min="-60"
@@ -739,7 +866,8 @@ export function SettingsModal(props: {
                   </label>
                 </div>
               </div>
-            )}
+              )
+            })()}
 
             {tab === 'notifications' && (
               <div className="space-y-4">
