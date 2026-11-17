@@ -19,9 +19,10 @@ import {
   Trash2,
 } from 'lucide-react'
 import { LtcDecoder } from '@shared/ltc'
+import { clamp } from '@shared/convert'
 import { FPS_OPTIONS, formatTc, parseTc, tcToSeconds } from '@shared/timecode'
 import { TimelineRunner } from '@shared/timeline'
-import type { CueButton, Fps, SpeedUnit, TimelineKey } from '@shared/types'
+import type { CueButton, Fps, ModuleCfg, SpeedUnit, TimelineKey } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 
 function ActionBtn({
@@ -67,23 +68,26 @@ function ActionBtn({
 }
 
 function ModeButtons() {
-  const { project, snapshot, saveButton, deleteButton, sendCommand } = useAppStore()
+  const { project, snapshot, saveButton, deleteButton, sendCommand, notify } = useAppStore()
   const [editing, setEditing] = useState<CueButton | null>(null)
+  const [layerHeights, setLayerHeights] = useState<Record<string, string>>({})
   const [lastFired, setLastFired] = useState<string | null>(null)
 
   const fire = async (b: CueButton) => {
     setLastFired(b.id)
     for (const s of b.steps) {
-      await sendCommand({
+      const res = await sendCommand({
         type: 'move',
         ids: [s.moduleId],
         target: s.position,
         speed: { unit: b.speedUnit, value: b.speedValue },
       })
+      if (!res.ok) break
     }
   }
 
   const openNew = () => {
+    setLayerHeights({})
     setEditing({
       id: `cue-${Date.now()}`,
       name: `Cảnh ${project.buttons.length + 1}`,
@@ -96,15 +100,69 @@ function ModeButtons() {
     })
   }
 
+  const toggleModule = (m: ModuleCfg) => {
+    if (!editing) return
+    const exists = editing.steps.some((s) => s.moduleId === m.id)
+    const steps = exists
+      ? editing.steps.filter((s) => s.moduleId !== m.id)
+      : [
+          ...editing.steps,
+          { moduleId: m.id, position: Number((snapshot?.modules[m.id]?.pos ?? m.minHeight).toFixed(2)) },
+        ]
+    setEditing({ ...editing, steps })
+  }
+
+  const setModuleHeight = (m: ModuleCfg, rawPos: number) => {
+    if (!editing) return
+    const pos = clamp(rawPos, m.minHeight, m.maxHeight)
+    const exists = editing.steps.some((s) => s.moduleId === m.id)
+    const steps = exists
+      ? editing.steps.map((s) => (s.moduleId === m.id ? { ...s, position: pos } : s))
+      : [...editing.steps, { moduleId: m.id, position: pos }]
+    setEditing({ ...editing, steps })
+  }
+
+  const toggleLayerInButton = (layerId: string) => {
+    if (!editing) return
+    const mods = project.modules.filter((m) => m.layerId === layerId)
+    const modIds = new Set(mods.map((m) => m.id))
+    const allSelected = mods.length > 0 && mods.every((m) => editing.steps.some((s) => s.moduleId === m.id))
+    if (allSelected) {
+      setEditing({ ...editing, steps: editing.steps.filter((s) => !modIds.has(s.moduleId)) })
+      return
+    }
+    const nextSteps = [...editing.steps]
+    for (const m of mods) {
+      if (!nextSteps.some((s) => s.moduleId === m.id)) {
+        nextSteps.push({ moduleId: m.id, position: Number((snapshot?.modules[m.id]?.pos ?? m.minHeight).toFixed(2)) })
+      }
+    }
+    setEditing({ ...editing, steps: nextSteps })
+  }
+
+  const applyLayerHeight = (layerId: string, heightM: number) => {
+    if (!editing) return
+    const mods = project.modules.filter((m) => m.layerId === layerId)
+    const modMap = new Map(mods.map((m) => [m.id, m]))
+    const rest = editing.steps.filter((s) => !modMap.has(s.moduleId))
+    const added = mods.map((m) => ({
+      moduleId: m.id,
+      position: Number(clamp(heightM, m.minHeight, m.maxHeight).toFixed(2)),
+    }))
+    setEditing({ ...editing, steps: [...rest, ...added] })
+  }
+
   if (editing) {
+    const stepMap = new Map(editing.steps.map((s) => [s.moduleId, s.position]))
+
     return (
-      <div className="flex h-full flex-col gap-2 overflow-y-auto pr-1 text-xs">
+      <div className="flex h-full flex-col gap-2 overflow-hidden text-xs">
         <div className="flex flex-wrap items-center gap-2">
           <input
             value={editing.name}
             onChange={(e) => setEditing({ ...editing, name: e.target.value })}
             placeholder="Tên nút điều khiển"
-            className="min-w-40 flex-1 rounded border border-line bg-bg px-2.5 py-1.5 text-fg"
+            className="min-w-36 flex-1 rounded border border-line bg-bg px-2.5 py-1.5 text-fg"
           />
           <select
             value={editing.speedUnit}
@@ -132,38 +190,141 @@ function ModeButtons() {
           <button
             type="button"
             onClick={() => {
+              if (editing.steps.length === 0) {
+                notify('Chọn ít nhất 1 layer hoặc module cho nút này', 'warn')
+                return
+              }
               saveButton(editing)
               setEditing(null)
             }}
             className="cursor-pointer rounded bg-brand px-3 py-1.5 font-semibold text-brand-fg"
           >
-            Lưu nút
+            Lưu nút ({editing.steps.length})
           </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-1.5 overflow-y-auto sm:grid-cols-3 md:grid-cols-4">
-          {project.modules.map((m) => {
-            const step = editing.steps.find((s) => s.moduleId === m.id)
+        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
+          <span>Chọn theo Layer (gán nhanh cả lớp) hoặc từng Module và đặt chiều cao (m)</span>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() =>
+                setEditing({
+                  ...editing,
+                  steps: project.modules.map((m) => ({
+                    moduleId: m.id,
+                    position: Number((stepMap.get(m.id) ?? snapshot?.modules[m.id]?.pos ?? 0).toFixed(2)),
+                  })),
+                })
+              }
+              className="cursor-pointer rounded bg-panel-2 px-2 py-0.5 text-info hover:bg-line"
+            >
+              Chọn hết
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditing({ ...editing, steps: [] })}
+              className="cursor-pointer rounded bg-panel-2 px-2 py-0.5 text-muted hover:bg-line hover:text-fg"
+            >
+              Bỏ chọn
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setEditing({
+                  ...editing,
+                  steps: editing.steps.map((s) => ({
+                    ...s,
+                    position: Number((snapshot?.modules[s.moduleId]?.pos ?? s.position).toFixed(2)),
+                  })),
+                })
+              }
+              className="cursor-pointer rounded bg-panel-2 px-2 py-0.5 text-brand hover:bg-line"
+            >
+              Lấy vị trí 3D hiện tại
+            </button>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+          {project.layers.map((layer) => {
+            const mods = project.modules.filter((m) => m.layerId === layer.id)
+            const selectedCount = mods.filter((m) => stepMap.has(m.id)).length
+            const allChecked = mods.length > 0 && selectedCount === mods.length
+            const layerVal = layerHeights[layer.id] ?? '1'
+
             return (
-              <label key={m.id} className="flex items-center justify-between gap-2 rounded border border-line bg-panel-2/70 px-2 py-1">
-                <span className="truncate">{m.name}</span>
-                <input
-                  type="number"
-                  step="0.1"
-                  min={m.minHeight}
-                  max={m.maxHeight}
-                  value={step?.position ?? 0}
-                  onChange={(e) => {
-                    const pos = Number(e.target.value) || 0
-                    const exists = editing.steps.some((s) => s.moduleId === m.id)
-                    const steps = exists
-                      ? editing.steps.map((s) => (s.moduleId === m.id ? { ...s, position: pos } : s))
-                      : [...editing.steps, { moduleId: m.id, position: pos }]
-                    setEditing({ ...editing, steps })
-                  }}
-                  className="w-16 rounded border border-line bg-bg px-1.5 py-0.5 text-right text-fg tabular-nums"
-                />
-              </label>
+              <div key={layer.id} className="space-y-1.5 rounded-lg border border-line bg-panel-2/40 p-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="flex cursor-pointer items-center gap-2 font-semibold text-info">
+                    <input
+                      type="checkbox"
+                      checked={allChecked}
+                      onChange={() => toggleLayerInButton(layer.id)}
+                      className="accent-brand"
+                    />
+                    <span>{layer.name}</span>
+                    <span className="text-[11px] font-normal text-muted">
+                      ({selectedCount}/{mods.length})
+                    </span>
+                  </label>
+
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-muted">Cả layer (m):</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      value={layerVal}
+                      onChange={(e) => setLayerHeights({ ...layerHeights, [layer.id]: e.target.value })}
+                      className="w-16 rounded border border-line bg-bg px-1.5 py-0.5 text-right text-fg tabular-nums"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => applyLayerHeight(layer.id, Number(layerVal) || 0)}
+                      className="cursor-pointer rounded bg-info/20 px-2 py-0.5 text-[11px] font-medium text-info hover:bg-info/30"
+                    >
+                      Áp dụng
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4">
+                  {mods.map((m) => {
+                    const checked = stepMap.has(m.id)
+                    const pos = stepMap.get(m.id) ?? 0
+                    return (
+                      <div
+                        key={m.id}
+                        className={`flex items-center justify-between gap-1.5 rounded border px-2 py-1 ${
+                          checked ? 'border-brand/50 bg-panel-2' : 'border-line/60 bg-bg/40 opacity-65'
+                        }`}
+                      >
+                        <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleModule(m)}
+                            className="shrink-0 accent-brand"
+                          />
+                          <span className="truncate" title={`${m.name} (${m.minHeight}–${m.maxHeight}m)`}>
+                            {m.name}
+                          </span>
+                        </label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          min={m.minHeight}
+                          max={m.maxHeight}
+                          value={pos}
+                          onChange={(e) => setModuleHeight(m, Number(e.target.value) || 0)}
+                          className="w-14 rounded border border-line bg-bg px-1 py-0.5 text-right text-fg tabular-nums"
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
             )
           })}
         </div>
@@ -188,6 +349,16 @@ function ModeButtons() {
       <div className="grid min-h-0 flex-1 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3 lg:grid-cols-4">
         {project.buttons.map((b) => {
           const active = lastFired === b.id
+          const stepIds = new Set(b.steps.map((s) => s.moduleId))
+          const fullLayers = project.layers.filter((l) => {
+            const mods = project.modules.filter((m) => m.layerId === l.id)
+            return mods.length > 0 && mods.every((m) => stepIds.has(m.id))
+          })
+          const summary =
+            fullLayers.length === 1 && stepIds.size === project.modules.filter((m) => m.layerId === fullLayers[0].id).length
+              ? fullLayers[0].name
+              : `${b.steps.length} màn`
+
           return (
             <motion.div
               key={b.id}
@@ -198,14 +369,17 @@ function ModeButtons() {
             >
               <button type="button" onClick={() => fire(b)} className="flex-1 cursor-pointer text-left">
                 <div className="truncate text-sm font-semibold text-fg">{b.name}</div>
-                <div className="mt-1 text-[11px] text-muted">
-                  {b.steps.length} màn · {b.speedValue} {b.speedUnit === 'sec' ? 'giây' : 'cm/s'}
+                <div className="mt-1 truncate text-[11px] text-muted">
+                  {summary} · {b.speedValue} {b.speedUnit === 'sec' ? 'giây' : 'cm/s'}
                 </div>
               </button>
               <div className="mt-2 flex justify-end gap-1 opacity-0 transition group-hover:opacity-100">
                 <button
                   type="button"
-                  onClick={() => setEditing(b)}
+                  onClick={() => {
+                    setLayerHeights({})
+                    setEditing(b)
+                  }}
                   title="Sửa nút"
                   className="cursor-pointer rounded p-1 text-muted hover:bg-line hover:text-fg"
                 >
