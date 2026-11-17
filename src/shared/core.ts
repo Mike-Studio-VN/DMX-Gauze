@@ -332,11 +332,13 @@ export class GauzeCore {
     const o = this.cfg?.output
     const now = this.now()
     const live = [...this.nodes.values()].filter((n) => now - n.lastSeen <= NODE_TIMEOUT_MS)
-    if (live.length) this.everOnline = true
+    const confirmed = live.some((n) => n.confirmed !== false)
+    if (confirmed) this.everOnline = true
     let state: ConnectionStatus['state']
     if (!this.driver) state = 'idle'
     else if (this.driverError) state = 'error'
-    else if (live.length) state = 'online'
+    else if (confirmed) state = 'online'
+    else if (live.length) state = 'sending'
     else if (this.everOnline) state = 'lost'
     else state = 'searching'
     return {

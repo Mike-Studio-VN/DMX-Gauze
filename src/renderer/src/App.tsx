@@ -278,6 +278,9 @@ export function App() {
         icon: Wifi,
       }
     }
+    if (st.state === 'sending') {
+      return { chip: 'kiln-chip', dot: 'bg-muted', text: `Đang gửi · ${st.sendHz}Hz`, icon: Wifi }
+    }
     return {
       chip: 'kiln-chip warn',
       dot: 'bg-warn',

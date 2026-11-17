@@ -373,6 +373,7 @@ export class SerialDmxDriver implements OutputDriver {
               : 'Serial DMX',
         longName: `${portPath} @ ${this.baudRate()} baud`,
         lastSeen: Date.now(),
+        confirmed: false,
       })
     }
   }
@@ -390,6 +391,7 @@ export class SerialDmxDriver implements OutputDriver {
             : 'Serial DMX',
       longName: `${portPath} @ ${this.baudRate()} baud`,
       lastSeen: Date.now(),
+        confirmed: false,
     })
   }
 

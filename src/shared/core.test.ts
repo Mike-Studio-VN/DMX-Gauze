@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { GauzeCore } from './core'
 import { MockDriver } from './drivers'
 import { CH, LOCK_VALUE } from './dmx'
-import { createDefaultProject } from './preset'
+import { createDefaultProject, normalizeProject } from './preset'
 
 describe('GauzeCore', () => {
   it('mặc định khoá an toàn (CH4=0), mở khoá mới gửi CH4=77 và di chuyển trong min/max', () => {
@@ -141,5 +141,31 @@ describe('GauzeCore', () => {
     expect(lastStopSent.data.every((b) => b === 0)).toBe(true)
     expect(core.snapshot().locked).toBe(true)
     expect(core.snapshot().frame.every((b) => b === 0)).toBe(true)
+  })
+})
+
+describe('connection status without device feedback', () => {
+  it('node tự dựng (confirmed:false) chỉ cho trạng thái "sending", node thật cho "online"', () => {
+    const now = 1000
+    const p = createDefaultProject()
+    let confirmed = false
+    const core = new GauzeCore((_c, ev) => {
+      const d = new MockDriver(ev)
+      d.poll = () => ev.onNode({ ip: '1.2.3.4', name: 'n', longName: 'n', lastSeen: now, ...(confirmed ? {} : { confirmed: false }) })
+      return d
+    }, () => now)
+    core.configure({ modules: [p.modules[0]], output: p.settings.output, lockValue: LOCK_VALUE })
+    expect(core.status().state).toBe('sending')
+    confirmed = true
+    core.configure({ modules: [p.modules[0]], output: { ...p.settings.output, sendHz: 30 }, lockValue: LOCK_VALUE })
+    expect(core.status().state).toBe('online')
+  })
+})
+
+describe('normalizeProject', () => {
+  it('từ chối id module trùng nhau', () => {
+    const p = createDefaultProject()
+    p.modules[1].id = p.modules[0].id
+    expect(() => normalizeProject(p)).toThrow(/id trùng/)
   })
 })

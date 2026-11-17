@@ -156,9 +156,12 @@ export interface NodeInfo {
   name: string
   longName: string
   lastSeen: number
+  /** false = node do driver tự dựng, không phải thiết bị trả lời. */
+  confirmed?: boolean
 }
 
-export type ConnState = 'idle' | 'searching' | 'online' | 'lost' | 'error'
+/** 'sending' = đang gửi nhưng thiết bị không phản hồi được (sACN, Serial), không đồng nghĩa online. */
+export type ConnState = 'idle' | 'searching' | 'sending' | 'online' | 'lost' | 'error'
 
 export interface ConnectionStatus {
   state: ConnState
