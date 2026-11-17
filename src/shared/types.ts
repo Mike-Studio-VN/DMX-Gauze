@@ -132,6 +132,8 @@ export interface Settings {
 
 export interface Project {
   version: 1
+  /** Phiên bản lược đồ migration nội bộ (v1.0.0 không có hoặc < 2; v1.0.1 = 2). */
+  schemaVersion?: number
   layers: Layer[]
   modules: ModuleCfg[]
   buttons: CueButton[]

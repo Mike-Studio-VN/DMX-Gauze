@@ -953,21 +953,49 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
     expect(resolveLtcFps(50, 25)).toBe(25)
     expect(resolveLtcFps(25)).toBe(25)
 
-    // Giữ nguyên mọi custom port dương đã cấu hình (kể cả Art-Net broadcast + 5568/6038, sACN + 6454); chỉ điền mặc định khi thiếu port
-    const broadcastArtNet5568 = createDefaultProject()
-    broadcastArtNet5568.settings.output.driver = 'artnet'
-    broadcastArtNet5568.settings.output.port = 5568
-    expect(normalizeProject(broadcastArtNet5568).settings.output.port).toBe(5568)
+    // 1) Legacy v1.0.0 (không có schemaVersion) sACN/KiNET với port 6454 -> migrate về 5568/6038 theo đúng hành vi gửi v1.0.0
+    const legacySacn6454 = createDefaultProject()
+    delete legacySacn6454.schemaVersion
+    legacySacn6454.settings.output.driver = 'sacn'
+    legacySacn6454.settings.output.port = 6454
+    const normLegacySacn = normalizeProject(legacySacn6454)
+    expect(normLegacySacn.settings.output.port).toBe(5568)
+    expect(normLegacySacn.schemaVersion).toBe(2)
+
+    const legacyKinet6454 = createDefaultProject()
+    delete legacyKinet6454.schemaVersion
+    legacyKinet6454.settings.output.driver = 'kinet'
+    legacyKinet6454.settings.output.port = 6454
+    const normLegacyKinet = normalizeProject(legacyKinet6454)
+    expect(normLegacyKinet.settings.output.port).toBe(6038)
+    expect(normLegacyKinet.schemaVersion).toBe(2)
+
+    // 2) Legacy v1.0.0 với custom port khác (vd Art-Net 5568/6038, sACN 6038, KiNET 5568) vẫn giữ nguyên
+    const legacyBroadcastArtNet5568 = createDefaultProject()
+    delete legacyBroadcastArtNet5568.schemaVersion
+    legacyBroadcastArtNet5568.settings.output.driver = 'artnet'
+    legacyBroadcastArtNet5568.settings.output.port = 5568
+    expect(normalizeProject(legacyBroadcastArtNet5568).settings.output.port).toBe(5568)
+
+    const legacySacn6038 = createDefaultProject()
+    delete legacySacn6038.schemaVersion
+    legacySacn6038.settings.output.driver = 'sacn'
+    legacySacn6038.settings.output.port = 6038
+    expect(normalizeProject(legacySacn6038).settings.output.port).toBe(6038)
+
+    // 3) Dự án mới v1.0.1 (schemaVersion: 2): mọi custom port dương (kể cả sACN 6454, KiNET 6454, Art-Net 5568/6038) đều được giữ nguyên
+    const explicitSacn6454 = createDefaultProject()
+    explicitSacn6454.settings.output = resolveOutputSettingsPatch(explicitSacn6454.settings.output, { driver: 'sacn', port: 6454 })
+    expect(normalizeProject(explicitSacn6454).settings.output.port).toBe(6454)
+
+    const explicitKinet6454 = createDefaultProject()
+    explicitKinet6454.settings.output = resolveOutputSettingsPatch(explicitKinet6454.settings.output, { driver: 'kinet', port: 6454 })
+    expect(normalizeProject(explicitKinet6454).settings.output.port).toBe(6454)
 
     const broadcastArtNet6038 = createDefaultProject()
     broadcastArtNet6038.settings.output.driver = 'artnet'
     broadcastArtNet6038.settings.output.port = 6038
     expect(normalizeProject(broadcastArtNet6038).settings.output.port).toBe(6038)
-
-    const sacnCustom6454 = createDefaultProject()
-    sacnCustom6454.settings.output.driver = 'sacn'
-    sacnCustom6454.settings.output.port = 6454
-    expect(normalizeProject(sacnCustom6454).settings.output.port).toBe(6454)
 
     const missingArtNetPort = createDefaultProject()
     missingArtNetPort.settings.output.driver = 'artnet'

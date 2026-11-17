@@ -590,6 +590,26 @@ describe('Core + Async Driver integration cleanup & drain tests', () => {
     expect(kinetSock.pendingSends[0].port).toBe(5568);
     kinetSock.pendingSends.splice(0).forEach((s) => s.cb(null));
     kinetCustom.stop();
+
+    // 5) Startup warning persistence: GauzeCore.configure() calls start() then poll() synchronously BEFORE
+    //    async sock.bind(0) callback resolves; active loopback discovery warning must NOT be cleared by ready callback!
+    mocks.udp.reset();
+    const core = new GauzeCore((cfg, driverEv) => new ArtNetDriver(cfg, driverEv));
+    core.configure({
+      modules: [makeMod('m1', 1)],
+      output: udpOutput('artnet', '127.0.0.1'),
+      lockValue: 77,
+    });
+    const coreSock = mocks.udp.sockets[0];
+    expect(coreSock.boundPort).toBe(0);
+    // Allow async sock.bind(0) callback -> markReady() to run
+    await vi.waitFor(() => {
+      core.pollNow();
+      expect(coreSock.pendingSends.length).toBeGreaterThanOrEqual(1);
+    });
+    expect(core.snapshot().status.warning).toContain('Đích localhost:6454');
+    coreSock.pendingSends.splice(0).forEach((s) => s.cb(null));
+    core.stop();
   });
 
   it('ArtNetDriver keeps sending ArtDmx when port 6454 is busy on non-loopback target, warns cleanly, and listens for ArtPollReply when free', async () => {

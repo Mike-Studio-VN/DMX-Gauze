@@ -1,7 +1,9 @@
 import { autoAssign } from './addressing'
 import { ARTNET_PORT, DEFAULT_SPEED, DEFAULT_TARGET_IP, H2_MAX_SPEED_CMS, LOCK_VALUE } from './dmx'
-import { defaultPortForDriver } from './protocols'
+import { KINET_PORT, SACN_PORT, defaultPortForDriver } from './protocols'
 import { FPS_OPTIONS, LTC_FPS_OPTIONS } from './timecode'
+
+export const CURRENT_SCHEMA_VERSION = 2
 import type {
   ClipKeyframe,
   CueButton,
@@ -69,18 +71,23 @@ function validateTransform(v: unknown, label: string, fallback: Transform3D): Tr
   }
 }
 
-function validateSettings(rawSettings: unknown): Settings {
+function validateSettings(rawSettings: unknown, legacySchema: boolean): Settings {
   if (!isRecord(rawSettings)) failProject('thiếu hoặc sai settings')
   if (!isRecord(rawSettings.output)) failProject('thiếu hoặc sai settings.output')
   const rawOut = rawSettings.output
   const driver = rawOut.driver as DriverId
   if (!VALID_DRIVERS.has(driver)) failProject('settings.output.driver không hợp lệ')
   const ip = reqString(rawOut.ip, 'settings.output.ip')
-  // Giữ nguyên mọi cổng dương đã lưu (tránh đoán nhầm custom port là legacy default); chỉ điền mặc định khi thiếu port.
-  const port =
+  // Giữ nguyên custom port; chỉ migrate port 6454 trên dự án legacy v1.0.0 (schemaVersion < 2) khi dùng sACN/KiNET
+  // vì v1.0.0 từng dịch 6454 -> 5568/6038 lúc gửi mà không ghi lại port vào file dự án.
+  let port =
     rawOut.port === undefined || rawOut.port === null
       ? (defaultPortForDriver(driver) ?? ARTNET_PORT)
       : reqFinite(rawOut.port, 'settings.output.port', 1, 65535, true)
+  if (legacySchema && port === ARTNET_PORT) {
+    if (driver === 'sacn') port = SACN_PORT
+    else if (driver === 'kinet') port = KINET_PORT
+  }
   const output: OutputSettings = {
     driver,
     ip,
@@ -168,7 +175,9 @@ export function normalizeProject(raw: unknown): Project {
   if (!Array.isArray(raw.layers)) failProject('thiếu mảng layers')
   if (!Array.isArray(raw.modules)) failProject('thiếu mảng modules')
 
-  const settings = validateSettings(raw.settings)
+  const schemaVer =
+    typeof raw.schemaVersion === 'number' && Number.isFinite(raw.schemaVersion) ? raw.schemaVersion : 1
+  const settings = validateSettings(raw.settings, schemaVer < CURRENT_SCHEMA_VERSION)
 
   const layers: Layer[] = raw.layers.map((item, idx) => {
     if (!isRecord(item)) failProject(`layers[${idx}] phải là object`)
@@ -289,6 +298,7 @@ export function normalizeProject(raw: unknown): Project {
 
   return {
     version: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     layers,
     modules,
     buttons,
@@ -333,6 +343,7 @@ export function createBlankProject(baseSettings?: Settings): Project {
       }
   return {
     version: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     layers: [{ id: layerId, name: 'Lớp 1', visible: true, transform: defaultLayerTransform(0) }],
     modules: [mod],
     buttons: [],
@@ -418,6 +429,7 @@ export function createDefaultProject(): Project {
 
   return {
     version: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     layers,
     modules,
     buttons: [

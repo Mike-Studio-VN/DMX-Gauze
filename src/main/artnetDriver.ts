@@ -131,7 +131,9 @@ export class ArtNetDriver implements OutputDriver {
         sock.setBroadcast(true)
         if (!this.life.markReady()) return
         this.ev.onError(null)
-        this.ev.onWarn(null)
+        if (!this.warnNotified && !this.rxDisabled) {
+          this.ev.onWarn(null)
+        }
       } catch (err) {
         if (!this.life.closing) {
           this.ev.onError(`Không bật được broadcast: ${(err as Error).message}`)

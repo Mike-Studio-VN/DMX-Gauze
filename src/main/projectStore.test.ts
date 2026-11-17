@@ -215,11 +215,33 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
     }
   });
 
-  it('preserves saved positive custom ports (including 5568/6038 on broadcast Art-Net), defaults missing port, and persists 40/50/60 fps', async () => {
+  it('migrates legacy v1.0.0 sACN/KiNET 6454 -> 5568/6038 while preserving custom ports across v1.0.0 and schemaVersion 2', async () => {
     const autosavePath = path.join(electronState.userDataDir, 'project.json');
 
-    // Saved broadcast Art-Net project deliberately configured on port 5568 must NOT be rewritten to 6454.
+    // 1) Legacy v1.0.0 sACN project (no schemaVersion) with stored port 6454 -> migrates to effective v1.0.0 port 5568.
+    const legacySacn = createDefaultProject();
+    delete legacySacn.schemaVersion;
+    legacySacn.settings.output.driver = 'sacn';
+    legacySacn.settings.output.port = 6454;
+    await fs.writeFile(autosavePath, JSON.stringify(legacySacn, null, 2), 'utf8');
+    const loadedSacnLegacy = await loadSavedProject();
+    expect(loadedSacnLegacy.project.settings.output.port).toBe(5568);
+    expect(loadedSacnLegacy.project.schemaVersion).toBe(2);
+    expect(JSON.parse(await fs.readFile(autosavePath, 'utf8')).settings.output.port).toBe(5568);
+
+    // 2) Legacy v1.0.0 KiNET project (no schemaVersion) with stored port 6454 -> migrates to effective v1.0.0 port 6038.
+    const legacyKinet = createDefaultProject();
+    delete legacyKinet.schemaVersion;
+    legacyKinet.settings.output.driver = 'kinet';
+    legacyKinet.settings.output.port = 6454;
+    await fs.writeFile(autosavePath, JSON.stringify(legacyKinet, null, 2), 'utf8');
+    const loadedKinetLegacy = await loadSavedProject();
+    expect(loadedKinetLegacy.project.settings.output.port).toBe(6038);
+    expect(loadedKinetLegacy.project.schemaVersion).toBe(2);
+
+    // 3) Legacy v1.0.0 broadcast Art-Net deliberately on 5568 (no schemaVersion) -> preserved unchanged.
     const broadcast5568 = createDefaultProject();
+    delete broadcast5568.schemaVersion;
     broadcast5568.settings.output.driver = 'artnet';
     broadcast5568.settings.output.port = 5568;
     broadcast5568.settings.timeline.fps = 25;
@@ -230,6 +252,14 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
     expect(loaded5568.project.settings.output.port).toBe(5568);
     expect(loaded5568.project.settings.timeline.fps).toBe(25);
     expect(JSON.parse(await fs.readFile(autosavePath, 'utf8')).settings.output.port).toBe(5568);
+
+    // 4) Explicit v1.0.1 (schemaVersion: 2) custom port 6454 on sACN and KiNET -> preserved across save/reload!
+    const explicitSacn6454 = createDefaultProject();
+    explicitSacn6454.settings.output.driver = 'sacn';
+    explicitSacn6454.settings.output.port = 6454;
+    await saveProjectToDisk(explicitSacn6454);
+    const loadedExplicitSacn = await loadSavedProject();
+    expect(loadedExplicitSacn.project.settings.output.port).toBe(6454);
 
     // Saved project missing output.port falls back to protocol default (6454 for Art-Net).
     const missingPort = createDefaultProject();
