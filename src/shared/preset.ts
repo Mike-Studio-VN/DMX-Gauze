@@ -16,11 +16,13 @@ export function normalizeProject(p: Project): Project {
   const layers: Layer[] = p.layers.map((l, idx) => ({
     ...l,
     visible: l.visible ?? true,
+    syncLayer: l.syncLayer ?? false,
     transform: l.transform ?? defaultLayerTransform(idx),
   }))
   const modules: ModuleCfg[] = p.modules.map((m) => ({
     ...m,
     visible: m.visible ?? true,
+    dmxLoop: m.dmxLoop ?? false,
     transform: m.transform ?? defaultModuleTransform(),
   }))
   let clips: TimelineClip[] = p.clips ?? []

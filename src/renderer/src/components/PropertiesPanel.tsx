@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, Eye, EyeOff, HelpCircle, Layers, Lock, RotateCcw, Unlock } from 'lucide-react'
-import { CH, addressRange } from '@shared/dmx'
+import { AlertCircle, Eye, EyeOff, HelpCircle, Layers, Link2, Lock, RotateCcw, Unlock } from 'lucide-react'
+import { layerLoopAddress } from '@shared/addressing'
 import { ch3ToCms } from '@shared/convert'
+import { CH, addressRange } from '@shared/dmx'
 import { defaultLayerTransform, defaultModuleTransform } from '@shared/preset'
 import type { Transform3D } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
@@ -27,7 +28,7 @@ function TransformEditor({
   }
 
   return (
-    <div className="space-y-2.5 border-t border-line pt-3">
+    <div className="space-y-2.5 border-b border-line pb-3">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">Transform 3D</span>
         <button
@@ -85,7 +86,9 @@ export function PropertiesPanel() {
     snapshot,
     updateLayer,
     toggleLayerVisibility,
+    toggleLayerSync,
     updateModule,
+    setModulesDmxLoop,
     setAddressMode,
     notify,
   } = useAppStore()
@@ -111,22 +114,42 @@ export function PropertiesPanel() {
   if (activeLayer) {
     const tf = activeLayer.transform ?? defaultLayerTransform(activeLayerIdx)
     const visible = activeLayer.visible ?? true
+    const synced = activeLayer.syncLayer ?? false
     return (
       <div className="flex h-full flex-col gap-3 overflow-y-auto pr-0.5 text-xs">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-1.5">
           <span className="kiln-chip acc">
             <Layers size={11} />
             Layer
           </span>
-          <button
-            type="button"
-            onClick={() => toggleLayerVisibility(activeLayer.id)}
-            className="kiln-btn h-7 px-2.5 text-[11px]"
-          >
-            {visible ? <Eye size={12} className="text-ok" /> : <EyeOff size={12} className="text-warn" />}
-            {visible ? 'Đang hiện' : 'Đang ẩn'}
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => toggleLayerSync(activeLayer.id)}
+              title="Đồng bộ toàn bộ module trong lớp này di chuyển giống hệt nhau"
+              className={`kiln-btn h-7 px-2.5 text-[11px] ${
+                synced ? 'kiln-btn-primary' : 'text-[#C2B3A4]'
+              }`}
+            >
+              <Link2 size={12} />
+              {synced ? 'Sync: Bật' : 'Sync Layer'}
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleLayerVisibility(activeLayer.id)}
+              className="kiln-btn h-7 px-2.5 text-[11px]"
+            >
+              {visible ? <Eye size={12} className="text-ok" /> : <EyeOff size={12} className="text-warn" />}
+              {visible ? 'Hiện' : 'Ẩn'}
+            </button>
+          </div>
         </div>
+
+        <TransformEditor
+          tf={tf}
+          onChange={(nextTf) => updateLayer(activeLayer.id, { transform: nextTf }, `layer-tf-${activeLayer.id}`)}
+          onReset={() => updateLayer(activeLayer.id, { transform: defaultLayerTransform(activeLayerIdx) })}
+        />
 
         <label className="space-y-1">
           <span className="text-[11px] text-[#C2B3A4]">Tên Layer</span>
@@ -137,14 +160,8 @@ export function PropertiesPanel() {
           />
         </label>
 
-        <TransformEditor
-          tf={tf}
-          onChange={(nextTf) => updateLayer(activeLayer.id, { transform: nextTf }, `layer-tf-${activeLayer.id}`)}
-          onReset={() => updateLayer(activeLayer.id, { transform: defaultLayerTransform(activeLayerIdx) })}
-        />
-
         <p className="border-t border-line pt-3 text-[11px] text-muted">
-          Toàn bộ module trong lớp này giữ cạnh trên dính vào thanh truss của Layer và di chuyển/xoay/scale theo Layer.
+          Toàn bộ module trong lớp giữ cạnh trên dính vào thanh truss của Layer. Bật <strong>Sync Layer</strong> để các module trong lớp chạy đồng nhất mọi chuyển động.
         </p>
       </div>
     )
@@ -156,10 +173,20 @@ export function PropertiesPanel() {
 
   if (!single) {
     const first = selected[0]
+    const allLoop = selected.every((m) => m.dmxLoop)
     return (
       <div className="space-y-3 overflow-y-auto pr-0.5 text-xs">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <span className="kiln-chip acc">Đang chọn {selected.length} module</span>
+          <button
+            type="button"
+            onClick={() => setModulesDmxLoop(selected.map((m) => m.id), !allLoop)}
+            title="Dùng chung 4 kênh DMX cho các module trong cùng Layer"
+            className={`kiln-btn h-7 px-2.5 text-[11px] ${allLoop ? 'kiln-btn-primary' : 'text-[#C2B3A4]'}`}
+          >
+            <Link2 size={12} />
+            {allLoop ? 'Loop DMX: Bật' : 'Loop DMX (4CH)'}
+          </button>
         </div>
 
         <div className="grid grid-cols-2 gap-2 border-t border-line pt-3">
@@ -261,8 +288,18 @@ export function PropertiesPanel() {
     setAddrError(err)
   }
 
+  const loopSharedAddr = layerLoopAddress(project.modules, single.layerId, single.id)
+  const [loopChStart, loopChEnd] = addressRange(single.dmxLoop ? single.startAddress : loopSharedAddr)
+
   return (
     <div className="flex h-full flex-col gap-2.5 overflow-y-auto pr-0.5 text-xs">
+      <TransformEditor
+        tf={modTf}
+        lockY
+        onChange={(nextTf) => updateModule(single.id, { transform: nextTf }, `mod-tf-${single.id}`)}
+        onReset={() => updateModule(single.id, { transform: defaultModuleTransform() })}
+      />
+
       <label className="space-y-1">
         <span className="text-[11px] text-[#C2B3A4]">Tên module</span>
         <input
@@ -287,8 +324,8 @@ export function PropertiesPanel() {
         </select>
       </label>
 
-      {/* Địa chỉ DMX */}
-      <div className="space-y-1.5 border-t border-line pt-2.5">
+      {/* Địa chỉ DMX & Mode Loop DMX */}
+      <div className="space-y-2 border-t border-line pt-2.5">
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
             DMX (Uni {project.settings.output.universe})
@@ -322,7 +359,27 @@ export function PropertiesPanel() {
           <span className="kiln-chip cue tabular-nums">
             Kênh {chStart}–{chEnd}
           </span>
+          {single.dmxLoop && <span className="kiln-chip acc">Loop 4CH</span>}
         </div>
+
+        <button
+          type="button"
+          onClick={() => updateModule(single.id, { dmxLoop: !single.dmxLoop })}
+          title="Khi bật, module này dùng chung 4 kênh DMX với module chính trong Layer (nối dây Loop DMX)"
+          className={`flex w-full cursor-pointer items-center justify-between rounded-xl px-2.5 py-1.5 text-[11px] transition ${
+            single.dmxLoop
+              ? 'bg-brand/15 text-[#FFB26B] shadow-[inset_0_0_0_1px_rgba(247,132,46,.4)]'
+              : 'bg-white/[0.04] text-[#C2B3A4] shadow-[inset_0_0_0_1px_var(--line)] hover:bg-white/[0.08]'
+          }`}
+        >
+          <span className="flex items-center gap-1.5 font-medium">
+            <Link2 size={12} />
+            Loop DMX (Dùng chung 4 kênh)
+          </span>
+          <span className="text-[10px] font-semibold tabular-nums">
+            {single.dmxLoop ? `CH ${loopChStart}–${loopChEnd}` : 'Tắt'}
+          </span>
+        </button>
 
         {addrError && (
           <p className="flex items-center gap-1 text-[11px] text-danger">
@@ -423,13 +480,6 @@ export function PropertiesPanel() {
           />
         </label>
       </div>
-
-      <TransformEditor
-        tf={modTf}
-        lockY
-        onChange={(nextTf) => updateModule(single.id, { transform: nextTf }, `mod-tf-${single.id}`)}
-        onReset={() => updateModule(single.id, { transform: defaultModuleTransform() })}
-      />
 
       {/* Giám sát 4 kênh DMX */}
       <div className="mt-auto space-y-2 border-t border-line pt-2.5">

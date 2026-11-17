@@ -179,6 +179,22 @@ describe('timecode & timeline', () => {
     expect(edited[0].keyframes[1].height).toBe(0.45)
     expect(edited[1].keyframes[0].height).toBe(0.45)
   })
+
+  it('mode Loop DMX cho phép các module cùng layer dùng chung 4 kênh không báo trùng', async () => {
+    const { autoAssign, conflictMap, validateAddress } = await import('./addressing')
+    const p = createDefaultProject()
+    const mods = p.modules.map((m, idx) =>
+      idx === 1 || idx === 2 ? { ...m, dmxLoop: true } : m,
+    )
+    const assigned = autoAssign(p.layers, mods)
+    expect(assigned[0].startAddress).toBe(1)
+    expect(assigned[1].startAddress).toBe(1)
+    expect(assigned[2].startAddress).toBe(1)
+    expect(assigned[3].startAddress).toBe(5)
+    expect(conflictMap(assigned).size).toBe(0)
+    expect(validateAddress(assigned, assigned[1].id, 1)).toBeNull()
+    expect(validateAddress(assigned, assigned[1].id, 3)).not.toBeNull()
+  })
 })
 
 describe('ltc decoder', () => {

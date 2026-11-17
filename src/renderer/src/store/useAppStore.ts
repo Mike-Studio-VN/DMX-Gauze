@@ -1,6 +1,7 @@
 import { create } from 'zustand'
-import { autoAssign, nextFree, orderedModules, validateAddress } from '@shared/addressing'
+import { autoAssign, layerLoopAddress, nextFree, orderedModules, validateAddress } from '@shared/addressing'
 import type { AppInfo, SnapshotDto } from '@shared/api'
+import { clamp } from '@shared/convert'
 import { DEFAULT_SPEED, H2_MAX_SPEED_CMS } from '@shared/dmx'
 import { resolveClipStartNoOverlap, syncModuleClipsContinuity } from '@shared/timeline'
 import {
@@ -73,7 +74,9 @@ interface AppState {
 
   toggleLayerCollapse: (layerId: string) => void
   toggleLayerVisibility: (layerId: string) => void
+  toggleLayerSync: (layerId: string) => void
   toggleModuleVisibility: (moduleId: string) => void
+  setModulesDmxLoop: (ids: string[], enabled: boolean) => void
   addLayer: (name: string) => string | null
   updateLayer: (layerId: string, patch: Partial<Layer>, coalesceKey?: string) => void
   renameLayer: (layerId: string, name: string) => void
@@ -149,6 +152,40 @@ function persistAndSync(project: Project): void {
   saveTimer = setTimeout(() => {
     void b.saveProject(project)
   }, 250)
+}
+
+function mirrorLayerClips(
+  clips: TimelineClip[],
+  modules: ModuleCfg[],
+  layerId: string,
+  sourceModuleId?: string,
+): TimelineClip[] {
+  const layerMods = modules.filter((m) => m.layerId === layerId)
+  if (layerMods.length <= 1) return clips
+  const leadId =
+    (sourceModuleId && layerMods.some((m) => m.id === sourceModuleId) ? sourceModuleId : undefined) ??
+    layerMods.find((m) => clips.some((c) => c.moduleId === m.id))?.id ??
+    layerMods[0].id
+  const leadClips = clips.filter((c) => c.moduleId === leadId).sort((a, b) => a.startTime - b.startTime)
+  const otherLayerClips = clips.filter((c) => !layerMods.some((m) => m.id === c.moduleId))
+  const mirrored: TimelineClip[] = [...leadClips]
+  for (const m of layerMods) {
+    if (m.id === leadId) continue
+    for (const lc of leadClips) {
+      mirrored.push({
+        ...structuredClone(lc),
+        id: `clip-sync-${m.id}-${lc.id}`,
+        layerId,
+        moduleId: m.id,
+        keyframes: lc.keyframes.map((k, kIdx) => ({
+          ...k,
+          id: `kf-sync-${m.id}-${lc.id}-${kIdx}`,
+          height: clamp(k.height, m.minHeight, m.maxHeight),
+        })),
+      })
+    }
+  }
+  return [...otherLayerClips, ...mirrored].sort((a, b) => a.startTime - b.startTime || a.id.localeCompare(b.id))
 }
 
 export const useAppStore = create<AppState>((set, get) => {
@@ -287,6 +324,24 @@ export const useAppStore = create<AppState>((set, get) => {
         layers: project.layers.map((l) => (l.id === layerId ? { ...l, visible: !(l.visible ?? true) } : l)),
       }
       applyProject(next)
+    },
+
+    toggleLayerSync(layerId) {
+      const { project } = get()
+      const target = project.layers.find((l) => l.id === layerId)
+      if (!target) return
+      const nextSync = !(target.syncLayer ?? false)
+      const layers = project.layers.map((l) => (l.id === layerId ? { ...l, syncLayer: nextSync } : l))
+      const clips = nextSync
+        ? mirrorLayerClips(project.clips ?? [], project.modules, layerId)
+        : (project.clips ?? [])
+      applyProject({ ...project, layers, clips })
+      get().notify(
+        nextSync
+          ? `Đã bật Sync Layer "${target.name}" — các module chạy giống hệt nhau`
+          : `Đã tắt Sync Layer "${target.name}"`,
+        'info',
+      )
     },
 
     toggleModuleVisibility(moduleId) {
@@ -546,13 +601,20 @@ export const useAppStore = create<AppState>((set, get) => {
 
     updateModule(id, patch, coalesceKey) {
       const { project } = get()
+      const current = project.modules.find((m) => m.id === id)
+      if (!current) return null
       if (patch.startAddress !== undefined) {
-        const err = validateAddress(project.modules, id, patch.startAddress)
+        const probeMods =
+          patch.dmxLoop !== undefined ? project.modules.map((m) => (m.id === id ? { ...m, dmxLoop: patch.dmxLoop } : m)) : project.modules
+        const err = validateAddress(probeMods, id, patch.startAddress)
         if (err) return err
       }
       let modules = project.modules.map((m) => {
         if (m.id !== id) return m
         const merged = { ...m, ...patch }
+        if (patch.dmxLoop === true && patch.startAddress === undefined) {
+          merged.startAddress = layerLoopAddress(project.modules, merged.layerId, id)
+        }
         if (merged.transform) {
           // Cạnh trên module luôn dính vào Layer nên giữ Y cục bộ = 0
           merged.transform = {
@@ -568,11 +630,47 @@ export const useAppStore = create<AppState>((set, get) => {
         merged.defaultSpeed = Math.min(255, Math.max(1, Math.round(merged.defaultSpeed)))
         return merged
       })
-      if (patch.layerId && project.settings.addressMode === 'auto') {
+      if ((patch.layerId || patch.dmxLoop !== undefined) && project.settings.addressMode === 'auto') {
         modules = autoAssign(project.layers, modules)
+      } else if (patch.dmxLoop === false && project.settings.addressMode === 'manual') {
+        const mod = modules.find((m) => m.id === id)
+        if (mod && validateAddress(modules, id, mod.startAddress)) {
+          const free = nextFree(modules, id)
+          if (free !== null) modules = modules.map((m) => (m.id === id ? { ...m, startAddress: free } : m))
+        }
       }
       applyProject({ ...project, modules }, { coalesceKey })
       return null
+    },
+
+    setModulesDmxLoop(ids, enabled) {
+      const { project } = get()
+      if (ids.length === 0) return
+      const idSet = new Set(ids)
+      let modules = project.modules.map((m) => {
+        if (!idSet.has(m.id)) return m
+        return {
+          ...m,
+          dmxLoop: enabled,
+          startAddress: enabled ? layerLoopAddress(project.modules, m.layerId, m.id) : m.startAddress,
+        }
+      })
+      if (project.settings.addressMode === 'auto') {
+        modules = autoAssign(project.layers, modules)
+      } else if (!enabled) {
+        for (const id of ids) {
+          const mod = modules.find((m) => m.id === id)
+          if (mod && validateAddress(modules, id, mod.startAddress)) {
+            const free = nextFree(modules, id)
+            if (free !== null) modules = modules.map((m) => (m.id === id ? { ...m, startAddress: free } : m))
+          }
+        }
+      }
+      applyProject({ ...project, modules })
+      get().notify(
+        enabled ? `Đã bật Loop DMX dùng chung 4 kênh cho ${ids.length} module` : `Đã tắt Loop DMX cho ${ids.length} module`,
+        'info',
+      )
     },
 
     setAddressMode(addressMode) {
@@ -649,7 +747,11 @@ export const useAppStore = create<AppState>((set, get) => {
         kfs[kfs.length - 1] = { ...kfs[kfs.length - 1], height: nextSorted[0].height }
       }
       const nextClip: TimelineClip = { ...clip, startTime: safeStart, keyframes: kfs }
-      const clips = syncModuleClipsContinuity([...existing, nextClip], clip.moduleId)
+      let clips = syncModuleClipsContinuity([...existing, nextClip], clip.moduleId)
+      const layer = project.layers.find((l) => l.id === clip.layerId)
+      if (layer?.syncLayer) {
+        clips = mirrorLayerClips(clips, project.modules, layer.id, clip.moduleId)
+      }
       applyProject({ ...project, clips }, { extra: { selectedClipId: clip.id, focusScope: 'timeline' } })
     },
 
@@ -659,7 +761,7 @@ export const useAppStore = create<AppState>((set, get) => {
       const target = existing.find((c) => c.id === clipId)
       if (!target) return
       const updated = existing.map((c) => (c.id === clipId ? { ...c, ...patch } : c))
-      const clips =
+      let clips =
         patch.keyframes !== undefined || patch.startTime !== undefined || patch.duration !== undefined
           ? syncModuleClipsContinuity(
               updated,
@@ -667,12 +769,23 @@ export const useAppStore = create<AppState>((set, get) => {
               syncEdge ? { clipId, edge: syncEdge } : undefined,
             )
           : updated
+      const layer = project.layers.find((l) => l.id === target.layerId)
+      if (layer?.syncLayer) {
+        clips = mirrorLayerClips(clips, project.modules, layer.id, target.moduleId)
+      }
       applyProject({ ...project, clips }, { coalesceKey })
     },
 
     deleteClip(clipId) {
       const { project, selectedClipId } = get()
-      const clips = (project.clips ?? []).filter((c) => c.id !== clipId)
+      const target = (project.clips ?? []).find((c) => c.id === clipId)
+      let clips = (project.clips ?? []).filter((c) => c.id !== clipId)
+      if (target) {
+        const layer = project.layers.find((l) => l.id === target.layerId)
+        if (layer?.syncLayer) {
+          clips = mirrorLayerClips(clips, project.modules, layer.id, target.moduleId)
+        }
+      }
       applyProject(
         { ...project, clips },
         { extra: { selectedClipId: selectedClipId === clipId ? null : selectedClipId } },
@@ -848,7 +961,33 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     async sendCommand(cmd) {
-      const res = await getBridge().command(cmd)
+      let effectiveCmd = cmd
+      if ((cmd.type === 'move' || cmd.type === 'stop') && Array.isArray(cmd.ids)) {
+        const { project } = get()
+        const expanded = new Set(cmd.ids)
+        for (const id of cmd.ids) {
+          const mod = project.modules.find((m) => m.id === id)
+          if (!mod) continue
+          const layer = project.layers.find((l) => l.id === mod.layerId)
+          if (layer?.syncLayer) {
+            for (const peer of project.modules) {
+              if (peer.layerId === layer.id) expanded.add(peer.id)
+            }
+          }
+          for (const peer of project.modules) {
+            if (
+              peer.id !== mod.id &&
+              peer.layerId === mod.layerId &&
+              peer.startAddress === mod.startAddress &&
+              (mod.dmxLoop || peer.dmxLoop)
+            ) {
+              expanded.add(peer.id)
+            }
+          }
+        }
+        effectiveCmd = { ...cmd, ids: [...expanded] }
+      }
+      const res = await getBridge().command(effectiveCmd)
       if (!res.ok && res.message) get().notify(res.message, 'error')
       else if (res.warnings?.length) get().notify(res.warnings[0], 'warn')
       return res

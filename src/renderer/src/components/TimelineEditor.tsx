@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Clock,
   Layers,
+  Link2,
   Mic,
   MicOff,
   Pause,
@@ -152,6 +153,7 @@ export function TimelineEditor() {
     selectedTimelineLayerId,
     selectTimelineClip,
     selectTimelineLayer,
+    toggleLayerSync,
     addClip,
     updateClip,
     deleteClip,
@@ -703,6 +705,22 @@ export function TimelineEditor() {
                       <Layers size={12} className={`shrink-0 ${isLayerSel ? 'text-brand' : 'text-info'}`} />
                       <span className="truncate">{layer.name}</span>
                       <span className="shrink-0 text-[10px] font-normal text-muted">({mods.length})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        toggleLayerSync(layer.id)
+                      }}
+                      title={layer.syncLayer ? 'Đang bật Sync Layer — Bấm để tắt' : 'Bật Sync Layer để các module chạy giống nhau'}
+                      className={`ml-1 inline-flex h-5 shrink-0 cursor-pointer items-center gap-0.5 rounded-full px-1.5 text-[9.5px] font-semibold transition ${
+                        layer.syncLayer
+                          ? 'bg-brand/25 text-[#FFB26B] shadow-[inset_0_0_0_1px_rgba(247,132,46,.45)]'
+                          : 'text-muted hover:bg-white/10 hover:text-fg'
+                      }`}
+                    >
+                      <Link2 size={10} />
+                      {layer.syncLayer ? 'Sync' : ''}
                     </button>
                   </div>
 

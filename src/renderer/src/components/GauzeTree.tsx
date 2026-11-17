@@ -12,6 +12,7 @@ import {
   EyeOff,
   FolderPlus,
   Layers,
+  Link2,
   Plus,
   RefreshCw,
   Trash2,
@@ -35,6 +36,7 @@ export function GauzeTree() {
     snapshot,
     toggleLayerCollapse,
     toggleLayerVisibility,
+    toggleLayerSync,
     toggleModuleVisibility,
     addLayer,
     renameLayer,
@@ -368,6 +370,17 @@ export function GauzeTree() {
                       >
                         ({mods.length})
                       </span>
+                      {layer.syncLayer && (
+                        <span
+                          title="Sync Layer đang bật: các module chạy giống hệt nhau"
+                          className={`inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.2 text-[9px] font-bold ${
+                            layerSelected ? 'bg-[#1C0E04]/15 text-[#1C0E04]' : 'bg-brand/20 text-[#FFB26B]'
+                          }`}
+                        >
+                          <Link2 size={9} />
+                          Sync
+                        </span>
+                      )}
                     </button>
                   )}
                 </div>
@@ -512,6 +525,14 @@ export function GauzeTree() {
                               <span>
                                 CH {chStart}–{chEnd}
                               </span>
+                              {m.dmxLoop && (
+                                <span
+                                  title="Loop DMX: dùng chung 4 kênh"
+                                  className="rounded-full bg-info/15 px-1.5 text-[9px] font-semibold text-info"
+                                >
+                                  Loop
+                                </span>
+                              )}
                               <span>·</span>
                               <span className={selected ? 'text-[#FFB26B]' : ''}>
                                 {(st?.pos ?? 0).toFixed(2)}/{m.length}m
@@ -588,6 +609,14 @@ export function GauzeTree() {
               </button>
               <button
                 type="button"
+                onClick={() => toggleLayerSync(ctxMenu.layer.id)}
+                className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
+              >
+                <Link2 size={13} className={ctxMenu.layer.syncLayer ? 'text-[#FFB26B]' : 'text-muted'} />
+                {ctxMenu.layer.syncLayer ? 'Tắt Sync Layer' : 'Bật Sync Layer (chạy đồng bộ)'}
+              </button>
+              <button
+                type="button"
                 onClick={() => toggleLayerVisibility(ctxMenu.layer.id)}
                 className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
               >
@@ -650,6 +679,14 @@ export function GauzeTree() {
                   >
                     <Copy size={13} className="text-[#FFB26B]" />
                     Nhân bản Module
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateModule(ctxMenu.mod.id, { dmxLoop: !ctxMenu.mod.dmxLoop })}
+                    className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
+                  >
+                    <Link2 size={13} className={ctxMenu.mod.dmxLoop ? 'text-info' : 'text-muted'} />
+                    {ctxMenu.mod.dmxLoop ? 'Tắt Loop DMX' : 'Bật Loop DMX (chung 4 kênh)'}
                   </button>
                   <button
                     type="button"

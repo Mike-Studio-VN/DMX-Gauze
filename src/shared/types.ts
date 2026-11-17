@@ -24,6 +24,7 @@ export interface Layer {
   id: string
   name: string
   visible?: boolean
+  syncLayer?: boolean
   transform?: Transform3D
 }
 
@@ -32,6 +33,7 @@ export interface ModuleCfg {
   name: string
   layerId: string
   visible?: boolean
+  dmxLoop?: boolean
   transform?: Transform3D
   /** Hành trình thả tối đa (m) ứng với DMX 255. */
   length: number
