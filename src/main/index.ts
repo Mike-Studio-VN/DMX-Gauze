@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, nativeImage, shell } from 'electron'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AppInfo, SnapshotDto } from '@shared/api'
 import { GauzeCore } from '@shared/core'
@@ -46,7 +47,15 @@ core.onSnapshot((snap) => {
   mainWin.webContents.send('dmx:snapshot', dto)
 })
 
+function resolveAppIcon() {
+  const iconPath = join(__dirname, '../../build/icon.png')
+  if (!existsSync(iconPath)) return undefined
+  const img = nativeImage.createFromPath(iconPath)
+  return img.isEmpty() ? undefined : img
+}
+
 function createWindow(): void {
+  const icon = resolveAppIcon()
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -55,6 +64,7 @@ function createWindow(): void {
     show: false,
     backgroundColor: '#0E1117',
     title: 'DMX Gauze',
+    ...(icon ? { icon } : {}),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -101,6 +111,10 @@ ipcMain.handle('dmx:poll', () => core.pollNow())
 ipcMain.handle('dmx:list-serial', () => listSerialPorts())
 
 app.whenReady().then(async () => {
+  const icon = resolveAppIcon()
+  if (process.platform === 'darwin' && icon) {
+    app.dock?.setIcon(icon)
+  }
   const { project: initial } = await loadSavedProject()
   core.configure({
     modules: initial.modules,
