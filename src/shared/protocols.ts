@@ -1,8 +1,46 @@
 // Bộ dựng gói tin DMX cho các giao thức ngoài Art-Net:
 // sACN E1.31, KiNET v1/v2, Enttec DMX USB Pro / Mk2, và Generic Serial.
+import { ARTNET_PORT } from './dmx'
+import type { DriverId, OutputSettings } from './types'
 
 export const SACN_PORT = 5568
 export const KINET_PORT = 6038
+
+export function defaultPortForDriver(driver: DriverId): number | null {
+  switch (driver) {
+    case 'artnet':
+      return ARTNET_PORT
+    case 'sacn':
+      return SACN_PORT
+    case 'kinet':
+      return KINET_PORT
+    default:
+      return null
+  }
+}
+
+export function resolveOutputSettingsPatch(
+  current: OutputSettings,
+  patch: Partial<OutputSettings>,
+): OutputSettings {
+  const nextDriver = patch.driver ?? current.driver
+  const driverChanged = patch.driver !== undefined && patch.driver !== current.driver
+  const autoPort = driverChanged && patch.port === undefined ? defaultPortForDriver(nextDriver) : null
+  const merged: OutputSettings = {
+    ...current,
+    ...patch,
+    ...(autoPort !== null ? { port: autoPort } : {}),
+  }
+  if (driverChanged && nextDriver === 'sacn') {
+    merged.sacnUniverse = patch.sacnUniverse ?? current.sacnUniverse ?? Math.max(1, current.universe + 1)
+    merged.sacnPriority = patch.sacnPriority ?? current.sacnPriority ?? 100
+    merged.sacnMulticast = patch.sacnMulticast ?? current.sacnMulticast ?? true
+  } else if (driverChanged && nextDriver === 'kinet') {
+    merged.kinetVersion = patch.kinetVersion ?? current.kinetVersion ?? 2
+    merged.kinetPort = patch.kinetPort ?? current.kinetPort ?? 1
+  }
+  return merged
+}
 
 const ACN_ID = [0x41, 0x53, 0x43, 0x2d, 0x45, 0x31, 0x2e, 0x31, 0x37, 0x00, 0x00, 0x00] // "ASC-E1.17\0\0\0"
 const DEFAULT_CID = [

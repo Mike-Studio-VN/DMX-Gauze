@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
-import { motion } from 'motion/react'
 import {
   ArrowDown,
   ArrowUp,
   Clock,
-  Edit3,
   LayoutGrid,
+  Pause,
   Play,
   Plus,
   SlidersHorizontal,
@@ -17,8 +16,9 @@ import {
   computeManualMotionProgress,
   computeManualWaveLayout,
   computeSharedManualWaveLevel,
+  resolveCueButtonBaselines,
 } from '@shared/convert'
-import type { CueButton, ModuleCfg, SpeedUnit } from '@shared/types'
+import type { CueButton, SpeedUnit } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 import { TimelineEditor } from './TimelineEditor'
 
@@ -267,369 +267,310 @@ function ManualStopButton({
   )
 }
 
-function ModeButtons() {
-  const { project, snapshot, selectedButtonId, selectButton, saveButton, deleteButton, sendCommand, notify } =
-    useAppStore()
-  const [editing, setEditing] = useState<CueButton | null>(null)
-  const [layerHeights, setLayerHeights] = useState<Record<string, string>>({})
-  const [lastFired, setLastFired] = useState<string | null>(null)
+export function ModeButtons(props: {
+  overrideState?: Partial<ReturnType<typeof useAppStore.getState>>
+}) {
+  const storeState = useAppStore()
+  const {
+    project,
+    snapshot,
+    selectedButtonId,
+    lastFiredButtonId,
+    lastFiredButtonBaselines,
+    selectedIds,
+    selectButton,
+    setLastFiredButton,
+    moveButtonToSlot,
+    saveButton,
+    deleteButton,
+    sendCommand,
+  } = props.overrideState ? { ...storeState, ...props.overrideState } : storeState
+  const [draggedButtonId, setDraggedButtonId] = useState<string | null>(null)
+  const [dragOverSlot, setDragOverSlot] = useState<number | null>(null)
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return
-      if (e.key === 'F2' && selectedButtonId && !editing) {
-        const found = project.buttons.find((b) => b.id === selectedButtonId)
-        if (found) {
-          e.preventDefault()
-          setLayerHeights({})
-          setEditing(found)
-        }
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [selectedButtonId, editing, project.buttons])
+  const buildCueBaselines = (b: CueButton, previous?: Record<string, ManualMotionBaseline> | null) =>
+    resolveCueButtonBaselines(b.steps, project.modules, snapshot, previous)
 
   const fire = async (b: CueButton) => {
     selectButton(b.id)
-    setLastFired(b.id)
+    const isResumingSameCue = lastFiredButtonId === b.id
+    const baselines = buildCueBaselines(b, isResumingSameCue ? lastFiredButtonBaselines : null)
+    setLastFiredButton(b.id, baselines)
     for (const s of b.steps) {
+      let speedVal = b.speedValue
+      if (b.speedUnit === 'sec' && isResumingSameCue) {
+        const base = baselines[s.moduleId]
+        const curPos = snapshot?.modules[s.moduleId]?.pos ?? base?.start
+        if (base && curPos !== undefined) {
+          const span = Math.abs(base.goal - base.start)
+          const left = Math.abs(base.goal - curPos)
+          if (span >= 0.005 && left > 0.008 && left < span - 0.005) {
+            speedVal = Math.max(0.1, Number((b.speedValue * (left / span)).toFixed(2)))
+          }
+        }
+      }
       const res = await sendCommand({
         type: 'move',
         ids: [s.moduleId],
         target: s.position,
-        speed: { unit: b.speedUnit, value: b.speedValue },
+        speed: { unit: b.speedUnit, value: speedVal },
       })
       if (!res.ok) break
     }
   }
 
-  const openNew = () => {
-    setLayerHeights({})
-    setEditing({
-      id: `cue-${Date.now()}`,
-      name: `Cảnh ${project.buttons.length + 1}`,
-      steps: project.modules.map((m) => ({
+  const pauseCue = async (b: CueButton) => {
+    const ids = b.steps.map((s) => s.moduleId)
+    if (ids.length > 0) await sendCommand({ type: 'stop', ids })
+  }
+
+  const totalSlots = Math.max(8, Math.ceil((Math.max(project.buttons.length, ...project.buttons.map((b, i) => (b.slotIndex ?? i) + 1)) + 1) / 4) * 4)
+  const slotMap = new Map<number, CueButton>()
+  const unslotted: CueButton[] = []
+  for (const b of project.buttons) {
+    if (b.slotIndex !== undefined && !slotMap.has(b.slotIndex)) {
+      slotMap.set(b.slotIndex, b)
+    } else {
+      unslotted.push(b)
+    }
+  }
+  for (const b of unslotted) {
+    let idx = 0
+    while (slotMap.has(idx)) idx += 1
+    slotMap.set(idx, b)
+  }
+
+  const createNewCue = () => {
+    const chosenMods =
+      selectedIds.length > 0 ? project.modules.filter((m) => selectedIds.includes(m.id)) : project.modules
+    const targetMods = chosenMods.length > 0 ? chosenMods : project.modules
+    let nextSlot = 0
+    while (slotMap.has(nextSlot)) nextSlot += 1
+    const btn: CueButton = {
+      id: `cue-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      name: `Cue ${project.buttons.length + 1}`,
+      steps: targetMods.map((m) => ({
         moduleId: m.id,
-        position: Number((snapshot?.modules[m.id]?.pos ?? 0).toFixed(2)),
+        position: Number((snapshot?.modules[m.id]?.pos ?? m.minHeight).toFixed(2)),
       })),
       speedUnit: 'sec',
       speedValue: 4,
-    })
-  }
-
-  const toggleModule = (m: ModuleCfg) => {
-    if (!editing) return
-    const exists = editing.steps.some((s) => s.moduleId === m.id)
-    const steps = exists
-      ? editing.steps.filter((s) => s.moduleId !== m.id)
-      : [
-          ...editing.steps,
-          { moduleId: m.id, position: Number((snapshot?.modules[m.id]?.pos ?? m.minHeight).toFixed(2)) },
-        ]
-    setEditing({ ...editing, steps })
-  }
-
-  const setModuleHeight = (m: ModuleCfg, rawPos: number) => {
-    if (!editing) return
-    const pos = clamp(rawPos, m.minHeight, m.maxHeight)
-    const exists = editing.steps.some((s) => s.moduleId === m.id)
-    const steps = exists
-      ? editing.steps.map((s) => (s.moduleId === m.id ? { ...s, position: pos } : s))
-      : [...editing.steps, { moduleId: m.id, position: pos }]
-    setEditing({ ...editing, steps })
-  }
-
-  const toggleLayerInButton = (layerId: string) => {
-    if (!editing) return
-    const mods = project.modules.filter((m) => m.layerId === layerId)
-    const modIds = new Set(mods.map((m) => m.id))
-    const allSelected = mods.length > 0 && mods.every((m) => editing.steps.some((s) => s.moduleId === m.id))
-    if (allSelected) {
-      setEditing({ ...editing, steps: editing.steps.filter((s) => !modIds.has(s.moduleId)) })
-      return
+      slotIndex: nextSlot,
+      loop: false,
     }
-    const nextSteps = [...editing.steps]
-    for (const m of mods) {
-      if (!nextSteps.some((s) => s.moduleId === m.id)) {
-        nextSteps.push({ moduleId: m.id, position: Number((snapshot?.modules[m.id]?.pos ?? m.minHeight).toFixed(2)) })
-      }
-    }
-    setEditing({ ...editing, steps: nextSteps })
-  }
-
-  const applyLayerHeight = (layerId: string, heightM: number) => {
-    if (!editing) return
-    const mods = project.modules.filter((m) => m.layerId === layerId)
-    const modMap = new Map(mods.map((m) => [m.id, m]))
-    const rest = editing.steps.filter((s) => !modMap.has(s.moduleId))
-    const added = mods.map((m) => ({
-      moduleId: m.id,
-      position: Number(clamp(heightM, m.minHeight, m.maxHeight).toFixed(2)),
-    }))
-    setEditing({ ...editing, steps: [...rest, ...added] })
-  }
-
-  if (editing) {
-    const stepMap = new Map(editing.steps.map((s) => [s.moduleId, s.position]))
-
-    return (
-      <div className="flex h-full flex-col gap-2 overflow-hidden text-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            value={editing.name}
-            onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-            placeholder="Tên nút điều khiển"
-            className="kiln-field h-8 min-w-36 flex-1 px-3 text-xs"
-          />
-          <select
-            value={editing.speedUnit}
-            onChange={(e) => setEditing({ ...editing, speedUnit: e.target.value as SpeedUnit })}
-            className="kiln-field h-8 px-2.5 text-xs"
-          >
-            <option value="sec">Theo giây (s)</option>
-            <option value="cms">Theo tốc độ (cm/s)</option>
-          </select>
-          <input
-            type="number"
-            min="0.5"
-            step="0.5"
-            value={editing.speedValue}
-            onChange={(e) => setEditing({ ...editing, speedValue: Math.max(0.1, Number(e.target.value) || 1) })}
-            className="kiln-field h-8 w-20 px-2.5 text-xs tabular-nums"
-          />
-          <button type="button" onClick={() => setEditing(null)} className="kiln-btn h-8 px-3 text-xs">
-            Huỷ
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (editing.steps.length === 0) {
-                notify('Chọn ít nhất 1 layer hoặc module cho nút này', 'warn')
-                return
-              }
-              saveButton(editing)
-              setEditing(null)
-            }}
-            className="kiln-btn kiln-btn-primary h-8 px-3.5 text-xs"
-          >
-            Lưu nút ({editing.steps.length})
-          </button>
-        </div>
-
-        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
-          <span>Chọn theo Layer (gán nhanh cả lớp) hoặc từng Module và đặt chiều cao (m)</span>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() =>
-                setEditing({
-                  ...editing,
-                  steps: project.modules.map((m) => ({
-                    moduleId: m.id,
-                    position: Number((stepMap.get(m.id) ?? snapshot?.modules[m.id]?.pos ?? 0).toFixed(2)),
-                  })),
-                })
-              }
-              className="kiln-btn kiln-btn-cue h-6 px-2.5 text-[11px]"
-            >
-              Chọn hết
-            </button>
-            <button
-              type="button"
-              onClick={() => setEditing({ ...editing, steps: [] })}
-              className="kiln-btn h-6 px-2.5 text-[11px]"
-            >
-              Bỏ chọn
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                setEditing({
-                  ...editing,
-                  steps: editing.steps.map((s) => ({
-                    ...s,
-                    position: Number((snapshot?.modules[s.moduleId]?.pos ?? s.position).toFixed(2)),
-                  })),
-                })
-              }
-              className="kiln-btn h-6 px-2.5 text-[11px] text-[#FFB26B]"
-            >
-              Lấy vị trí 3D hiện tại
-            </button>
-          </div>
-        </div>
-
-        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-          {project.layers.map((layer) => {
-            const mods = project.modules.filter((m) => m.layerId === layer.id)
-            const selectedCount = mods.filter((m) => stepMap.has(m.id)).length
-            const allChecked = mods.length > 0 && selectedCount === mods.length
-            const layerVal = layerHeights[layer.id] ?? '1'
-
-            return (
-              <div key={layer.id} className="kiln-layer space-y-2 p-2.5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label className="flex cursor-pointer items-center gap-2 font-semibold text-info">
-                    <input
-                      type="checkbox"
-                      checked={allChecked}
-                      onChange={() => toggleLayerInButton(layer.id)}
-                      className="accent-brand"
-                    />
-                    <span>{layer.name}</span>
-                    <span className="text-[11px] font-normal text-muted">
-                      ({selectedCount}/{mods.length})
-                    </span>
-                  </label>
-
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] text-[#C2B3A4]">Cả layer (m):</span>
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      value={layerVal}
-                      onChange={(e) => setLayerHeights({ ...layerHeights, [layer.id]: e.target.value })}
-                      className="kiln-field h-6 w-16 px-2 text-right text-xs tabular-nums"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => applyLayerHeight(layer.id, Number(layerVal) || 0)}
-                      className="kiln-btn kiln-btn-cue h-6 px-2.5 text-[11px]"
-                    >
-                      Áp dụng
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4">
-                  {mods.map((m) => {
-                    const checked = stepMap.has(m.id)
-                    const pos = stepMap.get(m.id) ?? 0
-                    return (
-                      <div
-                        key={m.id}
-                        className={`flex items-center justify-between gap-1.5 rounded-xl px-2 py-1 transition ${
-                          checked
-                            ? 'bg-black/30 shadow-[inset_0_0_0_1px_rgba(247,132,46,.45)]'
-                            : 'bg-black/15 opacity-60 shadow-[inset_0_0_0_1px_var(--line)]'
-                        }`}
-                      >
-                        <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleModule(m)}
-                            className="shrink-0 accent-brand"
-                          />
-                          <span className="truncate" title={`${m.name} (${m.minHeight}–${m.maxHeight}m)`}>
-                            {m.name}
-                          </span>
-                        </label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          min={m.minHeight}
-                          max={m.maxHeight}
-                          value={pos}
-                          onChange={(e) => setModuleHeight(m, Number(e.target.value) || 0)}
-                          className="kiln-field h-6 w-14 px-1.5 text-right text-xs tabular-nums"
-                        />
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-    )
+    saveButton(btn)
+    selectButton(btn.id)
   }
 
   return (
     <div className="flex h-full flex-col gap-2">
       <div className="flex items-center justify-between text-xs text-muted">
-        <span>Bấm nút để chạy · Ctrl+C / Ctrl+V sao chép · F2 sửa · Delete xoá</span>
-        <button type="button" onClick={openNew} className="kiln-btn kiln-btn-primary h-7 px-3 text-xs">
+        <span>Bấm thanh tiêu đề để xem &amp; sửa · Kéo thanh tiêu đề để đổi vị trí · Bấm phần thân để chạy Cue</span>
+        <button type="button" onClick={createNewCue} className="kiln-btn kiln-btn-primary h-7 px-3 text-xs">
           <Plus size={13} />
-          Tạo nút
+          Tạo Cue
         </button>
       </div>
 
-      {/* Thẻ nút theo cấu trúc Clip tách bar + body của Kiln */}
-      <div className="grid min-h-0 flex-1 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3 lg:grid-cols-4">
-        {project.buttons.map((b) => {
-          const active = lastFired === b.id || selectedButtonId === b.id
+      {/* Lưới 4 cột tỷ lệ 16:9 đúng layout Cue Pad: bấm bar xem/sửa, kéo bar đổi chỗ, bấm body chạy DMX */}
+      <div className="grid min-h-0 flex-1 auto-rows-max grid-cols-2 content-start gap-2.5 overflow-y-auto pr-1 sm:grid-cols-4">
+        {Array.from({ length: totalSlots }, (_, slotIdx) => {
+          const isDropTarget = dragOverSlot === slotIdx && draggedButtonId !== null
+          const slotDragProps = {
+            onDragOver: (e: React.DragEvent<HTMLDivElement>) => {
+              if (!draggedButtonId) return
+              e.preventDefault()
+              e.dataTransfer.dropEffect = 'move'
+              if (dragOverSlot !== slotIdx) setDragOverSlot(slotIdx)
+            },
+            onDragLeave: (e: React.DragEvent<HTMLDivElement>) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                setDragOverSlot((cur) => (cur === slotIdx ? null : cur))
+              }
+            },
+            onDrop: (e: React.DragEvent<HTMLDivElement>) => {
+              e.preventDefault()
+              const srcId = draggedButtonId || e.dataTransfer.getData('text/plain')
+              setDraggedButtonId(null)
+              setDragOverSlot(null)
+              if (srcId) moveButtonToSlot(srcId, slotIdx)
+            },
+          }
+
+          const b = slotMap.get(slotIdx)
+          if (!b) {
+            return (
+              <div
+                key={`empty-slot-${slotIdx}`}
+                {...slotDragProps}
+                className={`cue-pad-slot rounded-[12px] transition ${
+                  isDropTarget ? 'ring-2 ring-[#5a96ff] ring-offset-1 ring-offset-[#0a0706]' : ''
+                }`}
+              >
+                <div aria-hidden="true" className="cue-pad cue-pad-empty text-left">
+                  <div className="cue-pad-bar" />
+                  <div className="cue-pad-body" />
+                </div>
+              </div>
+            )
+          }
+
+          const isBarSelected = selectedButtonId === b.id
+          const isBodyActive = lastFiredButtonId === b.id
+          const isPrevSelected = isBodyActive && !isBarSelected
+          const isCueMoving = isBodyActive && b.steps.some((s) => snapshot?.modules[s.moduleId]?.moving)
+          const cueProgress = isBodyActive
+            ? computeManualMotionProgress(
+                Object.keys(lastFiredButtonBaselines ?? {}).length > 0
+                  ? lastFiredButtonBaselines
+                  : buildCueBaselines(b),
+                project.modules,
+                snapshot,
+              ).progress
+            : 0
+          const cueProgressPct = Math.round(clamp(cueProgress, 0, 1) * 100)
           const stepIds = new Set(b.steps.map((s) => s.moduleId))
+          const matchedLayers = project.layers.filter((l) => {
+            const mods = project.modules.filter((m) => m.layerId === l.id)
+            return mods.length > 0 && mods.some((m) => stepIds.has(m.id))
+          })
           const fullLayers = project.layers.filter((l) => {
             const mods = project.modules.filter((m) => m.layerId === l.id)
             return mods.length > 0 && mods.every((m) => stepIds.has(m.id))
           })
-          const summary =
+          const centerSummary =
             fullLayers.length === 1 && stepIds.size === project.modules.filter((m) => m.layerId === fullLayers[0].id).length
               ? fullLayers[0].name
-              : `${b.steps.length} màn`
+              : matchedLayers.length > 0
+                ? matchedLayers.map((l) => l.name).join(' + ')
+                : `${b.steps.length} modules`
+          const leftFooter = `${b.steps.length} MODULES`
+          const rightFooter = b.speedUnit === 'sec' ? `${b.speedValue}S` : `${b.speedValue} CM/S`
+          const barIconColor = isBarSelected
+            ? 'text-[#f3f7ff] hover:bg-white/15'
+            : isPrevSelected
+              ? 'text-[#dce9ff] hover:bg-white/15'
+              : 'text-white/75 hover:bg-white/10'
 
           return (
-            <motion.div
+            <div
               key={b.id}
-              whileTap={{ scale: 0.96 }}
-              onClick={() => selectButton(b.id)}
-              onDoubleClick={() => {
-                setLayerHeights({})
-                setEditing(b)
-              }}
-              className={`kiln-clip group flex flex-col ${active ? 'sel' : ''}`}
+              {...slotDragProps}
+              className={`cue-pad-slot rounded-[12px] transition ${
+                isDropTarget ? 'ring-2 ring-[#5a96ff] ring-offset-1 ring-offset-[#0a0706]' : ''
+              }`}
             >
-              <button
-                type="button"
-                onClick={() => fire(b)}
-                className="clip-bar flex h-[24px] w-full cursor-pointer items-center gap-1.5 px-2.5 text-left text-[11px] font-semibold"
+              <div
+                className={`cue-pad group${isBodyActive ? ' active' : ''}${isBarSelected ? ' bar-selected' : ''}${isPrevSelected ? ' cue-pad-prev' : ''}${
+                  draggedButtonId === b.id ? ' opacity-55' : ''
+                }`}
               >
-                <Play size={10} fill="currentColor" className="shrink-0" />
-                <span className="truncate">{b.name}</span>
-              </button>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  draggable
+                  onDragStart={(e) => {
+                    setDraggedButtonId(b.id)
+                    e.dataTransfer.effectAllowed = 'move'
+                    e.dataTransfer.setData('text/plain', b.id)
+                  }}
+                  onDragEnd={() => {
+                    setDraggedButtonId(null)
+                    setDragOverSlot(null)
+                  }}
+                  onClick={() => selectButton(b.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      selectButton(b.id)
+                    }
+                  }}
+                  title="Bấm để xem & chỉnh sửa nút Cue · Kéo thả sang ô khác để đổi vị trí"
+                  aria-label={`Xem và chỉnh sửa nút ${b.name}`}
+                  className="cue-pad-bar cursor-grab active:cursor-grabbing"
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (isCueMoving) void pauseCue(b)
+                        else void fire(b)
+                      }}
+                      title={isCueMoving ? 'Tạm dừng Cue' : 'Chạy Cue'}
+                      aria-label={isCueMoving ? `Tạm dừng ${b.name}` : `Phát ${b.name}`}
+                      className={`inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md transition ${barIconColor}`}
+                    >
+                      {isCueMoving ? (
+                        <Pause size={17} fill="currentColor" strokeWidth={2.2} />
+                      ) : (
+                        <Play size={17} fill="currentColor" strokeWidth={2} className="translate-x-[0.5px]" />
+                      )}
+                    </button>
+                    <span className="truncate font-sans">{b.name}</span>
+                  </div>
+                  <div className="flex shrink-0 items-center">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (lastFiredButtonId === b.id) setLastFiredButton(null)
+                        deleteButton(b.id)
+                      }}
+                      title="Xoá nút (Delete)"
+                      aria-label={`Xoá nút ${b.name}`}
+                      className={`cursor-pointer rounded p-1.5 opacity-0 transition group-hover:opacity-100 ${
+                        isBarSelected
+                          ? 'text-[#f3f7ff] hover:bg-white/15'
+                          : isPrevSelected
+                            ? 'text-[#dce9ff] hover:bg-white/15'
+                            : 'text-white/75 hover:bg-danger/30 hover:text-danger'
+                      }`}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
 
-              <div className="clip-body flex flex-1 items-center justify-between px-2.5 py-2">
                 <button
                   type="button"
-                  onClick={() => fire(b)}
-                  className="min-w-0 flex-1 cursor-pointer text-left text-[11px] text-[#C2B3A4]"
+                  onClick={() => void fire(b)}
+                  title="Bấm vào phần thân để chạy Cue và gửi lệnh DMX"
+                  aria-label={`Chạy nút ${b.name}`}
+                  className="cue-pad-body cursor-pointer text-left transition-transform active:scale-[0.985]"
                 >
-                  <div className="truncate">{summary}</div>
-                  <div className={`text-[10px] ${active ? 'text-[#FFB26B]' : 'text-muted'}`}>
-                    {b.speedValue} {b.speedUnit === 'sec' ? 'giây' : 'cm/s'}
+                  <div className="flex flex-1 items-center justify-center px-2 text-center">
+                    <span
+                      className={`truncate text-[10.5px] font-medium ${
+                        isBodyActive ? 'font-semibold text-[#c9dcfa]' : 'text-white/45'
+                      }`}
+                    >
+                      {centerSummary}
+                    </span>
+                  </div>
+                  <div
+                    role={isBodyActive ? 'progressbar' : undefined}
+                    aria-valuemin={isBodyActive ? 0 : undefined}
+                    aria-valuemax={isBodyActive ? 100 : undefined}
+                    aria-valuenow={isBodyActive ? cueProgressPct : undefined}
+                    data-cue-progress={isBodyActive ? cueProgressPct : undefined}
+                    className={`relative flex w-full items-center justify-between overflow-hidden px-2.5 py-1.5 text-[10px] font-semibold tracking-[0.1em] uppercase tabular-nums ${
+                      isBodyActive ? 'bg-[#091529]/85 text-[#eff5ff]' : 'bg-black/60 text-[#D7CFC7]'
+                    }`}
+                  >
+                    {isBodyActive && (
+                      <div
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-y-0 left-0 bg-gradient-to-r from-[#2860ba] to-[#448af4] transition-[width] duration-75 ease-out"
+                        style={{ width: `${cueProgressPct}%` }}
+                      />
+                    )}
+                    <span className="relative z-10 truncate">{leftFooter}</span>
+                    <span className="relative z-10 shrink-0 tracking-[0.08em]">{rightFooter}</span>
                   </div>
                 </button>
-                <div className="flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setLayerHeights({})
-                      setEditing(b)
-                    }}
-                    title="Sửa nút (F2)"
-                    className="cursor-pointer rounded-full p-1 text-muted hover:bg-white/10 hover:text-fg"
-                  >
-                    <Edit3 size={12} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      deleteButton(b.id)
-                    }}
-                    title="Xoá nút (Delete)"
-                    className="cursor-pointer rounded-full p-1 text-muted hover:bg-danger/20 hover:text-danger"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
               </div>
-            </motion.div>
+            </div>
           )
         })}
       </div>

@@ -1,6 +1,7 @@
 import dgram from 'node:dgram'
+import { ARTNET_PORT } from '@shared/dmx'
 import type { DriverEvents, OutputDriver } from '@shared/drivers'
-import { SACN_PORT, buildSacnPacket, sacnMulticastIp } from '@shared/protocols'
+import { KINET_PORT, SACN_PORT, buildSacnPacket, sacnMulticastIp } from '@shared/protocols'
 import type { OutputSettings } from '@shared/types'
 import { UdpSocketLifecycle } from './udpSocketLifecycle'
 
@@ -23,7 +24,9 @@ export class SacnDriver implements OutputDriver {
   }
 
   private targetPort(): number {
-    return this.cfg.port > 0 && this.cfg.port !== 6454 ? this.cfg.port : SACN_PORT
+    return this.cfg.port > 0 && this.cfg.port !== ARTNET_PORT && this.cfg.port !== KINET_PORT
+      ? this.cfg.port
+      : SACN_PORT
   }
 
   private targetIp(): string {

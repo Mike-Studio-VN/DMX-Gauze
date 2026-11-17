@@ -107,6 +107,39 @@ export function computeManualMotionProgress(
   }
 }
 
+/**
+ * Tạo (hoặc giữ nguyên khi resume sau khi pause) mốc start/goal cho thanh tiến trình Cue:
+ * nếu tiếp tục chính Cue đang dở và các module vẫn nằm trong hành trình cũ, giữ nguyên `start`
+ * để slider chạy tiếp từ % đang tạm dừng thay vì nhảy về 0%.
+ */
+export function resolveCueButtonBaselines(
+  steps: ReadonlyArray<{ moduleId: string; position: number }>,
+  modules: ModuleCfg[],
+  snapshot: Pick<Snapshot, 'modules'> | null,
+  previous?: Record<string, ManualMotionBaseline> | null,
+): Record<string, ManualMotionBaseline> {
+  const modById = new Map(modules.map((m) => [m.id, m]))
+  const out: Record<string, ManualMotionBaseline> = {}
+  for (const s of steps) {
+    const m = modById.get(s.moduleId)
+    if (!m) continue
+    const hi = Math.min(m.maxHeight, m.length)
+    const lo = Math.min(Math.max(m.minHeight, 0), hi)
+    const curPos = snapshot?.modules[m.id]?.pos ?? lo
+    const goal = clamp(s.position, lo, hi)
+    const prev = previous?.[m.id]
+    const sameGoal = prev !== undefined && Math.abs(prev.goal - goal) < 1e-4
+    const minBound = Math.min(prev?.start ?? curPos, goal)
+    const maxBound = Math.max(prev?.start ?? curPos, goal)
+    const inSpan = sameGoal && curPos >= minBound - 0.005 && curPos <= maxBound + 0.005
+    out[m.id] = {
+      start: inSpan && prev ? prev.start : curPos,
+      goal,
+    }
+  }
+  return out
+}
+
 export interface SharedWaveLevel {
   /** Tỉ lệ độ cao chung (1 = ở đỉnh minHeight, 0 = hạ hết maxHeight). */
   ratio: number

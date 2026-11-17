@@ -214,4 +214,28 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
       warnSpy.mockRestore();
     }
   });
+
+  it('migrates legacy saved project with Art-Net + port 5568 to 6454 and persists 40/50/60 fps', async () => {
+    const legacy = createDefaultProject();
+    legacy.settings.output.driver = 'artnet';
+    legacy.settings.output.port = 5568;
+    legacy.settings.timeline.fps = 25;
+
+    const autosavePath = path.join(electronState.userDataDir, 'project.json');
+    await fs.writeFile(autosavePath, JSON.stringify(legacy, null, 2), 'utf8');
+
+    const loadedLegacy = await loadSavedProject();
+    expect(loadedLegacy.project.settings.output.driver).toBe('artnet');
+    expect(loadedLegacy.project.settings.output.port).toBe(6454);
+    expect(loadedLegacy.project.settings.timeline.fps).toBe(25);
+    expect(JSON.parse(await fs.readFile(autosavePath, 'utf8')).settings.output.port).toBe(6454);
+
+    const hiFps = createDefaultProject();
+    hiFps.settings.timeline.fps = 60;
+    hiFps.settings.ltc.fps = 25;
+    await saveProjectToDisk(hiFps);
+    const loadedHi = await loadSavedProject();
+    expect(loadedHi.project.settings.timeline.fps).toBe(60);
+    expect(loadedHi.project.settings.ltc.fps).toBe(25);
+  });
 });

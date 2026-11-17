@@ -137,6 +137,7 @@ vi.mock('lucide-react', () => {
     Clock: icon('Clock'),
     Layers: icon('Layers'),
     Link2: icon('Link2'),
+    Magnet: icon('Magnet'),
     Pause: icon('Pause'),
     Play: icon('Play'),
     Plus: icon('Plus'),
@@ -393,5 +394,88 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     // Clean unmount/cleanup verification.
     hookRuntime.reset();
     expect(trackStopSpy).toHaveBeenCalled();
+  });
+
+  it('keeps standard LTC rate (25fps) and warns on mismatch when timeline is 60fps', async () => {
+    const project = createDefaultProject();
+    project.settings.timeline.fps = 60;
+    project.settings.ltc.fps = 25;
+    project.settings.ltc.freewheelFrames = 10;
+    project.settings.ltc.offsetFrames = 0;
+
+    const notifySpy = vi.fn();
+    useAppStore.setState({
+      project,
+      selectedIds: [project.modules[0].id],
+      snapshot: null,
+      notify: notifySpy,
+      sendCommand: vi.fn(async () => ({ ok: true })),
+    });
+
+    let capturedProc: { onaudioprocess?: (ev: { inputBuffer: { numberOfChannels: number; getChannelData: (ch: number) => Float32Array } }) => void } | null = null;
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        getUserMedia: vi.fn(async () => ({
+          getTracks: () => [{ stop: vi.fn() }],
+        })),
+      },
+    });
+    vi.stubGlobal(
+      'AudioContext',
+      class FakeAudioContext {
+        sampleRate = 48000;
+        destination = {};
+        createMediaStreamSource() {
+          return { connect: vi.fn() };
+        }
+        createScriptProcessor() {
+          capturedProc = {};
+          return {
+            connect: vi.fn(),
+            set onaudioprocess(
+              fn: (ev: { inputBuffer: { numberOfChannels: number; getChannelData: (ch: number) => Float32Array } }) => void,
+            ) {
+              capturedProc!.onaudioprocess = fn;
+            },
+          };
+        }
+        close = vi.fn(async () => {});
+      },
+    );
+
+    hookRuntime.component = () => TimelineEditor({}) as unknown as VNode;
+    const tree1 = hookRuntime.render();
+    expect(extractText(tree1)).toContain('LTC 25fps');
+
+    const ltcBtn = collectNodes(tree1).find(
+      (n) => n.type === 'button' && String(n.props.title ?? '').includes('LTC'),
+    );
+    expect(ltcBtn).toBeDefined();
+    (ltcBtn!.props.onClick as () => void)();
+    expect(notifySpy).toHaveBeenCalledWith(expect.stringContaining('60 fps'), 'warn');
+
+    await vi.waitFor(() => expect(capturedProc?.onaudioprocess).toBeTypeOf('function'));
+
+    // Feed 25fps LTC frames at 00:00:02:10 (2.40s) -> 60fps timeline output must show 00:00:02:24 (not 00:00:02:10!).
+    let phase = 1;
+    for (const frameNum of [8, 9, 10]) {
+      vi.advanceTimersByTime(40);
+      const enc = encodeSmpteBiphaseFrame(0, 0, 2, frameNum, 48000, 25, phase);
+      phase = enc.endPhase;
+      const buf =
+        frameNum === 10
+          ? Float32Array.from([...enc.samples, ...new Float32Array(24).fill(-phase * 0.8)])
+          : enc.samples;
+      capturedProc!.onaudioprocess!({
+        inputBuffer: {
+          numberOfChannels: 1,
+          getChannelData: () => buf,
+        },
+      });
+    }
+
+    const out = collectNodes(hookRuntime.lastTree).find((n) => n.type === 'output');
+    expect(extractText(out)).toBe('00:00:02:24');
+    hookRuntime.reset();
   });
 });

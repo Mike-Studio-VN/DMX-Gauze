@@ -49,7 +49,16 @@ export async function loadSavedProject(): Promise<ProjectFileResult> {
   currentFilePath = null
   try {
     const raw = await readFile(defaultFilePath(), 'utf8')
-    return { project: parseProjectJson(raw), filePath: null }
+    const project = parseProjectJson(raw)
+    try {
+      const parsed = JSON.parse(raw) as { settings?: { output?: { port?: unknown } } }
+      if (parsed?.settings?.output?.port !== project.settings.output.port) {
+        await syncAutosaveCache(serializeProject(project))
+      }
+    } catch {
+      /* ignore */
+    }
+    return { project, filePath: null }
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
       console.warn('[projectStore] File dự án tự động lưu bị hỏng hoặc thiếu cấu trúc, khôi phục preset mặc định:', err)

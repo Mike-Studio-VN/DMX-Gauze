@@ -3,6 +3,7 @@ import { autoAssign, layerLoopAddress, nextFree, orderedModules, validateAddress
 import type { AppInfo, SnapshotDto } from '@shared/api'
 import { clamp } from '@shared/convert'
 import { DEFAULT_SPEED, H2_MAX_SPEED_CMS, isValidStartAddress, rangesOverlap } from '@shared/dmx'
+import { resolveOutputSettingsPatch } from '@shared/protocols'
 import {
   type CurvePresetId,
   LAYER_MOTION_PRESETS,
@@ -24,6 +25,7 @@ import type {
   Command,
   CommandResult,
   CueButton,
+  Fps,
   Layer,
   LtcSettings,
   ModuleCfg,
@@ -132,6 +134,8 @@ interface AppState {
   selectedIds: string[]
   selectedLayerId: string | null
   selectedButtonId: string | null
+  lastFiredButtonId: string | null
+  lastFiredButtonBaselines: Record<string, { start: number; goal: number }>
   selectedClipId: string | null
   selectedClipIds: string[]
   selectedKeyId: string | null
@@ -176,6 +180,8 @@ interface AppState {
   selectAll: () => void
   deselectAll: () => void
   selectButton: (id: string | null) => void
+  setLastFiredButton: (id: string | null, baselines?: Record<string, { start: number; goal: number }>) => void
+  moveButtonToSlot: (buttonId: string, targetSlot: number) => void
   selectTimelineClip: (clipId: string | null, keyId?: string | null) => void
   selectTimelineClips: (clipIds: string[], opts?: { additive?: boolean }) => void
   selectTimelineKey: (keyId: string | null) => void
@@ -219,7 +225,7 @@ interface AppState {
   updateTimelineSettings: (patch: Partial<Project['settings']['timeline']>) => void
   setLockValue: (v: number) => void
 
-  saveButton: (btn: CueButton) => void
+  saveButton: (btn: CueButton, coalesceKey?: string) => void
   deleteButton: (id: string) => void
 
   addClip: (clip: TimelineClip) => void
@@ -236,6 +242,7 @@ interface AppState {
     origStarts: ReadonlyMap<string, number>,
     rawDeltaSec: number,
     coalesceKey?: string,
+    snapFps?: Fps,
   ) => number | null
   deleteTimelineLayerClips: (layerId: string) => void
   setPlayheadTime: (time: number) => void
@@ -363,6 +370,8 @@ export const useAppStore = create<AppState>((set, get) => {
     selectedIds: ['m-front-1'],
     selectedLayerId: null,
     selectedButtonId: null,
+    lastFiredButtonId: null,
+    lastFiredButtonBaselines: {},
     selectedClipId: null,
     selectedClipIds: [],
     selectedKeyId: null,
@@ -382,7 +391,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
     setPlayheadTime(time) {
       if (!Number.isFinite(time)) return
-      const next = Math.max(0, Number(time.toFixed(2)))
+      const next = Math.max(0, Number(time.toFixed(4)))
       if (get().playheadTime !== next) set({ playheadTime: next })
     },
 
@@ -477,10 +486,12 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     setActiveTab: (activeTab) =>
-      set({
+      set((s) => ({
         activeTab,
         focusScope: activeTab === 'buttons' ? 'buttons' : activeTab === 'timeline' ? 'timeline' : 'tree',
-      }),
+        selectedButtonId:
+          activeTab === 'buttons' ? (s.selectedButtonId ?? s.project.buttons[0]?.id ?? null) : s.selectedButtonId,
+      })),
     setFocusScope: (focusScope) => set({ focusScope }),
     setSettingsOpen: (settingsOpen, tab) =>
       set((s) => ({
@@ -730,6 +741,8 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     selectButton: (selectedButtonId) => set({ selectedButtonId, focusScope: 'buttons' }),
+    setLastFiredButton: (lastFiredButtonId, lastFiredButtonBaselines = {}) =>
+      set({ lastFiredButtonId, lastFiredButtonBaselines }),
 
     selectTimelineClip(selectedClipId, keyId) {
       const clip = selectedClipId ? (get().project.clips ?? []).find((c) => c.id === selectedClipId) : null
@@ -1151,15 +1164,22 @@ export const useAppStore = create<AppState>((set, get) => {
       const { project } = get()
       applyProject({
         ...project,
-        settings: { ...project.settings, output: { ...project.settings.output, ...patch } },
+        settings: {
+          ...project.settings,
+          output: resolveOutputSettingsPatch(project.settings.output, patch),
+        },
       })
     },
 
     updateLtcSettings(patch) {
       const { project } = get()
+      const nextLtc: LtcSettings = { ...project.settings.ltc, ...patch }
+      if ('fps' in patch && patch.fps === undefined) {
+        delete nextLtc.fps
+      }
       applyProject({
         ...project,
-        settings: { ...project.settings, ltc: { ...project.settings.ltc, ...patch } },
+        settings: { ...project.settings, ltc: nextLtc },
       })
     },
 
@@ -1176,19 +1196,57 @@ export const useAppStore = create<AppState>((set, get) => {
       applyProject({ ...project, settings: { ...project.settings, lockValue } })
     },
 
-    saveButton(btn) {
+    saveButton(btn, coalesceKey) {
       const { project } = get()
       const exists = project.buttons.some((b) => b.id === btn.id)
       const buttons = exists ? project.buttons.map((b) => (b.id === btn.id ? btn : b)) : [...project.buttons, btn]
-      applyProject({ ...project, buttons }, { extra: { selectedButtonId: btn.id } })
+      applyProject({ ...project, buttons }, { coalesceKey, extra: { selectedButtonId: btn.id, focusScope: 'buttons' } })
     },
 
     deleteButton(id) {
-      const { project, selectedButtonId } = get()
+      const { project, selectedButtonId, lastFiredButtonId, lastFiredButtonBaselines } = get()
       applyProject(
         { ...project, buttons: project.buttons.filter((b) => b.id !== id) },
-        { extra: { selectedButtonId: selectedButtonId === id ? null : selectedButtonId } },
+        {
+          extra: {
+            selectedButtonId: selectedButtonId === id ? null : selectedButtonId,
+            lastFiredButtonId: lastFiredButtonId === id ? null : lastFiredButtonId,
+            lastFiredButtonBaselines: lastFiredButtonId === id ? {} : lastFiredButtonBaselines,
+          },
+        },
       )
+    },
+
+    moveButtonToSlot(buttonId, targetSlot) {
+      if (!Number.isInteger(targetSlot) || targetSlot < 0) return
+      const { project } = get()
+      const slotMap = new Map<number, string>()
+      const effSlot = new Map<string, number>()
+      const unslotted: string[] = []
+      for (const b of project.buttons) {
+        if (b.slotIndex !== undefined && b.slotIndex >= 0 && !slotMap.has(b.slotIndex)) {
+          slotMap.set(b.slotIndex, b.id)
+          effSlot.set(b.id, b.slotIndex)
+        } else {
+          unslotted.push(b.id)
+        }
+      }
+      for (const id of unslotted) {
+        let idx = 0
+        while (slotMap.has(idx)) idx += 1
+        slotMap.set(idx, id)
+        effSlot.set(id, idx)
+      }
+      const sourceSlot = effSlot.get(buttonId)
+      if (sourceSlot === undefined || sourceSlot === targetSlot) return
+      const occupantId = slotMap.get(targetSlot)
+      const nextButtons = project.buttons.map((b) => {
+        const cur = effSlot.get(b.id) ?? 0
+        if (b.id === buttonId) return { ...b, slotIndex: targetSlot }
+        if (occupantId && b.id === occupantId) return { ...b, slotIndex: sourceSlot }
+        return b.slotIndex === cur ? b : { ...b, slotIndex: cur }
+      })
+      applyProject({ ...project, buttons: nextButtons })
     },
 
     addClip(clip) {
@@ -1297,9 +1355,9 @@ export const useAppStore = create<AppState>((set, get) => {
       return true
     },
 
-    moveSelectedClipsByDelta(origStarts, rawDeltaSec, coalesceKey) {
+    moveSelectedClipsByDelta(origStarts, rawDeltaSec, coalesceKey, snapFps) {
       const { project, selectedClipIds } = get()
-      const res = buildMultiClipShiftPatch(project.clips ?? [], selectedClipIds, rawDeltaSec, origStarts)
+      const res = buildMultiClipShiftPatch(project.clips ?? [], selectedClipIds, rawDeltaSec, origStarts, snapFps)
       if (!res) return null
       applyProject({ ...project, clips: res.clips }, { coalesceKey })
       return res.delta

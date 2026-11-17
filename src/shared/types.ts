@@ -1,5 +1,6 @@
 export type DriverId = 'artnet' | 'sacn' | 'kinet' | 'enttec-pro' | 'enttec-mk2' | 'serial' | 'mock'
-export type Fps = 24 | 25 | 29.97 | 30
+export type LtcFps = 24 | 25 | 29.97 | 30
+export type Fps = LtcFps | 40 | 50 | 60
 
 export interface Transform3D {
   position: [number, number, number]
@@ -78,6 +79,10 @@ export interface CueButton {
   steps: CueStep[]
   speedUnit: SpeedUnit
   speedValue: number
+  /** Vị trí ô (0-based) trong lưới Cue Custom. */
+  slotIndex?: number
+  /** Hiển thị / đánh dấu lặp (LOOP) trên nút cue. */
+  loop?: boolean
 }
 
 export interface TimelineKey {
@@ -113,6 +118,8 @@ export interface LtcSettings {
   channel: 'left' | 'right'
   freewheelFrames: number
   offsetFrames: number
+  /** Tốc độ khung hình riêng của LTC In/Out (chuẩn SMPTE chỉ 24/25/29.97/30). */
+  fps?: LtcFps
 }
 
 export interface Settings {

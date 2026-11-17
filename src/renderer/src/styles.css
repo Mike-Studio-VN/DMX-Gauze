@@ -728,6 +728,91 @@ input[type='number']::-webkit-outer-spin-button {
   }
 }
 
+/* Ô ngoài giữ đúng khung tỷ lệ 16:9 trong CSS Grid để không bao giờ bị đè hàng */
+.cue-pad-slot {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+}
+
+/* Thẻ Cue Pad trong tab Custom (4 cột, tỷ lệ 16:9, đầu sáng + thân tối + dải đáy) */
+.cue-pad {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  background: #0a0908;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  transition:
+    border-color 140ms ease,
+    transform 120ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 160ms ease;
+}
+.cue-pad:hover {
+  border-color: rgba(255, 255, 255, 0.26);
+}
+.cue-pad.active {
+  border: 1.5px solid #5a96ff;
+  box-shadow:
+    0 0 0 1px rgba(90, 150, 255, 0.34),
+    0 12px 24px -16px rgba(45, 115, 235, 0.55);
+}
+.cue-pad-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 48px;
+  padding: 0 12px;
+  background: #272a34;
+  color: #dfe3ec;
+  font-family: 'Inter Variable', Inter, sans-serif;
+  font-size: 14.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+.cue-pad.bar-selected .cue-pad-bar,
+.cue-pad.active:not(.cue-pad-prev) .cue-pad-bar {
+  background: #448af4;
+  color: #f3f7ff;
+}
+.cue-pad.active.cue-pad-prev .cue-pad-bar {
+  background: #285499;
+  color: #dce9ff;
+}
+.cue-pad-empty .cue-pad-bar {
+  background: #20222a;
+}
+.cue-pad-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: radial-gradient(circle at 50% 42%, rgba(255, 200, 150, 0.06), transparent 65%), #0a0908;
+  transition: background 140ms ease;
+}
+.cue-pad.active .cue-pad-body {
+  background: linear-gradient(180deg, #162944 0%, #0f1d33 100%);
+}
+.cue-pad-empty .cue-pad-body {
+  background: #0a0908;
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;

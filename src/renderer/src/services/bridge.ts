@@ -85,14 +85,19 @@ export function createWebBridge(): GauzeBridge {
 
   return {
     async getAppInfo(): Promise<AppInfo> {
-      return { version: '1.0.0', platform: 'web', runtime: 'web' }
+      return { version: '1.0.1', platform: 'web', runtime: 'web' }
     },
     async loadProject(): Promise<ProjectFileResult> {
       try {
         const raw = localStorage.getItem(STORAGE_KEY)
         if (raw) {
           const parsed: unknown = JSON.parse(raw)
-          return { project: normalizeProject(parsed), filePath: webFileName }
+          const project = normalizeProject(parsed)
+          const rawPort = (parsed as { settings?: { output?: { port?: unknown } } })?.settings?.output?.port
+          if (rawPort !== project.settings.output.port) {
+            persistLocal(JSON.stringify(project))
+          }
+          return { project, filePath: webFileName }
         }
       } catch {
         /* ignore */
