@@ -1,4 +1,5 @@
-import type { ClipKeyframe, Command, ModuleCfg, TimelineClip, TimelineKey } from './types'
+import { parseTc } from './timecode'
+import type { ClipKeyframe, Command, Fps, ModuleCfg, TimelineClip, TimelineKey } from './types'
 
 const MIN_DURATION = 0.05
 
@@ -503,4 +504,17 @@ export function evaluateModuleTimelineHeight(
     }
   }
   return Math.max(minH, Math.min(maxH, modKeys[modKeys.length - 1].targets[mod.id]))
+}
+
+/** Phân tích chuỗi người dùng nhập khi double-click nhãn playhead (số giây như "3.5", "3,5", "12s" hoặc timecode "hh:mm:ss:ff"). */
+export function parseTimelineSecondsInput(raw: string, fps: Fps): number | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  if (trimmed.includes(':') || trimmed.includes(';')) {
+    return parseTc(trimmed, fps)
+  }
+  const normalized = trimmed.replace(/s$/i, '').trim().replace(',', '.')
+  if (!/^-?\d+(\.\d+)?$/.test(normalized)) return null
+  const num = Number(normalized)
+  return Number.isFinite(num) ? num : null
 }

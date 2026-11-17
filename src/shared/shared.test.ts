@@ -380,6 +380,13 @@ describe('ltc decoder', () => {
       { id: 'tk2', time: 5, label: 'End', targets: { m1: 2 } },
     ]
     expect(evaluateModuleTimelineHeight([], legacyKeys, mod, 3)).toBeCloseTo(1, 3)
+
+    const { parseTimelineSecondsInput } = await import('./timeline')
+    expect(parseTimelineSecondsInput('3.09', 25)).toBeCloseTo(3.09, 3)
+    expect(parseTimelineSecondsInput('3,5s', 25)).toBeCloseTo(3.5, 3)
+    expect(parseTimelineSecondsInput('12', 25)).toBe(12)
+    expect(parseTimelineSecondsInput('00:00:05:00', 25)).toBeCloseTo(5, 3)
+    expect(parseTimelineSecondsInput('abc', 25)).toBeNull()
   })
 })
 

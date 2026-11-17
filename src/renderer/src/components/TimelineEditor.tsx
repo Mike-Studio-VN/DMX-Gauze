@@ -29,6 +29,7 @@ import {
   buildCurveKeyframes,
   evaluateModuleTimelineHeight,
   heightToPercent,
+  parseTimelineSecondsInput,
   resolveClipBoundsNoOverlap,
   resolveClipStartNoOverlap,
 } from '@shared/timeline'
@@ -176,10 +177,13 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   const [ltcStatus, setLtcStatus] = useState<'off' | 'lock' | 'freewheel' | 'lost'>('off')
   const [tcInput, setTcInput] = useState(formatTc(project.settings.timeline.startTime, fps))
   const [pxPerSec, setPxPerSec] = useState(64)
+  const [editingHead, setEditingHead] = useState(false)
+  const [headInput, setHeadInput] = useState('')
   const [collapsedLayers, setCollapsedLayers] = useState<Record<string, boolean>>({})
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null)
 
   const runnerRef = useRef(new TimelineRunner())
+  const rulerRef = useRef<HTMLDivElement>(null)
   const timeRef = useRef(time)
   timeRef.current = time
   const clipsRef = useRef(clips)
@@ -312,17 +316,51 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     }
   }
 
+  const commitHeadInput = () => {
+    const parsed = parseTimelineSecondsInput(headInput, fps)
+    if (parsed !== null) {
+      const clampedT = clamp(Number(parsed.toFixed(2)), 0, maxTime)
+      seekTo(clampedT, true)
+      previewTimelineAt(clampedT)
+    }
+    setEditingHead(false)
+  }
+
+  const scrubRulerFromClientX = (clientX: number, rectLeft: number) => {
+    const t = Number(((clientX - rectLeft) / pxPerSec).toFixed(2))
+    const latestT = clamp(t, 0, maxTime)
+    seekTo(latestT, true)
+    return latestT
+  }
+
+  const startHeadOrScrub = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation()
+    if (editingHead) return
+    const startX = e.clientX
+    let moved = false
+    let latestT = timeRef.current
+    const onMove = (ev: PointerEvent) => {
+      if (!moved && Math.abs(ev.clientX - startX) < 3) return
+      moved = true
+      const rect = rulerRef.current?.getBoundingClientRect()
+      if (!rect) return
+      latestT = scrubRulerFromClientX(ev.clientX, rect.left)
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      if (moved) previewTimelineAt(latestT)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
   const startRulerScrub = (e: React.PointerEvent<HTMLDivElement>) => {
     const el = e.currentTarget
-    let latestT = timeRef.current
-    const updateFromClientX = (clientX: number) => {
-      const rect = el.getBoundingClientRect()
-      const t = Number(((clientX - rect.left) / pxPerSec).toFixed(2))
-      latestT = clamp(t, 0, maxTime)
-      seekTo(latestT, true)
+    let latestT = scrubRulerFromClientX(e.clientX, el.getBoundingClientRect().left)
+    const onMove = (ev: PointerEvent) => {
+      latestT = scrubRulerFromClientX(ev.clientX, el.getBoundingClientRect().left)
     }
-    updateFromClientX(e.clientX)
-    const onMove = (ev: PointerEvent) => updateFromClientX(ev.clientX)
     const onUp = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
@@ -767,12 +805,55 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
               <span className="text-[9px] opacity-75">Wave</span>
             </div>
             <div
+              ref={rulerRef}
               onPointerDown={startRulerScrub}
               style={{ width: timelineWidth }}
               className="relative h-6 cursor-ew-resize select-none"
             >
-              <div className="timeline-ruler-marker" style={{ left: time * pxPerSec }}>
-                {time.toFixed(2)}s
+              <div
+                role={editingHead ? undefined : 'button'}
+                tabIndex={editingHead ? undefined : 0}
+                aria-label={editingHead ? undefined : `Thời gian playhead ${time.toFixed(2)}s, double-click để nhập số`}
+                onPointerDown={startHeadOrScrub}
+                onDoubleClick={(e) => {
+                  e.stopPropagation()
+                  setHeadInput(time.toFixed(2))
+                  setEditingHead(true)
+                }}
+                onKeyDown={(e) => {
+                  if (!editingHead && (e.key === 'Enter' || e.key === 'F2')) {
+                    e.preventDefault()
+                    setHeadInput(time.toFixed(2))
+                    setEditingHead(true)
+                  }
+                }}
+                title="Kéo để tua · Double-click để nhập số giây"
+                className={`timeline-ruler-marker ${editingHead ? 'editing' : ''}`}
+                style={{ left: editingHead ? Math.max(28, time * pxPerSec) : time * pxPerSec }}
+              >
+                {editingHead ? (
+                  <input
+                    autoFocus
+                    aria-label="Nhập thời gian playhead (s)"
+                    value={headInput}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onChange={(e) => setHeadInput(e.target.value)}
+                    onBlur={commitHeadInput}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        commitHeadInput()
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault()
+                        setEditingHead(false)
+                      }
+                    }}
+                    className="w-12 bg-transparent text-center text-[10px] font-semibold text-[#172438] tabular-nums outline-none"
+                  />
+                ) : (
+                  `${time.toFixed(2)}s`
+                )}
               </div>
               {ticks.map((sec) => (
                 <div
