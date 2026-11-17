@@ -87,6 +87,17 @@ body {
   outline-offset: 2px;
 }
 
+/* Ẩn nút mũi tên tăng/giảm mặc định của input[type="number"] */
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 /* Kiln Panel (flat dark glass, no background glow) */
 .kiln-panel:not(.absolute):not(.fixed) {
   position: relative;
