@@ -27,6 +27,7 @@ interface ManualRunState {
   dir: 'up' | 'down'
   phase: ManualBtnPhase
   startedAt: number
+  completedAt?: number
   baselines: Record<string, ManualMotionBaseline>
   progress: number
   etaSec: number
@@ -51,7 +52,7 @@ function ManualProgressButton({
 }) {
   const Icon = dir === 'up' ? ArrowUp : ArrowDown
   const pct = Math.round(clamp(progress, 0, 1) * 100)
-  const etaText = etaSec > 0.2 ? `${Math.ceil(etaSec)}s` : '...'
+  const etaText = pct >= 100 ? '0s' : `${Math.max(1, Math.ceil(etaSec))}s`
 
   return (
     <div className="manual-vslot">
@@ -542,17 +543,24 @@ function ModeManual() {
     const elapsed = performance.now() - runState.startedAt
 
     if (res.reached) {
-      const resetDelay = Math.max(180, 220 - elapsed)
-      const tShow = window.setTimeout(() => {
-        setRunState((cur) => (cur?.phase === 'run' && cur.dir === runState.dir ? { ...cur, progress: 1, etaSec: 0 } : cur))
-      }, 0)
+      const now = performance.now()
+      const completedAt = runState.completedAt ?? now
+      if (!runState.completedAt || runState.progress < 1) {
+        const tFill = window.setTimeout(() => {
+          setRunState((cur) =>
+            cur?.phase === 'run' && cur.dir === runState.dir
+              ? { ...cur, progress: 1, etaSec: 0, completedAt: cur.completedAt ?? now }
+              : cur,
+          )
+        }, 0)
+        return () => window.clearTimeout(tFill)
+      }
+      const minShownMs = Math.max(0, 260 - elapsed)
+      const holdFullMs = Math.max(0, 420 - (now - completedAt))
       const tEnd = window.setTimeout(() => {
         setRunState((cur) => (cur?.phase === 'run' && cur.dir === runState.dir ? null : cur))
-      }, resetDelay)
-      return () => {
-        window.clearTimeout(tShow)
-        window.clearTimeout(tEnd)
-      }
+      }, Math.max(minShownMs, holdFullMs))
+      return () => window.clearTimeout(tEnd)
     }
 
     if (elapsed >= 260 && (!res.anyMoving || snapshot?.locked)) {

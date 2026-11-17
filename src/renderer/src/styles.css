@@ -438,37 +438,13 @@ input[type='number']::-webkit-outer-spin-button {
   border-radius: 8px;
   margin-left: 5px;
 }
-.timeline-options {
-  position: relative;
-}
-.timeline-options summary {
-  list-style: none;
-}
-.timeline-options summary::-webkit-details-marker {
-  display: none;
-}
-.timeline-options-panel {
-  position: absolute;
-  top: calc(100% + 10px);
-  right: 0;
-  z-index: 50;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 14px;
-  width: 190px;
-  background: var(--s2);
-  border: 1px solid var(--line2);
-  border-radius: 12px;
-  box-shadow: 0 8px 24px #0008;
-}
 .timeline-module-stripe {
   position: absolute;
-  left: 0;
+  left: 4px;
   top: 8px;
   bottom: 8px;
-  width: 7px;
-  border-radius: 3px;
+  width: 4px;
+  border-radius: 999px;
 }
 .timeline-tracks {
   isolation: isolate;

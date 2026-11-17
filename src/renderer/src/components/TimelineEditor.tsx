@@ -11,7 +11,6 @@ import {
   Play,
   Plus,
   Settings,
-  Settings2,
   SkipBack,
   SkipForward,
   WifiOff,
@@ -21,7 +20,7 @@ import {
 import { clamp } from '@shared/convert'
 import { addressRange } from '@shared/dmx'
 import { LtcDecoder } from '@shared/ltc'
-import { FPS_OPTIONS, formatTc, parseTc, tcToSeconds } from '@shared/timecode'
+import { FPS_OPTIONS, formatTc, tcToSeconds } from '@shared/timecode'
 import {
   TimelineRunner,
   analyzeClipSpeeds,
@@ -117,7 +116,6 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   const [playing, setPlaying] = useState(false)
   const [ltcActive, setLtcActive] = useState(false)
   const [ltcStatus, setLtcStatus] = useState<'off' | 'lock' | 'freewheel' | 'lost'>('off')
-  const [tcInput, setTcInput] = useState(formatTc(project.settings.timeline.startTime, fps))
   const [pxPerSec, setPxPerSec] = useState(64)
   const [editingHead, setEditingHead] = useState(false)
   const [headInput, setHeadInput] = useState('')
@@ -141,10 +139,6 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
 
   const allIssues = useMemo(() => analyzeTimeline(clips, project.modules), [clips, project.modules])
   const unfeasibleIssues = useMemo(() => allIssues.filter((i) => !i.feasible), [allIssues])
-
-  useEffect(() => {
-    setTcInput(formatTc(project.settings.timeline.startTime, fps))
-  }, [project.settings.timeline.startTime, fps])
 
   useEffect(() => {
     if (!playing || ltcActive) return
@@ -224,17 +218,6 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       void ctx?.close()
     }
   }, [ltcActive, fps, project.settings.ltc, sendCommand, notify])
-
-  const applyStartTc = () => {
-    const sec = parseTc(tcInput, fps)
-    if (sec === null) {
-      notify('Timecode không hợp lệ (định dạng hh:mm:ss:ff)', 'warn')
-      return
-    }
-    updateTimelineSettings({ startTime: sec })
-    runnerRef.current.reset()
-    setTime(sec)
-  }
 
   const previewTimelineAt = (t: number) => {
     if (snapshot?.locked) return
@@ -691,24 +674,6 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
             <ZoomIn size={13} />
           </button>
 
-          <details className="timeline-options">
-            <summary className="timeline-icon" title="Tuỳ chọn timecode bắt đầu" aria-label="Tuỳ chọn timecode bắt đầu">
-              <Settings2 size={13} />
-            </summary>
-            <div className="timeline-options-panel">
-              <label className="flex flex-col gap-1.5 text-muted">
-                Timecode bắt đầu
-                <input
-                  value={tcInput}
-                  onChange={(e) => setTcInput(e.target.value)}
-                  onBlur={applyStartTc}
-                  onKeyDown={(e) => e.key === 'Enter' && applyStartTc()}
-                  className="kiln-field h-8 w-36 px-2 font-mono text-xs"
-                />
-              </label>
-            </div>
-          </details>
-
           <select
             aria-label="Tốc độ khung hình"
             value={fps}
@@ -726,11 +691,12 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
             <button
               type="button"
               onClick={addKeyframeToSelected}
-              title="Thêm keyframe tại Playhead"
-              aria-label="Thêm keyframe tại Playhead"
-              className="timeline-icon text-info"
+              title="Thêm Point tại Playhead"
+              aria-label="Thêm Point tại Playhead"
+              className="kiln-btn kiln-btn-cue h-7 px-2.5 text-[11px]"
             >
-              <Plus size={14} />
+              <Plus size={12} />
+              Point
             </button>
           )}
         </div>
@@ -1007,60 +973,62 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
 
                     return (
                       <div key={mod.id} className="flex border-b border-white/[0.06]">
-                        {/* Nhãn Module bên trái */}
-                        <div
-                          onClick={(e) => selectModule(mod.id, { multi: e.metaKey || e.ctrlKey, range: e.shiftKey })}
-                          title={`Chọn ${mod.name} (Ctrl/Shift để chọn nhiều)`}
-                          className={`timeline-module sticky left-0 z-20 flex h-14 w-[168px] shrink-0 cursor-pointer items-center justify-between gap-1.5 border-r border-line pr-2 pl-4 transition ${
-                            isModSelected
-                              ? 'bg-[#2B1A0E] shadow-[inset_2px_0_0_#F7842E,inset_0_0_0_1px_rgba(247,132,46,0.38)]'
-                              : 'bg-[#16100C] hover:bg-[#1D1510]'
-                          }`}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5">
-                              <span
-                                style={{ backgroundColor: isModSelected ? '#F7842E' : seriesColor }}
-                                className="timeline-module-stripe"
-                              />
-                              <span
-                                className={`truncate text-[11px] font-medium ${
-                                  isModSelected ? 'text-[#FFB26B]' : 'text-[#D2C2B3]'
-                                }`}
-                              >
-                                {mod.name}
-                              </span>
-                            </div>
-                            <div
-                              className={`mt-0.5 flex items-center gap-1 text-[9.5px] tabular-nums ${
-                                isModSelected ? 'text-[#D4A47C]' : 'text-[#8A7766]'
-                              }`}
-                            >
-                              <span>
-                                CH {chStart}–{chEnd}
-                              </span>
-                              <span>·</span>
-                              <span>
-                                {mod.minHeight.toFixed(1)}–{mod.maxHeight.toFixed(1)}m
-                              </span>
-                            </div>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              createDefaultWaveClip(mod, layer.id, modClips.length ? time : 0)
-                            }}
-                            title={`Tạo đường sóng mới (mặc định 0 → 0) cho ${mod.name}`}
-                            className={`flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full transition ${
+                        {/* Nhãn Module bên trái (khung bo tròn 4 góc nằm trong ô sticky) */}
+                        <div className="sticky left-0 z-20 flex h-14 w-[168px] shrink-0 items-center border-r border-line bg-[#0D0907] p-1">
+                          <div
+                            onClick={(e) => selectModule(mod.id, { multi: e.metaKey || e.ctrlKey, range: e.shiftKey })}
+                            title={`Chọn ${mod.name} (Ctrl/Shift để chọn nhiều)`}
+                            className={`timeline-module relative flex h-full w-full cursor-pointer items-center justify-between gap-1.5 overflow-hidden rounded-xl pr-2 pl-3.5 transition ${
                               isModSelected
-                                ? 'bg-[linear-gradient(135deg,#FFC590_0%,#FF9442_50%,#F0701B_100%)] text-[#1C0E04] shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] hover:brightness-110'
-                                : 'bg-[#281D16] text-[#9E8A78] shadow-[inset_0_0_0_1px_rgba(255,214,170,0.12)] hover:bg-[#36261C] hover:text-[#D2C2B3]'
+                                ? 'bg-[#2B1A0E] shadow-[inset_0_0_0_1px_rgba(247,132,46,0.45)]'
+                                : 'bg-[#17110C] shadow-[inset_0_0_0_1px_rgba(255,206,160,0.08)] hover:bg-[#1E1610]'
                             }`}
                           >
-                            <Plus size={11} />
-                          </button>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  style={{ backgroundColor: isModSelected ? '#F7842E' : seriesColor }}
+                                  className="timeline-module-stripe"
+                                />
+                                <span
+                                  className={`truncate text-[11px] font-medium ${
+                                    isModSelected ? 'text-[#FFB26B]' : 'text-[#D2C2B3]'
+                                  }`}
+                                >
+                                  {mod.name}
+                                </span>
+                              </div>
+                              <div
+                                className={`mt-0.5 flex items-center gap-1 text-[9.5px] tabular-nums ${
+                                  isModSelected ? 'text-[#D4A47C]' : 'text-[#8A7766]'
+                                }`}
+                              >
+                                <span>
+                                  CH {chStart}–{chEnd}
+                                </span>
+                                <span>·</span>
+                                <span>
+                                  {mod.minHeight.toFixed(1)}–{mod.maxHeight.toFixed(1)}m
+                                </span>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                createDefaultWaveClip(mod, layer.id, modClips.length ? time : 0)
+                              }}
+                              title={`Tạo đường sóng mới (mặc định 0 → 0) cho ${mod.name}`}
+                              className={`flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full transition ${
+                                isModSelected
+                                  ? 'bg-[linear-gradient(135deg,#FFC590_0%,#FF9442_50%,#F0701B_100%)] text-[#1C0E04] shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] hover:brightness-110'
+                                  : 'bg-[#281D16] text-[#9E8A78] shadow-[inset_0_0_0_1px_rgba(255,214,170,0.12)] hover:bg-[#36261C] hover:text-[#D2C2B3]'
+                              }`}
+                            >
+                              <Plus size={11} />
+                            </button>
+                          </div>
                         </div>
 
                         {/* Làn Waveform riêng của Module */}
@@ -1306,7 +1274,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
                                             className="cursor-grab active:cursor-grabbing"
                                           >
                                             <title>
-                                              {`K${idx + 1}: ${(clip.startTime + kf.offset).toFixed(2)}s · ${heightToPercent(kf.height, mod)}% (Kéo để chỉnh · Chuột phải xoá điểm)`}
+                                              {`P${idx + 1}: ${(clip.startTime + kf.offset).toFixed(2)}s · ${heightToPercent(kf.height, mod)}% (Kéo để chỉnh · Chuột phải xoá điểm)`}
                                             </title>
                                             {activeKf && (
                                               <>
@@ -1352,7 +1320,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
                                                   fontSize={7.5}
                                                   fontWeight={700}
                                                 >
-                                                  K{idx + 1}
+                                                  P{idx + 1}
                                                 </text>
                                               </g>
                                             )}

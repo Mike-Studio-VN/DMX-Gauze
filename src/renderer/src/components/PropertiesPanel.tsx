@@ -183,14 +183,27 @@ function MomentCurveGraph({
   return (
     <div className="space-y-1.5 border-b border-line pb-3">
       <div className="flex items-center justify-between gap-1.5">
-        <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">Đồ thị Curve</span>
-        {activeKf && activeIdx >= 0 ? (
-          <span className="text-[10px] font-semibold text-[#FFCB72] tabular-nums">
-            K{activeIdx + 1}: {(clip.startTime + activeKf.offset).toFixed(2)}s · {heightToPercent(activeKf.height, mod)}%
-          </span>
-        ) : (
-          <span className="text-[10px] text-muted">Kéo điểm · 2× click thêm</span>
-        )}
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">Curve</span>
+          {activeKf && activeIdx >= 0 && (
+            <span className="truncate text-[10px] font-semibold text-[#FFCB72] tabular-nums">
+              P{activeIdx + 1}: {(clip.startTime + activeKf.offset).toFixed(2)}s · {heightToPercent(activeKf.height, mod)}%
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            const { keyframes, newKeyId } = insertClipKeyframe(clip, minH, maxH)
+            onUpdate({ keyframes })
+            onSelectKey(newKeyId)
+          }}
+          title="Thêm Point mới vào moment"
+          className="kiln-btn kiln-btn-cue h-6 shrink-0 px-2.5 text-[10.5px]"
+        >
+          <Plus size={11} />
+          Point
+        </button>
       </div>
 
       <div className="overflow-hidden rounded-xl bg-[#0D0907] shadow-[inset_0_0_0_1px_var(--line2)]">
@@ -304,7 +317,7 @@ function MomentCurveGraph({
                   }}
                   className="cursor-grab active:cursor-grabbing"
                 >
-                  <title>{`K${idx + 1}: ${(clip.startTime + kf.offset).toFixed(2)}s · ${heightToPercent(kf.height, mod)}%`}</title>
+                  <title>{`P${idx + 1}: ${(clip.startTime + kf.offset).toFixed(2)}s · ${heightToPercent(kf.height, mod)}%`}</title>
                   {active && (
                     <>
                       <line
@@ -344,7 +357,7 @@ function MomentCurveGraph({
                     <g transform={`translate(${tagX}, ${tagY})`} className="pointer-events-none">
                       <rect width={20} height={12} rx={3} fill="#1C0E04" stroke="#FFCB72" strokeWidth={0.9} />
                       <text x={10} y={8.5} textAnchor="middle" fill="#FFCB72" fontSize={8} fontWeight={700}>
-                        K{idx + 1}
+                        P{idx + 1}
                       </text>
                     </g>
                   )}
@@ -533,24 +546,11 @@ function MomentEditor({
               const activeIdx = sorted.findIndex((k) => k.id === selectedKeyId)
               return activeIdx >= 0 ? (
                 <span className="rounded-md bg-brand px-1.5 py-0.5 text-[10px] font-bold text-[#1C0E04]">
-                  K{activeIdx + 1}
+                  P{activeIdx + 1}
                 </span>
               ) : null
             })()}
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              const { keyframes, newKeyId } = insertClipKeyframe(clip, mod.minHeight, mod.maxHeight)
-              onUpdate({ keyframes })
-              onSelectKey(newKeyId)
-            }}
-            title="Thêm điểm mới vào moment"
-            className="kiln-btn kiln-btn-cue h-6 px-2.5 text-[10.5px]"
-          >
-            <Plus size={11} />
-            Thêm điểm
-          </button>
         </div>
 
         <div className="space-y-1.5">
@@ -579,7 +579,7 @@ function MomentEditor({
                     active ? 'bg-brand font-bold text-[#1C0E04]' : 'font-semibold text-info'
                   }`}
                 >
-                  K{idx + 1}
+                  P{idx + 1}
                 </span>
                 <label className="flex min-w-0 flex-1 items-center gap-0.5">
                   <input
