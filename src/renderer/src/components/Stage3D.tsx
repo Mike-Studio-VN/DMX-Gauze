@@ -145,8 +145,8 @@ export function Stage3D() {
     container.appendChild(renderer.domElement)
 
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color(0x0b0f17)
-    scene.fog = new THREE.FogExp2(0x0b0f17, 0.032)
+    scene.background = new THREE.Color(0x0a0706)
+    scene.fog = new THREE.FogExp2(0x0a0706, 0.03)
 
     const pmremGenerator = new THREE.PMREMGenerator(renderer)
     scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture
@@ -197,10 +197,10 @@ export function Stage3D() {
     warmStageSpot.position.set(0, 4.5, 2.5)
     scene.add(warmStageSpot)
 
-    // Sàn sân khấu & lưới
+    // Sàn sân khấu & lưới ấm theo nền Kiln
     const stageDeck = new THREE.Mesh(
       new THREE.BoxGeometry(16.5, 0.14, 7.5),
-      new THREE.MeshStandardMaterial({ color: 0x111724, roughness: 0.75, metalness: 0.2 }),
+      new THREE.MeshStandardMaterial({ color: 0x130d0a, roughness: 0.78, metalness: 0.18 }),
     )
     stageDeck.position.set(0, -0.07, 0)
     stageDeck.receiveShadow = true
@@ -219,7 +219,7 @@ export function Stage3D() {
     stageTrim.position.set(0, 0.01, 3.73)
     scene.add(stageTrim)
 
-    const gridHelper = new THREE.GridHelper(16, 16, 0x2c3e5e, 0x1a2438)
+    const gridHelper = new THREE.GridHelper(16, 16, 0x3b2a1e, 0x1b130f)
     gridHelper.position.y = 0.005
     scene.add(gridHelper)
 
@@ -691,27 +691,27 @@ export function Stage3D() {
       : null
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-lg bg-[#0B0F17]">
+    <div className="relative h-full w-full overflow-hidden rounded-[14px] bg-[#0A0706]">
       <div ref={mountRef} className="h-full w-full" />
 
       {/* Thông số nhanh góc trên trái */}
-      <div className="pointer-events-none absolute top-2.5 left-2.5 z-10 flex flex-wrap items-center gap-2.5 rounded-lg border border-[#23304A] bg-[#0B0F17]/90 px-2.5 py-1 text-[11px]">
+      <div className="pointer-events-none absolute top-2.5 left-2.5 z-10 flex flex-wrap items-center gap-2 rounded-full bg-[#150F0B]/90 px-3 py-1 text-[11px] shadow-[inset_0_0_0_1px_var(--line2)]">
         <span className="flex items-center gap-1.5 font-semibold text-brand">
           <Box className="h-3.5 w-3.5" />
-          Mô phỏng 3D
+          3D Stage
         </span>
-        <span className="text-slate-600">·</span>
-        <span className="text-slate-300 tabular-nums">
+        <span className="text-muted">·</span>
+        <span className="text-[#C2B3A4] tabular-nums">
           Chọn: <strong className="text-info">{selectedIds.length}</strong>/{project.modules.length}
         </span>
         {firstSelected && firstDmx && (
           <>
-            <span className="text-slate-600">·</span>
-            <span className="text-slate-300 tabular-nums">
-              {firstSelected.name}: <strong className="text-brand">{firstPos.toFixed(2)}m</strong> /{' '}
+            <span className="text-muted">·</span>
+            <span className="text-[#C2B3A4] tabular-nums">
+              {firstSelected.name}: <strong className="text-[#FFB26B]">{firstPos.toFixed(2)}m</strong> /{' '}
               {firstSelected.length.toFixed(1)}m
             </span>
-            <span className="text-slate-600">·</span>
+            <span className="text-muted">·</span>
             <span className="font-mono text-info tabular-nums">
               CH {addressRange(firstSelected.startAddress).join('–')}: [{firstDmx.join(', ')}]
             </span>
@@ -721,27 +721,29 @@ export function Stage3D() {
 
       {/* Badge khi di chuột qua module */}
       {hoveredModule && (
-        <div className="pointer-events-none absolute bottom-2.5 left-2.5 z-10 flex items-center gap-2 rounded-lg border border-brand/50 bg-[#0B0F17]/95 px-2.5 py-1 text-xs shadow-lg">
-          <span className="font-semibold text-white">{hoveredModule.name}</span>
-          <span className="text-slate-500">·</span>
-          <span className="font-mono text-brand tabular-nums">
+        <div className="pointer-events-none absolute bottom-2.5 left-2.5 z-10 flex items-center gap-2 rounded-full bg-[#150F0B]/95 px-3 py-1 text-xs shadow-[inset_0_0_0_1px_rgba(247,132,46,.5)]">
+          <span className="font-semibold text-fg">{hoveredModule.name}</span>
+          <span className="text-muted">·</span>
+          <span className="font-mono text-[#FFB26B] tabular-nums">
             Cao: {hoveredModule.pos.toFixed(2)}m / {hoveredModule.length.toFixed(1)}m
           </span>
-          <span className="text-slate-500">·</span>
+          <span className="text-muted">·</span>
           <span className="font-mono text-info tabular-nums">
             U{project.settings.output.universe}:{String(hoveredModule.startAddress).padStart(3, '0')}
           </span>
         </div>
       )}
 
-      {/* Thanh chọn góc nhìn & thước mét */}
-      <div className="absolute top-2.5 right-2.5 z-10 flex items-center gap-1 rounded-lg border border-[#23304A] bg-[#0B0F17]/90 p-1">
+      {/* Thanh chọn góc nhìn & thước mét dạng pill Kiln */}
+      <div className="kiln-seg absolute top-2.5 right-2.5 z-10">
         <button
           type="button"
           title="Góc nhìn phối cảnh 3D"
           onClick={() => applyCameraPreset('perspective')}
-          className={`flex h-7 w-7 cursor-pointer items-center justify-center rounded ${
-            cameraPreset === 'perspective' ? 'bg-brand text-slate-950' : 'text-slate-300 hover:bg-[#192233] hover:text-white'
+          className={`flex h-7 w-7 cursor-pointer items-center justify-center rounded-full ${
+            cameraPreset === 'perspective'
+              ? 'bg-[linear-gradient(135deg,#FFC590_0%,#FF9442_50%,#F0701B_100%)] text-[#1C0E04]'
+              : 'text-[#C2B3A4] hover:bg-white/10 hover:text-fg'
           }`}
         >
           <Video className="h-3.5 w-3.5" />
@@ -751,8 +753,10 @@ export function Stage3D() {
           type="button"
           title="Góc nhìn chính diện sân khấu"
           onClick={() => applyCameraPreset('front')}
-          className={`flex h-7 w-7 cursor-pointer items-center justify-center rounded ${
-            cameraPreset === 'front' ? 'bg-brand text-slate-950' : 'text-slate-300 hover:bg-[#192233] hover:text-white'
+          className={`flex h-7 w-7 cursor-pointer items-center justify-center rounded-full ${
+            cameraPreset === 'front'
+              ? 'bg-[linear-gradient(135deg,#FFC590_0%,#FF9442_50%,#F0701B_100%)] text-[#1C0E04]'
+              : 'text-[#C2B3A4] hover:bg-white/10 hover:text-fg'
           }`}
         >
           <Maximize2 className="h-3.5 w-3.5" />
@@ -762,8 +766,10 @@ export function Stage3D() {
           type="button"
           title="Góc nhìn ngang (So sánh 2 lớp màn)"
           onClick={() => applyCameraPreset('side')}
-          className={`flex h-7 w-7 cursor-pointer items-center justify-center rounded ${
-            cameraPreset === 'side' ? 'bg-brand text-slate-950' : 'text-slate-300 hover:bg-[#192233] hover:text-white'
+          className={`flex h-7 w-7 cursor-pointer items-center justify-center rounded-full ${
+            cameraPreset === 'side'
+              ? 'bg-[linear-gradient(135deg,#FFC590_0%,#FF9442_50%,#F0701B_100%)] text-[#1C0E04]'
+              : 'text-[#C2B3A4] hover:bg-white/10 hover:text-fg'
           }`}
         >
           <SlidersHorizontal className="h-3.5 w-3.5" />
@@ -773,21 +779,23 @@ export function Stage3D() {
           type="button"
           title="Góc nhìn từ trên xuống"
           onClick={() => applyCameraPreset('top')}
-          className={`flex h-7 w-7 cursor-pointer items-center justify-center rounded ${
-            cameraPreset === 'top' ? 'bg-brand text-slate-950' : 'text-slate-300 hover:bg-[#192233] hover:text-white'
+          className={`flex h-7 w-7 cursor-pointer items-center justify-center rounded-full ${
+            cameraPreset === 'top'
+              ? 'bg-[linear-gradient(135deg,#FFC590_0%,#FF9442_50%,#F0701B_100%)] text-[#1C0E04]'
+              : 'text-[#C2B3A4] hover:bg-white/10 hover:text-fg'
           }`}
         >
           <Eye className="h-3.5 w-3.5" />
         </button>
 
-        <div className="mx-0.5 h-4 w-[1px] bg-[#23304A]" />
+        <div className="mx-0.5 h-4 w-[1px] bg-line" />
 
         <button
           type="button"
           title="Bật / Tắt thước lưới chiều cao (m)"
           onClick={() => setShowElevationRuler((v) => !v)}
-          className={`flex h-7 w-7 cursor-pointer items-center justify-center rounded ${
-            showElevationRuler ? 'bg-info/20 text-info' : 'text-slate-400 hover:bg-[#192233] hover:text-white'
+          className={`flex h-7 w-7 cursor-pointer items-center justify-center rounded-full ${
+            showElevationRuler ? 'bg-info/20 text-info' : 'text-muted hover:bg-white/10 hover:text-fg'
           }`}
         >
           <Grid className="h-3.5 w-3.5" />
@@ -797,7 +805,7 @@ export function Stage3D() {
           type="button"
           title="Đặt lại góc nhìn mặc định"
           onClick={() => applyCameraPreset('perspective')}
-          className="flex h-7 w-7 cursor-pointer items-center justify-center rounded text-slate-300 hover:bg-[#192233] hover:text-white"
+          className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-full text-[#C2B3A4] hover:bg-white/10 hover:text-fg"
         >
           <RotateCcw className="h-3.5 w-3.5" />
         </button>

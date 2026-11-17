@@ -66,7 +66,6 @@ export function TimelineEditor() {
   const allIssues = useMemo(() => analyzeTimeline(clips, project.modules), [clips, project.modules])
   const unfeasibleIssues = useMemo(() => allIssues.filter((i) => !i.feasible), [allIssues])
 
-  // Đồng hồ nội bộ khi Play
   useEffect(() => {
     if (!playing || ltcActive) return
     let raf = 0
@@ -85,7 +84,6 @@ export function TimelineEditor() {
     return () => cancelAnimationFrame(raf)
   }, [playing, ltcActive, maxTime, sendCommand])
 
-  // LTC Audio Input
   useEffect(() => {
     if (!ltcActive) {
       setLtcStatus('off')
@@ -163,7 +161,6 @@ export function TimelineEditor() {
     setTime(clamp(t, 0, maxTime))
   }
 
-  // Kéo scrub trên ruler
   const startRulerScrub = (e: React.PointerEvent<HTMLDivElement>) => {
     const el = e.currentTarget
     const updateFromClientX = (clientX: number) => {
@@ -181,7 +178,6 @@ export function TimelineEditor() {
     window.addEventListener('pointerup', onUp)
   }
 
-  // Kéo thân clip hoặc tay nắm trái/phải
   const startClipDrag = (
     e: React.PointerEvent,
     clip: TimelineClip,
@@ -223,7 +219,6 @@ export function TimelineEditor() {
     window.addEventListener('pointerup', onUp)
   }
 
-  // Thả Module từ Cây màn vào Track của Layer trên Timeline
   const handleDropModuleOnTrack = (e: React.DragEvent, layerId: string) => {
     e.preventDefault()
     setDragOverLayerId(null)
@@ -234,7 +229,6 @@ export function TimelineEditor() {
     const rect = e.currentTarget.getBoundingClientRect()
     const dropSec = Math.max(0, Number(((e.clientX - rect.left) / pxPerSec).toFixed(2)))
 
-    // Mặc định chiều dài thả ban đầu là 0m (Key 1 ở 0m, Key 2 cũng ở 0m sau 2s để thành thanh clip giống video editor)
     const clip: TimelineClip = {
       id: `clip-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
       layerId,
@@ -260,9 +254,15 @@ export function TimelineEditor() {
 
   const addKeyframeToSelected = () => {
     if (!selectedClip || !selectedClipMod) return
-    const rel = clamp(Number((time - selectedClip.startTime).toFixed(2)), 0, Math.max(selectedClip.duration, time - selectedClip.startTime))
+    const rel = clamp(
+      Number((time - selectedClip.startTime).toFixed(2)),
+      0,
+      Math.max(selectedClip.duration, time - selectedClip.startTime),
+    )
     const nextDur = Math.max(selectedClip.duration, rel)
-    const curHeight = Number(clamp(snapshot?.modules[selectedClipMod.id]?.pos ?? 0, selectedClipMod.minHeight, selectedClipMod.maxHeight).toFixed(2))
+    const curHeight = Number(
+      clamp(snapshot?.modules[selectedClipMod.id]?.pos ?? 0, selectedClipMod.minHeight, selectedClipMod.maxHeight).toFixed(2),
+    )
     const kfId = `kf-${Date.now()}`
     const kfs = [...selectedClip.keyframes, { id: kfId, offset: rel, height: curHeight }].sort((a, b) => a.offset - b.offset)
     updateClip(selectedClip.id, { duration: nextDur, keyframes: kfs })
@@ -274,11 +274,11 @@ export function TimelineEditor() {
 
   return (
     <div className="flex h-full flex-col gap-2 text-xs">
-      {/* Thanh điều khiển Timeline */}
+      {/* Thanh điều khiển Timeline chuẩn Kiln */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded bg-bg px-2.5 py-1 font-mono text-sm font-bold text-brand tabular-nums">
-            <Clock size={14} />
+          <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-black/35 px-3 font-mono text-[13px] font-bold text-[#FFB26B] tabular-nums shadow-[inset_0_0_0_1px_var(--line2)]">
+            <Clock size={13} className="text-brand" />
             {formatTc(time, fps)}
           </span>
 
@@ -288,9 +288,9 @@ export function TimelineEditor() {
               setLtcActive(false)
               setPlaying(!playing)
             }}
-            className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-brand px-3 py-1 font-semibold text-brand-fg hover:brightness-110"
+            className="kiln-btn kiln-btn-primary h-7 px-3.5 text-xs"
           >
-            {playing ? <Pause size={14} /> : <Play size={14} />}
+            {playing ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}
             {playing ? 'Dừng' : 'Phát'}
           </button>
 
@@ -301,9 +301,9 @@ export function TimelineEditor() {
               seekTo(project.settings.timeline.startTime)
             }}
             title="Về timecode bắt đầu"
-            className="cursor-pointer rounded-md border border-line bg-panel-2 p-1.5 text-muted hover:text-fg"
+            className="kiln-btn h-7 w-7 px-0 text-muted hover:text-fg"
           >
-            <RotateCcw size={14} />
+            <RotateCcw size={13} />
           </button>
 
           <button
@@ -313,9 +313,7 @@ export function TimelineEditor() {
               setLtcActive(!ltcActive)
             }}
             title="Nhận xung LTC từ Line-in / USB Audio"
-            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 font-medium ${
-              ltcActive ? 'border-ok bg-ok/15 text-ok' : 'border-line bg-panel-2 text-muted hover:text-fg'
-            }`}
+            className={`kiln-btn h-7 px-2.5 text-[11px] ${ltcActive ? 'border-ok text-ok' : 'text-muted'}`}
           >
             {ltcActive ? <Mic size={13} /> : <MicOff size={13} />}
             LTC {ltcStatus === 'lock' ? '· Lock' : ltcStatus === 'freewheel' ? '· FW' : ltcActive ? '· Chờ' : 'Tắt'}
@@ -329,31 +327,31 @@ export function TimelineEditor() {
                 seekTo(unfeasibleIssues[0].fromTime)
               }}
               title="Có đoạn chuyển động vượt tốc độ tối đa của module. Bấm để xem."
-              className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-danger/60 bg-danger/15 px-2 py-1 text-[11px] font-medium text-danger"
+              className="kiln-btn kiln-btn-danger h-7 px-2.5 text-[11px]"
             >
-              <AlertTriangle size={13} />
+              <AlertTriangle size={12} />
               {unfeasibleIssues.length} đoạn quá tốc độ!
             </button>
           )}
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          <div className="flex items-center rounded border border-line bg-panel-2">
+          <div className="kiln-seg">
             <button
               type="button"
               onClick={() => setPxPerSec((z) => Math.max(24, z - 12))}
               title="Thu nhỏ timeline"
-              className="cursor-pointer p-1 text-muted hover:text-fg"
+              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full text-muted hover:text-fg"
             >
-              <ZoomOut size={13} />
+              <ZoomOut size={12} />
             </button>
             <button
               type="button"
               onClick={() => setPxPerSec((z) => Math.min(140, z + 12))}
               title="Phóng to timeline"
-              className="cursor-pointer p-1 text-muted hover:text-fg"
+              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full text-muted hover:text-fg"
             >
-              <ZoomIn size={13} />
+              <ZoomIn size={12} />
             </button>
           </div>
 
@@ -362,12 +360,12 @@ export function TimelineEditor() {
             onChange={(e) => setTcInput(e.target.value)}
             onBlur={applyStartTc}
             title="Timecode bắt đầu (hh:mm:ss:ff)"
-            className="w-24 rounded border border-line bg-bg px-2 py-1 font-mono text-[11px] text-fg"
+            className="kiln-field h-7 w-24 px-2 font-mono text-[11px]"
           />
           <select
             value={fps}
             onChange={(e) => updateTimelineSettings({ fps: Number(e.target.value) as Fps })}
-            className="rounded border border-line bg-bg px-1.5 py-1 text-[11px] text-fg"
+            className="kiln-field h-7 px-2 text-[11px]"
           >
             {FPS_OPTIONS.map((f) => (
               <option key={f} value={f}>
@@ -381,20 +379,20 @@ export function TimelineEditor() {
               type="button"
               onClick={addKeyframeToSelected}
               title="Thêm keyframe vào clip đang chọn tại Playhead"
-              className="inline-flex cursor-pointer items-center gap-1 rounded bg-info px-2 py-1 text-[11px] font-semibold text-slate-950"
+              className="kiln-btn kiln-btn-cue h-7 px-2.5 text-[11px]"
             >
-              <Plus size={13} />
+              <Plus size={12} />
               Key tại {time.toFixed(1)}s
             </button>
           )}
         </div>
       </div>
 
-      {/* Khung NLE Timeline (Track trái + Ruler & Clips phải) */}
-      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-lg border border-line bg-bg">
+      {/* Khung NLE Timeline nền #0A0706 phẳng */}
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-2xl bg-[#0A0706] shadow-[inset_0_0_0_1px_var(--line)]">
         {/* Cột nhãn Layer Track */}
-        <div className="flex w-36 shrink-0 flex-col border-r border-line bg-panel">
-          <div className="flex h-6 items-center border-b border-line px-2 text-[10px] font-semibold text-muted uppercase">
+        <div className="flex w-36 shrink-0 flex-col border-r border-line bg-[#130D0A]">
+          <div className="flex h-6 items-center border-b border-line px-2.5 text-[10px] font-semibold tracking-wider text-muted uppercase">
             Layer Track
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -406,11 +404,11 @@ export function TimelineEditor() {
                   type="button"
                   onClick={() => selectTimelineLayer(layer.id)}
                   title="Chọn track layer (hỗ trợ Ctrl+C, Ctrl+V, Delete các clip của layer)"
-                  className={`flex h-12 w-full cursor-pointer items-center gap-1.5 border-b border-line/60 px-2 text-left text-[11px] font-medium transition ${
-                    isLayerSel ? 'bg-info/15 text-info' : 'text-fg/85 hover:bg-panel-2'
+                  className={`flex h-14 w-full cursor-pointer items-center gap-1.5 border-b border-line px-2.5 text-left text-[11px] font-medium transition ${
+                    isLayerSel ? 'bg-brand/15 text-[#FFB26B]' : 'text-[#C2B3A4] hover:bg-white/5 hover:text-fg'
                   }`}
                 >
-                  <Layers size={12} className="shrink-0 text-info" />
+                  <Layers size={12} className={`shrink-0 ${isLayerSel ? 'text-brand' : 'text-info'}`} />
                   <span className="truncate">{layer.name}</span>
                 </button>
               )
@@ -421,23 +419,21 @@ export function TimelineEditor() {
         {/* Vùng Ruler + Track Clips cuộn ngang */}
         <div ref={trackAreaRef} className="relative min-h-0 min-w-0 flex-1 overflow-x-auto overflow-y-auto">
           <div style={{ width: timelineWidth }} className="relative min-h-full">
-            {/* Thước thời gian (bấm/kéo để di chuyển playhead) */}
             <div
               onPointerDown={startRulerScrub}
-              className="sticky top-0 z-20 flex h-6 cursor-ew-resize items-end border-b border-line bg-panel/95 select-none"
+              className="sticky top-0 z-20 flex h-6 cursor-ew-resize items-end border-b border-line bg-[#130D0A]/95 select-none"
             >
               {ticks.map((sec) => (
                 <div
                   key={sec}
                   style={{ left: sec * pxPerSec }}
-                  className="absolute bottom-0 flex flex-col items-start border-l border-line/80 pl-1 text-[10px] text-muted tabular-nums"
+                  className="absolute bottom-0 flex flex-col items-start border-l border-line pl-1 text-[10px] text-muted tabular-nums"
                 >
                   {sec}s
                 </div>
               ))}
             </div>
 
-            {/* Các Track tương ứng từng Layer */}
             {project.layers.map((layer) => {
               const layerClips = clips.filter((c) => c.layerId === layer.id)
               const isDragOver = dragOverLayerId === layer.id
@@ -453,20 +449,19 @@ export function TimelineEditor() {
                   onDragLeave={() => setDragOverLayerId(null)}
                   onDrop={(e) => handleDropModuleOnTrack(e, layer.id)}
                   onClick={() => selectTimelineLayer(layer.id)}
-                  className={`relative h-12 border-b border-line/60 transition ${
+                  className={`relative h-14 border-b border-line transition ${
                     isDragOver
-                      ? 'bg-brand/15 ring-1 ring-brand/60 ring-inset'
+                      ? 'bg-brand/15 shadow-[inset_0_0_0_1px_var(--acc)]'
                       : isLayerSel
                         ? 'bg-info/5'
-                        : 'bg-bg/60'
+                        : 'bg-[#0A0706]'
                   }`}
                 >
-                  {/* Vạch lưới mờ mỗi giây */}
                   {ticks.map((sec) => (
                     <div
                       key={sec}
                       style={{ left: sec * pxPerSec }}
-                      className="pointer-events-none absolute top-0 bottom-0 border-l border-line/25"
+                      className="pointer-events-none absolute top-0 bottom-0 border-l border-white/[0.04]"
                     />
                   ))}
 
@@ -483,9 +478,8 @@ export function TimelineEditor() {
                     const maxReq = issues.reduce((mx, i) => Math.max(mx, i.requiredCms), 0)
                     const isSelected = selectedClipId === clip.id
                     const leftPx = clip.startTime * pxPerSec
-                    const widthPx = Math.max(44, clip.duration * pxPerSec)
+                    const widthPx = Math.max(54, clip.duration * pxPerSec)
 
-                    // Vẽ đường cong chiều cao (SVG waveform/keyframe curve) bên trong clip theo theme
                     const sortedKfs = [...clip.keyframes].sort((a, b) => a.offset - b.offset)
                     const maxH = Math.max(0.2, mod?.length ?? 1)
                     const pts = sortedKfs
@@ -497,13 +491,8 @@ export function TimelineEditor() {
                       .join(' ')
                     const areaPts = sortedKfs.length ? `0,95 ${pts} 100,95` : ''
 
-                    const borderCls = badSeg
-                      ? 'border-danger bg-danger/15'
-                      : isSelected
-                        ? 'border-brand bg-brand/20'
-                        : 'border-info/80 bg-info/15 hover:border-info'
-
-                    const handleCls = badSeg ? 'bg-danger' : isSelected ? 'bg-brand' : 'bg-info'
+                    const curveColor = badSeg ? '#FF7D6E' : isSelected ? '#F7842E' : '#8DB8FF'
+                    const handleColor = badSeg ? 'bg-danger' : isSelected ? 'bg-[#1C0E04]' : 'bg-info'
 
                     return (
                       <div
@@ -519,58 +508,47 @@ export function TimelineEditor() {
                             : `${mod?.name ?? 'Module'} · Kéo để dời thời gian, kéo 2 đầu để chỉnh độ dài`
                         }
                         style={{ left: leftPx, width: widthPx }}
-                        className={`group absolute top-1.5 bottom-1.5 flex cursor-grab items-center overflow-hidden rounded-xl border-2 select-none active:cursor-grabbing ${borderCls}`}
+                        className={`kiln-clip absolute top-1 bottom-1 flex cursor-grab flex-col select-none active:cursor-grabbing ${
+                          badSeg ? 'bad' : isSelected ? 'sel' : ''
+                        }`}
                       >
-                        {/* Đồ thị chiều cao bên trong clip */}
-                        {sortedKfs.length >= 2 && (
-                          <svg
-                            viewBox="0 0 100 100"
-                            preserveAspectRatio="none"
-                            className="pointer-events-none absolute inset-0 h-full w-full opacity-45"
+                        {/* Bar tiêu đề tách riêng theo Kiln + 2 tay nắm bo tròn */}
+                        <div className="clip-bar flex h-[20px] shrink-0 items-center justify-between gap-1 px-1 text-[10.5px] font-semibold">
+                          <div
+                            onPointerDown={(e) => startClipDrag(e, clip, 'trim-left')}
+                            title="Kéo để đổi thời điểm bắt đầu"
+                            className="flex h-full w-2 shrink-0 cursor-ew-resize items-center justify-center"
                           >
-                            <polygon points={areaPts} fill={badSeg ? '#f87171' : isSelected ? '#f7842e' : '#8db8ff'} fillOpacity="0.25" />
-                            <polyline
-                              points={pts}
-                              fill="none"
-                              stroke={badSeg ? '#f87171' : isSelected ? '#f7842e' : '#8db8ff'}
-                              strokeWidth="3"
-                            />
-                          </svg>
-                        )}
-
-                        {/* Tay nắm trái (bo tròn giống ảnh mẫu) */}
-                        <div
-                          onPointerDown={(e) => startClipDrag(e, clip, 'trim-left')}
-                          title="Kéo để đổi thời điểm bắt đầu"
-                          className="z-10 flex h-full w-2.5 shrink-0 cursor-ew-resize items-center justify-center"
-                        >
-                          <span className={`h-4 w-1 rounded-full ${handleCls}`} />
+                            <span className={`h-3 w-1 rounded-full ${handleColor}`} />
+                          </div>
+                          <span className="truncate">{mod?.name ?? 'Module'}</span>
+                          <div
+                            onPointerDown={(e) => startClipDrag(e, clip, 'trim-right')}
+                            title="Kéo để chỉnh độ dài thời gian clip"
+                            className="flex h-full w-2 shrink-0 cursor-ew-resize items-center justify-center"
+                          >
+                            <span className={`h-3 w-1 rounded-full ${handleColor}`} />
+                          </div>
                         </div>
 
-                        {/* Nội dung clip */}
-                        <div className="z-10 flex min-w-0 flex-1 items-center justify-between gap-1 px-1">
-                          <span className="truncate text-[11px] font-semibold text-fg">
-                            {mod?.name ?? 'Module'}
-                          </span>
-                          {badSeg ? (
-                            <span className="flex shrink-0 items-center gap-0.5 rounded bg-danger/90 px-1 py-0.5 text-[9px] font-bold text-black">
-                              <AlertTriangle size={9} />
-                              {badSeg.requiredCms.toFixed(0)}cm/s
+                        {/* Body phẳng #0A0706 chứa đồ thị chiều cao + tốc độ */}
+                        <div className="clip-body relative flex-1 overflow-hidden">
+                          {sortedKfs.length >= 2 && (
+                            <svg
+                              viewBox="0 0 100 100"
+                              preserveAspectRatio="none"
+                              className="pointer-events-none absolute inset-0 h-full w-full opacity-70"
+                            >
+                              <polygon points={areaPts} fill={curveColor} fillOpacity="0.18" />
+                              <polyline points={pts} fill="none" stroke={curveColor} strokeWidth="3" />
+                            </svg>
+                          )}
+                          <div className="relative z-10 flex h-full items-end justify-between px-2 pb-0.5 text-[9.5px] font-semibold">
+                            <span className={badSeg ? 'text-danger' : isSelected ? 'text-[#FFB26B]' : 'text-info'}>
+                              {badSeg ? `⚠ ${badSeg.requiredCms.toFixed(0)}cm/s` : maxReq > 0 ? `${maxReq.toFixed(0)}cm/s` : '0m'}
                             </span>
-                          ) : maxReq > 0 ? (
-                            <span className="shrink-0 text-[10px] text-info/90 tabular-nums">
-                              {maxReq.toFixed(0)}cm/s
-                            </span>
-                          ) : null}
-                        </div>
-
-                        {/* Tay nắm phải (bo tròn giống ảnh mẫu) */}
-                        <div
-                          onPointerDown={(e) => startClipDrag(e, clip, 'trim-right')}
-                          title="Kéo để chỉnh độ dài thời gian clip"
-                          className="z-10 flex h-full w-2.5 shrink-0 cursor-ew-resize items-center justify-center"
-                        >
-                          <span className={`h-4 w-1 rounded-full ${handleCls}`} />
+                            <span className="text-muted tabular-nums">{clip.duration.toFixed(1)}s</span>
+                          </div>
                         </div>
                       </div>
                     )
@@ -590,11 +568,11 @@ export function TimelineEditor() {
         </div>
       </div>
 
-      {/* Thanh chỉnh Keyframe cho Clip đang chọn (tính & kiểm tra tốc độ theo maxSpeedCms) */}
+      {/* Thanh chỉnh Keyframe cho Clip đang chọn */}
       {selectedClip && selectedClipMod && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-panel-2/70 px-2.5 py-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-black/30 px-3 py-1.5 shadow-[inset_0_0_0_1px_var(--line)]">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-brand">{selectedClipMod.name}</span>
+            <span className="font-semibold text-[#FFB26B]">{selectedClipMod.name}</span>
             <span className="text-muted">({selectedClip.startTime.toFixed(2)}s)</span>
 
             <div className="flex flex-wrap items-center gap-1.5">
@@ -606,11 +584,13 @@ export function TimelineEditor() {
                     <div
                       key={kf.id}
                       onClick={() => setSelectedKeyId(kf.id)}
-                      className={`flex items-center gap-1 rounded border px-1.5 py-0.5 ${
-                        active ? 'border-brand bg-brand/15' : 'border-line bg-bg'
+                      className={`flex items-center gap-1 rounded-xl px-2 py-0.5 ${
+                        active
+                          ? 'bg-brand/15 shadow-[inset_0_0_0_1.5px_var(--acc)]'
+                          : 'bg-black/35 shadow-[inset_0_0_0_1px_var(--line)]'
                       }`}
                     >
-                      <span className="text-[10px] text-info">K{idx + 1}</span>
+                      <span className="text-[10px] font-semibold text-info">K{idx + 1}</span>
                       <input
                         type="number"
                         step="0.1"
@@ -640,7 +620,7 @@ export function TimelineEditor() {
                           const nextKfs = selectedClip.keyframes.map((x) => (x.id === kf.id ? { ...x, height: h } : x))
                           updateClip(selectedClip.id, { keyframes: nextKfs }, `kfh-${kf.id}`)
                         }}
-                        className="w-11 bg-transparent text-right text-[11px] text-brand tabular-nums outline-none"
+                        className="w-11 bg-transparent text-right text-[11px] text-[#FFB26B] tabular-nums outline-none"
                       />
                       <span className="text-[10px] text-muted">m</span>
                       {selectedClip.keyframes.length > 2 && (
@@ -668,22 +648,20 @@ export function TimelineEditor() {
               (() => {
                 const bad = selectedClipIssues.find((i) => !i.feasible)!
                 return (
-                  <span className="flex items-center gap-1 text-[11px] font-medium text-danger">
-                    <AlertTriangle size={12} />
-                    Cần {bad.requiredCms.toFixed(0)} cm/s &gt; tối đa {bad.maxSpeedCms} cm/s (cần ≥ {bad.minDurationSec.toFixed(2)}s)
+                  <span className="kiln-chip danger">
+                    <AlertTriangle size={11} />
+                    Cần {bad.requiredCms.toFixed(0)} cm/s &gt; {bad.maxSpeedCms} cm/s (≥ {bad.minDurationSec.toFixed(2)}s)
                   </span>
                 )
               })()
             ) : (
-              <span className="text-[11px] text-ok">
-                Tốc độ hợp lệ (tối đa {selectedClipMod.maxSpeedCms} cm/s)
-              </span>
+              <span className="kiln-chip ok">Hợp lệ (≤ {selectedClipMod.maxSpeedCms} cm/s)</span>
             )}
             <button
               type="button"
               onClick={() => deleteClip(selectedClip.id)}
               title="Xoá clip này (Delete)"
-              className="cursor-pointer rounded p-1 text-muted hover:bg-danger/20 hover:text-danger"
+              className="cursor-pointer rounded-full p-1 text-muted hover:bg-danger/20 hover:text-danger"
             >
               <Trash2 size={13} />
             </button>

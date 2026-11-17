@@ -27,14 +27,14 @@ function TransformEditor({
   }
 
   return (
-    <div className="space-y-2 rounded-lg border border-line bg-panel-2/60 p-2.5">
+    <div className="space-y-2.5 border-t border-line pt-3">
       <div className="flex items-center justify-between">
-        <span className="font-medium text-info">Transform 3D</span>
+        <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">Transform 3D</span>
         <button
           type="button"
           onClick={onReset}
           title="Đưa Position / Rotation / Scale về mặc định"
-          className="inline-flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted hover:bg-line hover:text-fg"
+          className="kiln-btn h-6 px-2 text-[10.5px] text-[#C2B3A4]"
         >
           <RotateCcw size={11} />
           Mặc định
@@ -49,15 +49,15 @@ function TransformEditor({
         ] as const
       ).map(([field, label, step]) => (
         <div key={field} className="space-y-1">
-          <div className="flex items-center justify-between text-[11px] text-muted">
+          <div className="flex items-center justify-between text-[11px] text-[#C2B3A4]">
             <span>{label}</span>
-            {lockY && field === 'position' && <span className="text-[10px] text-brand">Y dính vào Layer</span>}
+            {lockY && field === 'position' && <span className="text-[10px] text-[#FFB26B]">Y dính vào Layer</span>}
           </div>
           <div className="grid grid-cols-3 gap-1.5">
             {axes.map((ax, i) => {
               const disabled = lockY && field === 'position' && i === 1
               return (
-                <label key={ax} className="flex items-center gap-1 rounded border border-line bg-bg px-1.5 py-0.5">
+                <label key={ax} className="kiln-field flex h-7 items-center gap-1 px-2">
                   <span className="text-[10px] font-semibold text-muted">{ax}</span>
                   <input
                     type="number"
@@ -65,7 +65,7 @@ function TransformEditor({
                     disabled={disabled}
                     value={disabled ? 0 : Number(tf[field][i].toFixed(2))}
                     onChange={(e) => updateAxis(field, i as 0 | 1 | 2, Number(e.target.value))}
-                    className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none disabled:opacity-45"
+                    className="min-w-0 flex-1 bg-transparent text-right text-[11.5px] text-fg tabular-nums outline-none disabled:opacity-45"
                   />
                 </label>
               )
@@ -107,21 +107,21 @@ export function PropertiesPanel() {
     }
   }, [single?.id, single?.startAddress]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Đang chọn Layer -> chỉnh Transform 3D & thuộc tính Layer
+  // Đang chọn Layer
   if (activeLayer) {
     const tf = activeLayer.transform ?? defaultLayerTransform(activeLayerIdx)
     const visible = activeLayer.visible ?? true
     return (
-      <div className="flex h-full flex-col gap-3 overflow-y-auto pr-1 text-xs">
-        <div className="flex items-center justify-between rounded-lg border border-info/40 bg-info/10 p-2.5">
-          <div className="flex items-center gap-2 font-semibold text-info">
-            <Layers size={15} />
-            <span>Thuộc tính Layer</span>
-          </div>
+      <div className="flex h-full flex-col gap-3 overflow-y-auto pr-0.5 text-xs">
+        <div className="flex items-center justify-between">
+          <span className="kiln-chip acc">
+            <Layers size={11} />
+            Layer
+          </span>
           <button
             type="button"
             onClick={() => toggleLayerVisibility(activeLayer.id)}
-            className="inline-flex cursor-pointer items-center gap-1 rounded bg-panel-2 px-2 py-1 text-[11px] text-fg hover:bg-line"
+            className="kiln-btn h-7 px-2.5 text-[11px]"
           >
             {visible ? <Eye size={12} className="text-ok" /> : <EyeOff size={12} className="text-warn" />}
             {visible ? 'Đang hiện' : 'Đang ẩn'}
@@ -129,11 +129,11 @@ export function PropertiesPanel() {
         </div>
 
         <label className="space-y-1">
-          <span className="text-muted">Tên Layer</span>
+          <span className="text-[11px] text-[#C2B3A4]">Tên Layer</span>
           <input
             value={activeLayer.name}
             onChange={(e) => updateLayer(activeLayer.id, { name: e.target.value }, `layer-name-${activeLayer.id}`)}
-            className="w-full rounded border border-line bg-bg px-2.5 py-1.5 text-sm font-medium text-fg"
+            className="kiln-field h-8 w-full px-3 text-[12.5px] font-medium"
           />
         </label>
 
@@ -143,7 +143,7 @@ export function PropertiesPanel() {
           onReset={() => updateLayer(activeLayer.id, { transform: defaultLayerTransform(activeLayerIdx) })}
         />
 
-        <p className="text-[11px] text-muted">
+        <p className="border-t border-line pt-3 text-[11px] text-muted">
           Toàn bộ module trong lớp này giữ cạnh trên dính vào thanh truss của Layer và di chuyển/xoay/scale theo Layer.
         </p>
       </div>
@@ -157,15 +157,14 @@ export function PropertiesPanel() {
   if (!single) {
     const first = selected[0]
     return (
-      <div className="space-y-4 overflow-y-auto pr-1 text-xs">
-        <div className="rounded-lg border border-brand/40 bg-brand/10 p-2.5">
-          <div className="font-semibold text-brand">Đang chọn {selected.length} module</div>
-          <div className="mt-1 text-muted">Thay đổi bên dưới sẽ áp dụng cho cả {selected.length} module.</div>
+      <div className="space-y-3 overflow-y-auto pr-0.5 text-xs">
+        <div className="flex items-center justify-between">
+          <span className="kiln-chip acc">Đang chọn {selected.length} module</span>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-2 border-t border-line pt-3">
           <label className="space-y-1">
-            <span className="text-muted">Min chiều cao (m)</span>
+            <span className="text-[11px] text-[#C2B3A4]">Min chiều cao (m)</span>
             <input
               type="number"
               step="0.1"
@@ -178,12 +177,12 @@ export function PropertiesPanel() {
                   notify(`Đã đặt Min = ${v}m cho ${selected.length} module`, 'info')
                 }
               }}
-              className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg"
+              className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
             />
           </label>
 
           <label className="space-y-1">
-            <span className="text-muted">Max chiều cao (m)</span>
+            <span className="text-[11px] text-[#C2B3A4]">Max chiều cao (m)</span>
             <input
               type="number"
               step="0.1"
@@ -196,14 +195,14 @@ export function PropertiesPanel() {
                   notify(`Đã đặt Max = ${v}m cho ${selected.length} module`, 'info')
                 }
               }}
-              className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg"
+              className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
             />
           </label>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-2 border-t border-line pt-3">
           <label className="space-y-1">
-            <span className="text-muted">Tốc độ tối đa (cm/s)</span>
+            <span className="text-[11px] text-[#C2B3A4]">Tốc độ tối đa (cm/s)</span>
             <input
               type="number"
               min="10"
@@ -216,11 +215,11 @@ export function PropertiesPanel() {
                   notify(`Đã đặt tốc độ tối đa = ${v} cm/s`, 'info')
                 }
               }}
-              className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg"
+              className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
             />
           </label>
           <label className="space-y-1">
-            <span className="text-muted">CH3 mặc định</span>
+            <span className="text-[11px] text-[#C2B3A4]">CH3 mặc định</span>
             <input
               type="number"
               min="1"
@@ -233,7 +232,7 @@ export function PropertiesPanel() {
                   notify(`Đã đặt CH3 mặc định = ${v}`, 'info')
                 }
               }}
-              className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg"
+              className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
             />
           </label>
         </div>
@@ -263,22 +262,22 @@ export function PropertiesPanel() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-2.5 overflow-y-auto pr-1 text-xs">
+    <div className="flex h-full flex-col gap-2.5 overflow-y-auto pr-0.5 text-xs">
       <label className="space-y-1">
-        <span className="text-muted">Tên module</span>
+        <span className="text-[11px] text-[#C2B3A4]">Tên module</span>
         <input
           value={single.name}
           onChange={(e) => updateModule(single.id, { name: e.target.value }, `mod-name-${single.id}`)}
-          className="w-full rounded border border-line bg-bg px-2.5 py-1.5 text-sm font-medium text-fg"
+          className="kiln-field h-8 w-full px-3 text-[12.5px] font-medium"
         />
       </label>
 
       <label className="space-y-1">
-        <span className="text-muted">Lớp (Layer)</span>
+        <span className="text-[11px] text-[#C2B3A4]">Lớp (Layer)</span>
         <select
           value={single.layerId}
           onChange={(e) => updateModule(single.id, { layerId: e.target.value })}
-          className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg"
+          className="kiln-field h-8 w-full px-2.5 text-xs"
         >
           {project.layers.map((l) => (
             <option key={l.id} value={l.id}>
@@ -288,19 +287,20 @@ export function PropertiesPanel() {
         </select>
       </label>
 
-      <div className="space-y-1.5 rounded-lg border border-line bg-panel-2/60 p-2.5">
+      {/* Địa chỉ DMX */}
+      <div className="space-y-1.5 border-t border-line pt-2.5">
         <div className="flex items-center justify-between">
-          <span className="flex items-center gap-1 font-medium text-info">
-            Địa chỉ DMX (Universe {project.settings.output.universe})
+          <span className="flex items-center gap-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
+            DMX (Uni {project.settings.output.universe})
             <span title="Mỗi module chiếm 4 kênh liên tiếp: Vị trí, Fine tune, Tốc độ, Khoá 77">
-              <HelpCircle size={13} className="text-muted" />
+              <HelpCircle size={12} className="text-muted" />
             </span>
           </span>
           {isAuto && (
             <button
               type="button"
               onClick={() => setAddressMode('manual')}
-              className="cursor-pointer text-[11px] text-brand hover:underline"
+              className="cursor-pointer text-[11px] font-medium text-[#FFB26B] hover:underline"
             >
               Mở nhập tay
             </button>
@@ -315,12 +315,12 @@ export function PropertiesPanel() {
             disabled={isAuto}
             value={addrInput}
             onChange={(e) => handleAddrChange(e.target.value)}
-            className={`w-24 rounded border bg-bg px-2 py-1 text-fg tabular-nums disabled:opacity-60 ${
-              addrError ? 'border-danger' : 'border-line'
+            className={`kiln-field h-7 w-24 px-2.5 text-xs tabular-nums disabled:opacity-55 ${
+              addrError ? 'shadow-[inset_0_0_0_1.5px_var(--danger)]' : ''
             }`}
           />
-          <span className="text-muted tabular-nums">
-            → Kênh {chStart}–{chEnd}
+          <span className="kiln-chip cue tabular-nums">
+            Kênh {chStart}–{chEnd}
           </span>
         </div>
 
@@ -332,12 +332,13 @@ export function PropertiesPanel() {
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
+      {/* Kích thước & Giới hạn */}
+      <div className="grid grid-cols-2 gap-2 border-t border-line pt-2.5">
         <label className="space-y-1">
-          <span className="flex items-center gap-1 text-muted">
-            Chiều dài max (m)
+          <span className="flex items-center gap-1 text-[11px] text-[#C2B3A4]">
+            Dài max (m)
             <span title="Hành trình thả tối đa của màn, ứng với DMX = 255">
-              <HelpCircle size={12} />
+              <HelpCircle size={11} />
             </span>
           </span>
           <input
@@ -346,59 +347,53 @@ export function PropertiesPanel() {
             min="0.2"
             value={single.length}
             onChange={(e) => updateModule(single.id, { length: Number(e.target.value) || 0.2 }, `mod-len-${single.id}`)}
-            className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg tabular-nums"
+            className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
         </label>
 
         <label className="space-y-1">
-          <span className="text-muted">Bề rộng 3D (m)</span>
+          <span className="text-[11px] text-[#C2B3A4]">Rộng 3D (m)</span>
           <input
             type="number"
             step="0.1"
             min="0.2"
             value={single.width}
             onChange={(e) => updateModule(single.id, { width: Number(e.target.value) || 0.2 }, `mod-w-${single.id}`)}
-            className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg tabular-nums"
+            className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
         </label>
-      </div>
 
-      <div className="space-y-1.5 rounded-lg border border-line bg-panel-2/60 p-2.5">
-        <div className="font-medium text-fg">Giới hạn chiều cao an toàn</div>
-        <div className="grid grid-cols-2 gap-2">
-          <label className="space-y-1">
-            <span className="text-muted">Min (m)</span>
-            <input
-              type="number"
-              step="0.05"
-              min="0"
-              max={single.maxHeight}
-              value={single.minHeight}
-              onChange={(e) => updateModule(single.id, { minHeight: Number(e.target.value) || 0 }, `mod-min-${single.id}`)}
-              className="w-full rounded border border-line bg-bg px-2 py-1 text-fg tabular-nums"
-            />
-          </label>
-          <label className="space-y-1">
-            <span className="text-muted">Max (m)</span>
-            <input
-              type="number"
-              step="0.05"
-              min={single.minHeight}
-              max={single.length}
-              value={single.maxHeight}
-              onChange={(e) => updateModule(single.id, { maxHeight: Number(e.target.value) || 0 }, `mod-max-${single.id}`)}
-              className="w-full rounded border border-line bg-bg px-2 py-1 text-fg tabular-nums"
-            />
-          </label>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
         <label className="space-y-1">
-          <span className="flex items-center gap-1 text-muted">
-            Tốc độ tối đa (cm/s)
+          <span className="text-[11px] text-[#C2B3A4]">Min chiều cao (m)</span>
+          <input
+            type="number"
+            step="0.05"
+            min="0"
+            max={single.maxHeight}
+            value={single.minHeight}
+            onChange={(e) => updateModule(single.id, { minHeight: Number(e.target.value) || 0 }, `mod-min-${single.id}`)}
+            className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
+          />
+        </label>
+
+        <label className="space-y-1">
+          <span className="text-[11px] text-[#C2B3A4]">Max chiều cao (m)</span>
+          <input
+            type="number"
+            step="0.05"
+            min={single.minHeight}
+            max={single.length}
+            value={single.maxHeight}
+            onChange={(e) => updateModule(single.id, { maxHeight: Number(e.target.value) || 0 }, `mod-max-${single.id}`)}
+            className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
+          />
+        </label>
+
+        <label className="space-y-1">
+          <span className="flex items-center gap-1 text-[11px] text-[#C2B3A4]">
+            Tốc độ max (cm/s)
             <span title="Vận tốc tối đa motor theo spec (H2 = 120 cm/s). Timeline đối chiếu thông số này để cảnh báo nếu quá nhanh.">
-              <HelpCircle size={12} />
+              <HelpCircle size={11} />
             </span>
           </span>
           <input
@@ -407,14 +402,15 @@ export function PropertiesPanel() {
             max="500"
             value={single.maxSpeedCms}
             onChange={(e) => updateModule(single.id, { maxSpeedCms: Number(e.target.value) || 120 }, `mod-spd-${single.id}`)}
-            className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg tabular-nums"
+            className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
         </label>
+
         <label className="space-y-1">
-          <span className="flex items-center gap-1 text-muted">
+          <span className="flex items-center gap-1 text-[11px] text-[#C2B3A4]">
             CH3 mặc định
             <span title="Giá trị DMX kênh tốc độ mặc định (100 ≈ 47 cm/s)">
-              <HelpCircle size={12} />
+              <HelpCircle size={11} />
             </span>
           </span>
           <input
@@ -423,7 +419,7 @@ export function PropertiesPanel() {
             max="255"
             value={single.defaultSpeed}
             onChange={(e) => updateModule(single.id, { defaultSpeed: Number(e.target.value) || 100 }, `mod-ch3-${single.id}`)}
-            className="w-full rounded border border-line bg-bg px-2 py-1.5 text-fg tabular-nums"
+            className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
         </label>
       </div>
@@ -435,30 +431,31 @@ export function PropertiesPanel() {
         onReset={() => updateModule(single.id, { transform: defaultModuleTransform() })}
       />
 
-      <div className="mt-auto space-y-2 rounded-lg border border-line bg-bg/70 p-2.5">
+      {/* Giám sát 4 kênh DMX */}
+      <div className="mt-auto space-y-2 border-t border-line pt-2.5">
         <div className="flex items-center justify-between">
-          <span className="font-medium text-info">Giám sát 4 kênh DMX</span>
-          <span className="flex items-center gap-1 text-[11px] text-muted tabular-nums">
-            {snapshot?.locked ? <Lock size={12} className="text-warn" /> : <Unlock size={12} className="text-ok" />}
+          <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">Giám sát 4 kênh DMX</span>
+          <span className="flex items-center gap-1 text-[11px] text-[#C2B3A4] tabular-nums">
+            {snapshot?.locked ? <Lock size={11} className="text-warn" /> : <Unlock size={11} className="text-ok" />}
             {(st?.pos ?? 0).toFixed(2)}m → {(st?.target ?? 0).toFixed(2)}m
           </span>
         </div>
 
         <div className="grid grid-cols-4 gap-1.5 text-center tabular-nums">
-          <div className="rounded bg-panel-2 p-1.5" title="CH1: Vị trí chính (0-255)">
-            <div className="text-[10px] text-muted">CH1 Pos</div>
+          <div className="rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title="CH1: Vị trí chính (0-255)">
+            <div className="text-[9.5px] text-muted">CH1 Pos</div>
             <div className="font-semibold text-fg">{ch1}</div>
           </div>
-          <div className="rounded bg-panel-2 p-1.5" title="CH2: Fine tune 16-bit (0-255)">
-            <div className="text-[10px] text-muted">CH2 Fine</div>
+          <div className="rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title="CH2: Fine tune 16-bit (0-255)">
+            <div className="text-[9.5px] text-muted">CH2 Fine</div>
             <div className="font-semibold text-fg">{ch2}</div>
           </div>
-          <div className="rounded bg-panel-2 p-1.5" title={`CH3: Tốc độ (${ch3ToCms(ch3, single.maxSpeedCms).toFixed(0)} cm/s)`}>
-            <div className="text-[10px] text-muted">CH3 Spd</div>
-            <div className="font-semibold text-brand">{ch3}</div>
+          <div className="rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title={`CH3: Tốc độ (${ch3ToCms(ch3, single.maxSpeedCms).toFixed(0)} cm/s)`}>
+            <div className="text-[9.5px] text-muted">CH3 Spd</div>
+            <div className="font-semibold text-[#FFB26B]">{ch3}</div>
           </div>
-          <div className="rounded bg-panel-2 p-1.5" title="CH4: Safe lock (77 = mở khoá, 0 = khoá)">
-            <div className="text-[10px] text-muted">CH4 Lock</div>
+          <div className="rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title="CH4: Safe lock (77 = mở khoá, 0 = khoá)">
+            <div className="text-[9.5px] text-muted">CH4 Lock</div>
             <div className={`font-semibold ${ch4 === project.settings.lockValue ? 'text-ok' : 'text-warn'}`}>
               {ch4}
             </div>

@@ -133,14 +133,14 @@ export function GauzeTree() {
   return (
     <div className="relative flex h-full flex-col gap-2">
       {/* Thanh chọn & chế độ DMX */}
-      <div className="flex items-center justify-between gap-1 border-b border-line pb-2">
+      <div className="flex items-center justify-between gap-1 pb-1">
         <button
           type="button"
           onClick={selectAll}
           title="Chọn tất cả module màn"
-          className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-panel-2 px-2 py-1 text-xs text-info hover:bg-line"
+          className="kiln-btn kiln-btn-cue h-6 px-2.5 text-[11px]"
         >
-          <CheckSquare size={14} aria-hidden />
+          <CheckSquare size={12} aria-hidden />
           Chọn hết ({project.modules.length})
         </button>
 
@@ -152,9 +152,7 @@ export function GauzeTree() {
               notify(isAuto ? 'Đã chuyển sang gán địa chỉ thủ công' : 'Đã bật tự động gán địa chỉ từ kênh 1', 'info')
             }}
             title="Auto: tự gán 4 kênh liên tiếp từ 1. Thủ công: nhập từng module trên Thuộc tính"
-            className={`cursor-pointer rounded-md px-2 py-1 text-xs font-medium ${
-              isAuto ? 'bg-brand/20 text-brand' : 'bg-panel-2 text-muted hover:text-fg'
-            }`}
+            className={`cursor-pointer ${isAuto ? 'kiln-chip acc h-6' : 'kiln-chip h-6'}`}
           >
             {isAuto ? 'Auto DMX' : 'Thủ công'}
           </button>
@@ -162,9 +160,9 @@ export function GauzeTree() {
             type="button"
             onClick={reAutoAssign}
             title="Sắp xếp lại địa chỉ liên tiếp từ kênh 1 cho toàn bộ module"
-            className="cursor-pointer rounded-md bg-panel-2 p-1.5 text-muted hover:bg-line hover:text-fg"
+            className="kiln-btn h-6 w-6 px-0 text-muted hover:text-fg"
           >
-            <RefreshCw size={13} aria-hidden />
+            <RefreshCw size={12} aria-hidden />
           </button>
         </div>
       </div>
@@ -175,55 +173,39 @@ export function GauzeTree() {
           type="button"
           onClick={openCreateLayer}
           title="Tạo một Layer (lớp màn) mới"
-          className={`inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-xs font-medium transition ${
-            createKind === 'layer'
-              ? 'border-info bg-info/15 text-info'
-              : 'border-line bg-panel-2 text-fg hover:border-info/60'
-          }`}
+          className={`kiln-btn h-7 text-[11px] ${createKind === 'layer' ? 'kiln-btn-cue' : ''}`}
         >
-          <FolderPlus size={14} aria-hidden />
+          <FolderPlus size={13} aria-hidden />
           + Layer
         </button>
         <button
           type="button"
           onClick={() => openCreateModule()}
           title="Tạo một Module màn mới và chọn Layer chứa"
-          className={`inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-xs font-medium transition ${
-            createKind === 'module'
-              ? 'border-brand bg-brand/15 text-brand'
-              : 'border-line bg-panel-2 text-fg hover:border-brand/60'
-          }`}
+          className={`kiln-btn h-7 text-[11px] ${createKind === 'module' ? 'kiln-btn-primary' : ''}`}
         >
-          <Plus size={14} aria-hidden />
+          <Plus size={13} aria-hidden />
           + Module
         </button>
       </div>
 
       {/* Form Tạo Layer */}
       {createKind === 'layer' && (
-        <div className="space-y-1.5 rounded-lg border border-info/50 bg-panel-2 p-2 text-xs">
-          <div className="font-medium text-info">Tạo Layer mới</div>
+        <div className="space-y-2 rounded-2xl bg-black/25 p-2.5 text-xs shadow-[inset_0_0_0_1px_rgba(141,184,255,.35)]">
+          <div className="font-semibold text-info">Tạo Layer mới</div>
           <input
             value={newLayerName}
             onChange={(e) => setNewLayerName(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleAddLayer()}
             placeholder="Tên layer (vd: Lớp giữa)"
-            className="w-full rounded border border-line bg-bg px-2 py-1 text-fg"
+            className="kiln-field h-8 w-full px-2.5 text-xs"
           />
           {formErr && <p className="text-[11px] text-danger">{formErr}</p>}
-          <div className="flex justify-end gap-1">
-            <button
-              type="button"
-              onClick={() => setCreateKind('none')}
-              className="cursor-pointer rounded px-2 py-1 text-muted hover:text-fg"
-            >
+          <div className="flex justify-end gap-1.5">
+            <button type="button" onClick={() => setCreateKind('none')} className="kiln-btn h-6 px-2.5 text-[11px]">
               Huỷ
             </button>
-            <button
-              type="button"
-              onClick={handleAddLayer}
-              className="cursor-pointer rounded bg-info px-2.5 py-1 font-medium text-slate-950"
-            >
+            <button type="button" onClick={handleAddLayer} className="kiln-btn kiln-btn-cue h-6 px-3 text-[11px]">
               Tạo Layer
             </button>
           </div>
@@ -232,14 +214,14 @@ export function GauzeTree() {
 
       {/* Form Tạo Module */}
       {createKind === 'module' && (
-        <div className="space-y-1.5 rounded-lg border border-brand/50 bg-panel-2 p-2 text-xs">
-          <div className="font-medium text-brand">Tạo Module mới</div>
-          <label className="block text-[11px] text-muted">
+        <div className="space-y-2 rounded-2xl bg-black/25 p-2.5 text-xs shadow-[inset_0_0_0_1px_rgba(247,132,46,.38)]">
+          <div className="font-semibold text-[#FFB26B]">Tạo Module mới</div>
+          <label className="block text-[11px] text-[#C2B3A4]">
             Thuộc Layer
             <select
               value={targetLayerId}
               onChange={(e) => setTargetLayerId(e.target.value)}
-              className="mt-0.5 w-full rounded border border-line bg-bg px-2 py-1 text-fg"
+              className="kiln-field mt-1 h-8 w-full px-2 text-xs"
             >
               {project.layers.map((l) => (
                 <option key={l.id} value={l.id}>
@@ -253,10 +235,10 @@ export function GauzeTree() {
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleAddModule()}
             placeholder="Tên module (vd: Trước 13)"
-            className="w-full rounded border border-line bg-bg px-2 py-1 text-fg"
+            className="kiln-field h-8 w-full px-2.5 text-xs"
           />
           <div className="flex gap-1.5">
-            <label className="flex-1 text-[11px] text-muted">
+            <label className="flex-1 text-[11px] text-[#C2B3A4]">
               Dài (m)
               <input
                 type="number"
@@ -264,11 +246,11 @@ export function GauzeTree() {
                 min="0.2"
                 value={newLen}
                 onChange={(e) => setNewLen(e.target.value)}
-                className="mt-0.5 w-full rounded border border-line bg-bg px-2 py-1 text-fg"
+                className="kiln-field mt-1 h-7 w-full px-2 text-xs"
               />
             </label>
             {!isAuto && (
-              <label className="flex-1 text-[11px] text-muted">
+              <label className="flex-1 text-[11px] text-[#C2B3A4]">
                 Kênh đầu
                 <input
                   type="number"
@@ -277,33 +259,25 @@ export function GauzeTree() {
                   value={newAddr}
                   onChange={(e) => setNewAddr(e.target.value)}
                   placeholder="Auto"
-                  className="mt-0.5 w-full rounded border border-line bg-bg px-2 py-1 text-fg"
+                  className="kiln-field mt-1 h-7 w-full px-2 text-xs"
                 />
               </label>
             )}
           </div>
           {formErr && <p className="text-[11px] text-danger">{formErr}</p>}
-          <div className="flex justify-end gap-1">
-            <button
-              type="button"
-              onClick={() => setCreateKind('none')}
-              className="cursor-pointer rounded px-2 py-1 text-muted hover:text-fg"
-            >
+          <div className="flex justify-end gap-1.5">
+            <button type="button" onClick={() => setCreateKind('none')} className="kiln-btn h-6 px-2.5 text-[11px]">
               Huỷ
             </button>
-            <button
-              type="button"
-              onClick={handleAddModule}
-              className="cursor-pointer rounded bg-brand px-2.5 py-1 font-medium text-brand-fg"
-            >
+            <button type="button" onClick={handleAddModule} className="kiln-btn kiln-btn-primary h-6 px-3 text-[11px]">
               Tạo Module
             </button>
           </div>
         </div>
       )}
 
-      {/* Danh sách Layer & Module (hỗ trợ kéo thả & chuột phải) */}
-      <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto pr-1">
+      {/* Danh sách Layer & Module */}
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
         {project.layers.map((layer) => {
           const mods = project.modules.filter((m) => m.layerId === layer.id)
           const collapsed = Boolean(collapsedLayers[layer.id])
@@ -314,7 +288,7 @@ export function GauzeTree() {
           return (
             <div
               key={layer.id}
-              className={`space-y-1 rounded-lg transition ${isDropLayerHeader ? 'bg-info/10 ring-1 ring-info' : ''}`}
+              className={`space-y-1 rounded-2xl transition ${isDropLayerHeader ? 'ring-1 ring-info' : ''}`}
               onDragOver={(e) => {
                 if (!draggedModId) return
                 e.preventDefault()
@@ -330,15 +304,16 @@ export function GauzeTree() {
                 setDropTarget(null)
               }}
             >
+              {/* Layer header theo ngôn ngữ Kiln (.lh / .lh.sel) */}
               <div
                 onContextMenu={(e) => {
                   e.preventDefault()
                   selectLayer(layer.id)
                   setCtxMenu({ kind: 'layer', x: e.clientX, y: e.clientY, layer })
                 }}
-                className={`group flex items-center justify-between gap-1 rounded-md px-1 py-0.5 transition ${
-                  layerSelected ? 'bg-info/15 ring-1 ring-info/50' : 'hover:bg-panel-2/60'
-                } ${!layerVisible ? 'opacity-50' : ''}`}
+                className={`kiln-layer group flex items-center justify-between gap-1 px-2 py-1.5 transition ${
+                  layerSelected ? 'sel' : ''
+                } ${!layerVisible ? 'opacity-45' : ''}`}
               >
                 <div className="flex min-w-0 flex-1 items-center gap-1">
                   <button
@@ -346,7 +321,9 @@ export function GauzeTree() {
                     onClick={() => toggleLayerCollapse(layer.id)}
                     title={collapsed ? 'Mở rộng layer' : 'Thu gọn layer'}
                     aria-label={collapsed ? `Mở rộng ${layer.name}` : `Thu gọn ${layer.name}`}
-                    className="cursor-pointer rounded p-0.5 text-muted hover:bg-line hover:text-fg"
+                    className={`cursor-pointer rounded-full p-0.5 ${
+                      layerSelected ? 'text-[#1C0E04] hover:bg-black/15' : 'text-muted hover:bg-white/10 hover:text-fg'
+                    }`}
                   >
                     {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                   </button>
@@ -368,18 +345,24 @@ export function GauzeTree() {
                           setRenamingLayerId(null)
                         }
                       }}
-                      className="min-w-0 flex-1 rounded border border-info bg-bg px-1.5 py-0.5 text-xs text-fg"
+                      className="kiln-field h-6 min-w-0 flex-1 px-1.5 text-xs"
                     />
                   ) : (
                     <button
                       type="button"
                       onClick={() => selectLayer(layer.id)}
                       title="Bấm chọn Layer (chỉnh Transform 3D) hoặc chuột phải để thêm/sửa/ẩn/xoá"
-                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left text-xs font-semibold text-info hover:underline"
+                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left text-xs font-semibold"
                     >
-                      <Layers size={13} className="shrink-0" aria-hidden />
+                      <Layers size={13} className={`shrink-0 ${layerSelected ? 'text-[#1C0E04]' : 'text-info'}`} aria-hidden />
                       <span className="truncate">{layer.name}</span>
-                      <span className="shrink-0 text-[10px] font-normal text-muted">({mods.length})</span>
+                      <span
+                        className={`shrink-0 text-[10px] font-medium ${
+                          layerSelected ? 'text-[#1C0E04]/75' : 'text-muted'
+                        }`}
+                      >
+                        ({mods.length})
+                      </span>
                     </button>
                   )}
                 </div>
@@ -389,10 +372,12 @@ export function GauzeTree() {
                     type="button"
                     onClick={() => toggleLayerVisibility(layer.id)}
                     title={layerVisible ? 'Ẩn Layer trên 3D' : 'Hiện Layer trên 3D'}
-                    className={`cursor-pointer rounded p-1 transition ${
-                      layerVisible
-                        ? 'text-muted opacity-0 group-hover:opacity-100 hover:bg-line hover:text-fg'
-                        : 'text-warn opacity-100 hover:bg-line'
+                    className={`cursor-pointer rounded-full p-1 transition ${
+                      layerSelected
+                        ? 'text-[#1C0E04]/80 hover:bg-black/15'
+                        : layerVisible
+                          ? 'text-muted opacity-0 group-hover:opacity-100 hover:bg-white/10 hover:text-fg'
+                          : 'text-warn opacity-100 hover:bg-white/10'
                     }`}
                   >
                     {layerVisible ? <Eye size={12} /> : <EyeOff size={12} />}
@@ -404,7 +389,9 @@ export function GauzeTree() {
                       setRenameText(layer.name)
                     }}
                     title="Đổi tên layer"
-                    className="cursor-pointer rounded p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-line hover:text-fg"
+                    className={`cursor-pointer rounded-full p-1 opacity-0 transition group-hover:opacity-100 ${
+                      layerSelected ? 'text-[#1C0E04]/80 hover:bg-black/15' : 'text-muted hover:bg-white/10 hover:text-fg'
+                    }`}
                   >
                     <Edit3 size={12} />
                   </button>
@@ -413,7 +400,11 @@ export function GauzeTree() {
                       type="button"
                       onClick={() => removeLayer(layer.id)}
                       title="Xoá layer"
-                      className="cursor-pointer rounded p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-danger/20 hover:text-danger"
+                      className={`cursor-pointer rounded-full p-1 opacity-0 transition group-hover:opacity-100 ${
+                        layerSelected
+                          ? 'text-[#1C0E04]/80 hover:bg-black/15'
+                          : 'text-muted hover:bg-danger/20 hover:text-danger'
+                      }`}
                     >
                       <Trash2 size={12} />
                     </button>
@@ -422,9 +413,9 @@ export function GauzeTree() {
               </div>
 
               {!collapsed && (
-                <div className="space-y-1 pl-2">
+                <div className="space-y-0.5 pl-1.5">
                   {mods.length === 0 ? (
-                    <div className="rounded border border-dashed border-line px-2 py-1.5 text-[11px] text-muted">
+                    <div className="rounded-xl border border-dashed border-line px-2.5 py-2 text-[11px] text-muted">
                       Kéo thả module vào đây hoặc chuột phải để thêm
                     </div>
                   ) : (
@@ -484,33 +475,24 @@ export function GauzeTree() {
                             }
                           }}
                           title="Kéo thả để đổi vị trí/đổi Layer hoặc kéo vào Timeline · Chuột phải để sửa/ẩn/xoá"
-                          className={`group flex cursor-pointer items-center justify-between rounded-lg border px-2.5 py-1.5 text-xs transition ${
+                          className={`kiln-tree-row group flex cursor-pointer items-center justify-between px-2.5 py-1.5 text-xs transition ${
                             isDropBefore ? 'border-t-2 border-t-brand' : ''
-                          } ${
-                            selected
-                              ? 'border-brand bg-brand/15 text-fg'
-                              : 'border-transparent bg-panel-2/60 text-fg/85 hover:border-line hover:bg-panel-2'
-                          } ${!modVisible || !layerVisible ? 'opacity-45' : ''} ${
+                          } ${selected ? 'sel' : ''} ${!modVisible || !layerVisible ? 'opacity-45' : ''} ${
                             draggedModId === m.id ? 'opacity-40' : ''
                           }`}
                         >
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5">
                               <span
-                                className={`size-2 shrink-0 rounded-full ${
+                                className={`size-1.5 shrink-0 rounded-full ${
                                   conflictWith
                                     ? 'bg-danger'
                                     : st?.moving
                                       ? 'animate-pulse bg-brand'
-                                      : 'bg-info/70'
+                                      : selected
+                                        ? 'bg-brand shadow-[0_0_0_3px_rgba(247,132,46,.22)]'
+                                        : 'bg-info/70'
                                 }`}
-                                title={
-                                  conflictWith
-                                    ? `Trùng kênh DMX với: ${conflictWith.join(', ')}`
-                                    : st?.moving
-                                      ? 'Đang di chuyển'
-                                      : 'Đang dừng'
-                                }
                               />
                               {renamingModId === m.id ? (
                                 <input
@@ -530,10 +512,12 @@ export function GauzeTree() {
                                       setRenamingModId(null)
                                     }
                                   }}
-                                  className="min-w-0 flex-1 rounded border border-brand bg-bg px-1 py-0.5 text-xs text-fg"
+                                  className="kiln-field h-5 min-w-0 flex-1 px-1.5 text-xs"
                                 />
                               ) : (
-                                <span className="truncate font-medium">{m.name}</span>
+                                <span className={`truncate font-medium ${selected ? 'text-[#FFB26B]' : 'text-fg'}`}>
+                                  {m.name}
+                                </span>
                               )}
                               {conflictWith && (
                                 <AlertTriangle
@@ -543,12 +527,12 @@ export function GauzeTree() {
                                 />
                               )}
                             </div>
-                            <div className="mt-0.5 flex items-center gap-1.5 whitespace-nowrap text-[11px] text-muted tabular-nums">
+                            <div className="mt-0.5 flex items-center gap-1.5 whitespace-nowrap text-[10.5px] text-muted tabular-nums">
                               <span>
                                 CH {chStart}–{chEnd}
                               </span>
                               <span>·</span>
-                              <span>
+                              <span className={selected ? 'text-[#FFB26B]' : ''}>
                                 {(st?.pos ?? 0).toFixed(2)}/{m.length}m
                               </span>
                             </div>
@@ -562,10 +546,10 @@ export function GauzeTree() {
                               type="button"
                               onClick={() => toggleModuleVisibility(m.id)}
                               title={modVisible ? 'Ẩn Module' : 'Hiện Module'}
-                              className={`cursor-pointer rounded p-1 transition ${
+                              className={`cursor-pointer rounded-full p-1 transition ${
                                 modVisible
-                                  ? 'text-muted opacity-0 group-hover:opacity-100 hover:bg-line hover:text-fg'
-                                  : 'text-warn opacity-100 hover:bg-line'
+                                  ? 'text-muted opacity-0 group-hover:opacity-100 hover:bg-white/10 hover:text-fg'
+                                  : 'text-warn opacity-100 hover:bg-white/10'
                               }`}
                             >
                               {modVisible ? <Eye size={12} /> : <EyeOff size={12} />}
@@ -575,7 +559,7 @@ export function GauzeTree() {
                               disabled={idx === 0}
                               onClick={() => moveModule(m.id, -1)}
                               title="Đưa lên"
-                              className="cursor-pointer rounded p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-line hover:text-fg disabled:opacity-30"
+                              className="cursor-pointer rounded-full p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-white/10 hover:text-fg disabled:opacity-30"
                             >
                               <ArrowUp size={12} />
                             </button>
@@ -584,7 +568,7 @@ export function GauzeTree() {
                               disabled={idx === mods.length - 1}
                               onClick={() => moveModule(m.id, 1)}
                               title="Đưa xuống"
-                              className="cursor-pointer rounded p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-line hover:text-fg disabled:opacity-30"
+                              className="cursor-pointer rounded-full p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-white/10 hover:text-fg disabled:opacity-30"
                             >
                               <ArrowDown size={12} />
                             </button>
@@ -592,7 +576,7 @@ export function GauzeTree() {
                               type="button"
                               onClick={() => duplicateModule(m.id)}
                               title="Nhân bản module"
-                              className="cursor-pointer rounded p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-line hover:text-fg"
+                              className="cursor-pointer rounded-full p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-white/10 hover:text-fg"
                             >
                               <Copy size={12} />
                             </button>
@@ -600,7 +584,7 @@ export function GauzeTree() {
                               type="button"
                               onClick={() => removeModule(m.id)}
                               title="Xoá module"
-                              className="cursor-pointer rounded p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-danger/20 hover:text-danger"
+                              className="cursor-pointer rounded-full p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-danger/20 hover:text-danger"
                             >
                               <Trash2 size={12} />
                             </button>
@@ -616,30 +600,30 @@ export function GauzeTree() {
         })}
       </div>
 
-      {/* Menu Chuột Phải cho Layer / Module */}
+      {/* Menu Chuột Phải chuẩn Kiln */}
       {ctxMenu && (
         <div
           role="menu"
           style={{
-            left: Math.min(ctxMenu.x, window.innerWidth - 200),
+            left: Math.min(ctxMenu.x, window.innerWidth - 205),
             top: Math.min(ctxMenu.y, window.innerHeight - 210),
           }}
-          className="fixed z-50 w-48 overflow-hidden rounded-ui border border-info/40 bg-panel py-1 text-xs shadow-2xl"
+          className="kiln-panel fixed z-50 w-48 overflow-hidden py-1.5 text-xs shadow-2xl"
         >
           {ctxMenu.kind === 'layer' ? (
             <>
               <button
                 type="button"
                 onClick={() => openCreateModule(ctxMenu.layer.id)}
-                className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-fg hover:bg-panel-2"
+                className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
               >
-                <Plus size={13} className="text-brand" />
+                <Plus size={13} className="text-[#FFB26B]" />
                 Thêm Module vào lớp
               </button>
               <button
                 type="button"
                 onClick={openCreateLayer}
-                className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-fg hover:bg-panel-2"
+                className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
               >
                 <FolderPlus size={13} className="text-info" />
                 Thêm Layer mới
@@ -650,7 +634,7 @@ export function GauzeTree() {
                   setRenamingLayerId(ctxMenu.layer.id)
                   setRenameText(ctxMenu.layer.name)
                 }}
-                className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-fg hover:bg-panel-2"
+                className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
               >
                 <Edit3 size={13} className="text-muted" />
                 Sửa tên Layer
@@ -658,18 +642,18 @@ export function GauzeTree() {
               <button
                 type="button"
                 onClick={() => toggleLayerVisibility(ctxMenu.layer.id)}
-                className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-fg hover:bg-panel-2"
+                className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
               >
                 {(ctxMenu.layer.visible ?? true) ? <EyeOff size={13} className="text-warn" /> : <Eye size={13} className="text-ok" />}
                 {(ctxMenu.layer.visible ?? true) ? 'Ẩn Layer' : 'Hiện Layer'}
               </button>
               {project.layers.length > 1 && (
                 <>
-                  <div className="my-1 border-t border-line" />
+                  <div className="mx-3 my-1 border-t border-line" />
                   <button
                     type="button"
                     onClick={() => removeLayer(ctxMenu.layer.id)}
-                    className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-danger hover:bg-danger/15"
+                    className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-danger hover:bg-danger/15"
                   >
                     <Trash2 size={13} />
                     Xoá Layer
@@ -685,7 +669,7 @@ export function GauzeTree() {
                   setRenamingModId(ctxMenu.mod.id)
                   setRenameText(ctxMenu.mod.name)
                 }}
-                className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-fg hover:bg-panel-2"
+                className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
               >
                 <Edit3 size={13} className="text-info" />
                 Đổi tên Module
@@ -693,24 +677,24 @@ export function GauzeTree() {
               <button
                 type="button"
                 onClick={() => duplicateModule(ctxMenu.mod.id)}
-                className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-fg hover:bg-panel-2"
+                className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
               >
-                <Copy size={13} className="text-brand" />
+                <Copy size={13} className="text-[#FFB26B]" />
                 Nhân bản Module
               </button>
               <button
                 type="button"
                 onClick={() => toggleModuleVisibility(ctxMenu.mod.id)}
-                className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-fg hover:bg-panel-2"
+                className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-fg hover:bg-white/8"
               >
                 {(ctxMenu.mod.visible ?? true) ? <EyeOff size={13} className="text-warn" /> : <Eye size={13} className="text-ok" />}
                 {(ctxMenu.mod.visible ?? true) ? 'Ẩn Module' : 'Hiện Module'}
               </button>
-              <div className="my-1 border-t border-line" />
+              <div className="mx-3 my-1 border-t border-line" />
               <button
                 type="button"
                 onClick={() => removeModule(ctxMenu.mod.id)}
-                className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-danger hover:bg-danger/15"
+                className="mx-1.5 flex w-[calc(100%-12px)] cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-danger hover:bg-danger/15"
               >
                 <Trash2 size={13} />
                 Xoá Module

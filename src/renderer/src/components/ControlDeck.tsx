@@ -8,6 +8,7 @@ import {
   Clock,
   Edit3,
   LayoutGrid,
+  Play,
   Plus,
   SlidersHorizontal,
   Square,
@@ -24,25 +25,21 @@ function ActionBtn({
   hint,
   onClick,
   variant = 'ghost',
-  active = false,
 }: {
   icon: typeof ArrowUp
   label: string
   hint: string
   onClick: () => void
   variant?: 'brand' | 'info' | 'danger' | 'ghost'
-  active?: boolean
 }) {
   const cls =
     variant === 'brand'
-      ? 'bg-brand text-brand-fg hover:brightness-110'
+      ? 'kiln-btn kiln-btn-primary'
       : variant === 'info'
-        ? 'bg-info text-slate-950 hover:brightness-110'
+        ? 'kiln-btn kiln-btn-cue'
         : variant === 'danger'
-          ? 'bg-danger text-black hover:brightness-110'
-          : active
-            ? 'border border-brand bg-brand/20 text-brand'
-            : 'border border-line bg-panel-2 text-fg hover:bg-line'
+          ? 'kiln-btn kiln-btn-danger'
+          : 'kiln-btn'
 
   return (
     <motion.button
@@ -50,11 +47,11 @@ function ActionBtn({
       title={hint}
       onClick={onClick}
       whileHover={{ y: -1 }}
-      whileTap={{ scale: 0.93 }}
+      whileTap={{ scale: 0.94 }}
       transition={{ type: 'spring', stiffness: 520, damping: 28 }}
-      className={`inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-ui px-3.5 text-xs font-semibold ${cls}`}
+      className={`h-10 px-3.5 text-xs ${cls}`}
     >
-      <Icon size={16} aria-hidden />
+      <Icon size={15} aria-hidden />
       <span>{label}</span>
     </motion.button>
   )
@@ -67,7 +64,6 @@ function ModeButtons() {
   const [layerHeights, setLayerHeights] = useState<Record<string, string>>({})
   const [lastFired, setLastFired] = useState<string | null>(null)
 
-  // Hỗ trợ Enter/F2 để sửa nút đang chọn
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return
@@ -174,12 +170,12 @@ function ModeButtons() {
             value={editing.name}
             onChange={(e) => setEditing({ ...editing, name: e.target.value })}
             placeholder="Tên nút điều khiển"
-            className="min-w-36 flex-1 rounded border border-line bg-bg px-2.5 py-1.5 text-fg"
+            className="kiln-field h-8 min-w-36 flex-1 px-3 text-xs"
           />
           <select
             value={editing.speedUnit}
             onChange={(e) => setEditing({ ...editing, speedUnit: e.target.value as SpeedUnit })}
-            className="rounded border border-line bg-bg px-2 py-1.5 text-fg"
+            className="kiln-field h-8 px-2.5 text-xs"
           >
             <option value="sec">Theo giây (s)</option>
             <option value="cms">Theo tốc độ (cm/s)</option>
@@ -190,13 +186,9 @@ function ModeButtons() {
             step="0.5"
             value={editing.speedValue}
             onChange={(e) => setEditing({ ...editing, speedValue: Math.max(0.1, Number(e.target.value) || 1) })}
-            className="w-20 rounded border border-line bg-bg px-2 py-1.5 text-fg tabular-nums"
+            className="kiln-field h-8 w-20 px-2.5 text-xs tabular-nums"
           />
-          <button
-            type="button"
-            onClick={() => setEditing(null)}
-            className="cursor-pointer rounded border border-line px-2.5 py-1.5 text-muted hover:text-fg"
-          >
+          <button type="button" onClick={() => setEditing(null)} className="kiln-btn h-8 px-3 text-xs">
             Huỷ
           </button>
           <button
@@ -209,7 +201,7 @@ function ModeButtons() {
               saveButton(editing)
               setEditing(null)
             }}
-            className="cursor-pointer rounded bg-brand px-3 py-1.5 font-semibold text-brand-fg"
+            className="kiln-btn kiln-btn-primary h-8 px-3.5 text-xs"
           >
             Lưu nút ({editing.steps.length})
           </button>
@@ -229,14 +221,14 @@ function ModeButtons() {
                   })),
                 })
               }
-              className="cursor-pointer rounded bg-panel-2 px-2 py-0.5 text-info hover:bg-line"
+              className="kiln-btn kiln-btn-cue h-6 px-2.5 text-[11px]"
             >
               Chọn hết
             </button>
             <button
               type="button"
               onClick={() => setEditing({ ...editing, steps: [] })}
-              className="cursor-pointer rounded bg-panel-2 px-2 py-0.5 text-muted hover:bg-line hover:text-fg"
+              className="kiln-btn h-6 px-2.5 text-[11px]"
             >
               Bỏ chọn
             </button>
@@ -251,7 +243,7 @@ function ModeButtons() {
                   })),
                 })
               }
-              className="cursor-pointer rounded bg-panel-2 px-2 py-0.5 text-brand hover:bg-line"
+              className="kiln-btn h-6 px-2.5 text-[11px] text-[#FFB26B]"
             >
               Lấy vị trí 3D hiện tại
             </button>
@@ -266,7 +258,7 @@ function ModeButtons() {
             const layerVal = layerHeights[layer.id] ?? '1'
 
             return (
-              <div key={layer.id} className="space-y-1.5 rounded-lg border border-line bg-panel-2/40 p-2">
+              <div key={layer.id} className="kiln-layer space-y-2 p-2.5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <label className="flex cursor-pointer items-center gap-2 font-semibold text-info">
                     <input
@@ -282,19 +274,19 @@ function ModeButtons() {
                   </label>
 
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] text-muted">Cả layer (m):</span>
+                    <span className="text-[11px] text-[#C2B3A4]">Cả layer (m):</span>
                     <input
                       type="number"
                       step="0.1"
                       min="0"
                       value={layerVal}
                       onChange={(e) => setLayerHeights({ ...layerHeights, [layer.id]: e.target.value })}
-                      className="w-16 rounded border border-line bg-bg px-1.5 py-0.5 text-right text-fg tabular-nums"
+                      className="kiln-field h-6 w-16 px-2 text-right text-xs tabular-nums"
                     />
                     <button
                       type="button"
                       onClick={() => applyLayerHeight(layer.id, Number(layerVal) || 0)}
-                      className="cursor-pointer rounded bg-info/20 px-2 py-0.5 text-[11px] font-medium text-info hover:bg-info/30"
+                      className="kiln-btn kiln-btn-cue h-6 px-2.5 text-[11px]"
                     >
                       Áp dụng
                     </button>
@@ -308,8 +300,10 @@ function ModeButtons() {
                     return (
                       <div
                         key={m.id}
-                        className={`flex items-center justify-between gap-1.5 rounded border px-2 py-1 ${
-                          checked ? 'border-brand/50 bg-panel-2' : 'border-line/60 bg-bg/40 opacity-65'
+                        className={`flex items-center justify-between gap-1.5 rounded-xl px-2 py-1 transition ${
+                          checked
+                            ? 'bg-black/30 shadow-[inset_0_0_0_1px_rgba(247,132,46,.45)]'
+                            : 'bg-black/15 opacity-60 shadow-[inset_0_0_0_1px_var(--line)]'
                         }`}
                       >
                         <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5">
@@ -330,7 +324,7 @@ function ModeButtons() {
                           max={m.maxHeight}
                           value={pos}
                           onChange={(e) => setModuleHeight(m, Number(e.target.value) || 0)}
-                          className="w-14 rounded border border-line bg-bg px-1 py-0.5 text-right text-fg tabular-nums"
+                          className="kiln-field h-6 w-14 px-1.5 text-right text-xs tabular-nums"
                         />
                       </div>
                     )
@@ -348,16 +342,13 @@ function ModeButtons() {
     <div className="flex h-full flex-col gap-2">
       <div className="flex items-center justify-between text-xs text-muted">
         <span>Bấm nút để chạy · Ctrl+C / Ctrl+V sao chép · F2 sửa · Delete xoá</span>
-        <button
-          type="button"
-          onClick={openNew}
-          className="inline-flex cursor-pointer items-center gap-1 rounded-md bg-brand px-2.5 py-1 font-semibold text-brand-fg"
-        >
-          <Plus size={14} />
+        <button type="button" onClick={openNew} className="kiln-btn kiln-btn-primary h-7 px-3 text-xs">
+          <Plus size={13} />
           Tạo nút
         </button>
       </div>
 
+      {/* Thẻ nút theo cấu trúc Clip tách bar + body của Kiln */}
       <div className="grid min-h-0 flex-1 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3 lg:grid-cols-4">
         {project.buttons.map((b) => {
           const active = lastFired === b.id || selectedButtonId === b.id
@@ -374,46 +365,59 @@ function ModeButtons() {
           return (
             <motion.div
               key={b.id}
-              whileTap={{ scale: 0.95 }}
+              whileTap={{ scale: 0.96 }}
               onClick={() => selectButton(b.id)}
               onDoubleClick={() => {
                 setLayerHeights({})
                 setEditing(b)
               }}
-              className={`group relative flex flex-col justify-between rounded-ui border p-2.5 transition ${
-                active ? 'border-brand bg-brand/15' : 'border-line bg-panel-2/70 hover:border-info/60'
-              }`}
+              className={`kiln-clip group flex flex-col ${active ? 'sel' : ''}`}
             >
-              <button type="button" onClick={() => fire(b)} className="flex-1 cursor-pointer text-left">
-                <div className="truncate text-sm font-semibold text-fg">{b.name}</div>
-                <div className="mt-1 truncate text-[11px] text-muted">
-                  {summary} · {b.speedValue} {b.speedUnit === 'sec' ? 'giây' : 'cm/s'}
-                </div>
+              <button
+                type="button"
+                onClick={() => fire(b)}
+                className="clip-bar flex h-[24px] w-full cursor-pointer items-center gap-1.5 px-2.5 text-left text-[11px] font-semibold"
+              >
+                <Play size={10} fill="currentColor" className="shrink-0" />
+                <span className="truncate">{b.name}</span>
               </button>
-              <div className="mt-2 flex justify-end gap-1 opacity-0 transition group-hover:opacity-100">
+
+              <div className="clip-body flex flex-1 items-center justify-between px-2.5 py-2">
                 <button
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setLayerHeights({})
-                    setEditing(b)
-                  }}
-                  title="Sửa nút (F2)"
-                  className="cursor-pointer rounded p-1 text-muted hover:bg-line hover:text-fg"
+                  onClick={() => fire(b)}
+                  className="min-w-0 flex-1 cursor-pointer text-left text-[11px] text-[#C2B3A4]"
                 >
-                  <Edit3 size={12} />
+                  <div className="truncate">{summary}</div>
+                  <div className={`text-[10px] ${active ? 'text-[#FFB26B]' : 'text-muted'}`}>
+                    {b.speedValue} {b.speedUnit === 'sec' ? 'giây' : 'cm/s'}
+                  </div>
                 </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    deleteButton(b.id)
-                  }}
-                  title="Xoá nút (Delete)"
-                  className="cursor-pointer rounded p-1 text-muted hover:bg-danger/20 hover:text-danger"
-                >
-                  <Trash2 size={12} />
-                </button>
+                <div className="flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setLayerHeights({})
+                      setEditing(b)
+                    }}
+                    title="Sửa nút (F2)"
+                    className="cursor-pointer rounded-full p-1 text-muted hover:bg-white/10 hover:text-fg"
+                  >
+                    <Edit3 size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      deleteButton(b.id)
+                    }}
+                    title="Xoá nút (Delete)"
+                    className="cursor-pointer rounded-full p-1 text-muted hover:bg-danger/20 hover:text-danger"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
               </div>
             </motion.div>
           )
@@ -446,19 +450,19 @@ function ModeManual() {
     <div className="flex h-full flex-col justify-between gap-2 text-xs">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-muted">
-          Áp dụng cho <strong className="text-brand">{selectedIds.length}</strong> module đang chọn · Phím{' '}
-          <kbd className="rounded border border-line bg-bg px-1.5 py-0.5 text-[10px]">Space</kbd> = Dừng tất cả
+          Áp dụng cho <strong className="text-[#FFB26B]">{selectedIds.length}</strong> module đang chọn · Phím{' '}
+          <span className="kiln-kbd">Space</span> = Dừng tất cả
         </span>
 
         <div className="flex items-center gap-2">
-          <div className="flex overflow-hidden rounded-md border border-line bg-bg">
+          <div className="kiln-seg">
             <button
               type="button"
               onClick={() => {
                 setUnit('cms')
                 setVal(47)
               }}
-              className={`cursor-pointer px-2.5 py-1 ${unit === 'cms' ? 'bg-info font-semibold text-slate-950' : 'text-muted'}`}
+              className={`kiln-seg-btn h-[22px] px-2.5 text-[11px] ${unit === 'cms' ? 'on-warm' : ''}`}
             >
               cm/s
             </button>
@@ -468,7 +472,7 @@ function ModeManual() {
                 setUnit('sec')
                 setVal(4)
               }}
-              className={`cursor-pointer px-2.5 py-1 ${unit === 'sec' ? 'bg-info font-semibold text-slate-950' : 'text-muted'}`}
+              className={`kiln-seg-btn h-[22px] px-2.5 text-[11px] ${unit === 'sec' ? 'on-warm' : ''}`}
             >
               Giây
             </button>
@@ -480,7 +484,7 @@ function ModeManual() {
             value={val}
             onChange={(e) => setVal(Number(e.target.value) || 1)}
             aria-label="Giá trị tốc độ hoặc số giây"
-            className="w-20 rounded border border-line bg-bg px-2 py-1 text-fg tabular-nums"
+            className="kiln-field h-7 w-20 px-2.5 text-xs tabular-nums"
           />
         </div>
       </div>
@@ -521,21 +525,21 @@ function ModeManual() {
         />
       </div>
 
-      <div className="flex items-center gap-2 rounded-lg border border-line bg-panel-2/60 px-3 py-1.5">
-        <span className="text-muted">Đặt nhanh độ cao (m):</span>
+      <div className="flex items-center gap-2 rounded-2xl bg-black/25 px-3 py-1.5 shadow-[inset_0_0_0_1px_var(--line)]">
+        <span className="text-[#C2B3A4]">Đặt nhanh độ cao (m):</span>
         <input
           type="number"
           step="0.1"
           min="0"
           value={targetM}
           onChange={(e) => setTargetM(Number(e.target.value) || 0)}
-          className="w-20 rounded border border-line bg-bg px-2 py-1 text-fg tabular-nums"
+          className="kiln-field h-7 w-20 px-2.5 text-xs tabular-nums"
         />
         <motion.button
           type="button"
           whileTap={{ scale: 0.94 }}
           onClick={() => sendCommand({ type: 'move', ids: selectedIds, target: targetM, speed: speedSpec })}
-          className="cursor-pointer rounded bg-brand px-3 py-1 font-semibold text-brand-fg"
+          className="kiln-btn kiln-btn-primary h-7 px-3.5 text-xs"
         >
           Chạy tới {targetM}m
         </motion.button>
@@ -555,24 +559,24 @@ export function ControlDeck() {
 
   return (
     <div className="flex h-full flex-col gap-2">
-      <div className="flex items-center gap-1 border-b border-line pb-2">
-        {tabs.map((t) => {
-          const Icon = t.icon
-          const active = activeTab === t.id
-          return (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setActiveTab(t.id)}
-              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                active ? 'bg-brand text-brand-fg' : 'bg-panel-2 text-muted hover:text-fg'
-              }`}
-            >
-              <Icon size={14} aria-hidden />
-              {t.label}
-            </button>
-          )
-        })}
+      <div className="flex items-center">
+        <div className="kiln-seg">
+          {tabs.map((t) => {
+            const Icon = t.icon
+            const active = activeTab === t.id
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setActiveTab(t.id)}
+                className={`kiln-seg-btn ${active ? 'on' : ''}`}
+              >
+                <Icon size={13} aria-hidden />
+                {t.label}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       <div className="min-h-0 flex-1">
