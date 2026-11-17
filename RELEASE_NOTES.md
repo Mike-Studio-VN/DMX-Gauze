@@ -15,6 +15,7 @@
 - **Safety & Requirements**: Ships with `dmxout1` `Active=OFF` and empty routing table (configure universe/patch before outputting to live hardware). Tested on TouchDesigner `099.2025` (`099.2025.32460`).
 
 ### Known Limitations
+- **Same-Host Loopback Discovery on UDP `6454` (`127.0.0.1` / `localhost`)**: Per the Art-Net specification (`0x1936` = `6454` for both source and destination), standard `ArtPollReply` packets return to UDP `6454`. When a local receiver on the same host owns `127.0.0.1:6454`, `DMX Gauze` sends `ArtDmx` from an ephemeral UDP port (`bind(0)`) and skips binding `6454` to avoid contention or packet stealing; discovery status is therefore indeterminate (does not indicate the receiver is offline). Capturing replies on the ephemeral source port is supplementary compatibility only (not a substitute for standard `6454` discovery), and cooperative forwarding from TouchDesigner's built-in `DMX In CHOP` is not available/proved. Full same-host discovery requires receiver-assisted forwarding to a registered loopback endpoint or a separately assigned controller IP with address-specific node binding.
 - Auto-resuming ArtPoll discovery in TD after toggling `dmx_in` Art-Net off is verified by unit tests and has not yet been measured in a live TD toggle pass.
 - TD→App LTC sync was verified via WAV + `LtcDecoder`; live virtual audio loopback (e.g. BlackHole) and OS microphone/audio input permissions were not yet measured.
 - Default `.toe` retains the local loopback test input configuration (`127.0.0.1`, rate `25`, `dmxout1` OFF).

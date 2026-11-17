@@ -563,7 +563,7 @@ describe('Core + Async Driver integration cleanup & drain tests', () => {
     sacnDefaultUni.stop();
 
     const sacnExplicitUni = new SacnDriver(
-      { ...udpOutput('sacn', '127.0.0.1'), universe: 0, sacnUniverse: 5, sacnMulticast: false },
+      { ...udpOutput('sacn', '127.0.0.1'), port: 6038, universe: 0, sacnUniverse: 5, sacnMulticast: false },
       ev,
     );
     sacnExplicitUni.start();
@@ -573,9 +573,23 @@ describe('Core + Async Driver integration cleanup & drain tests', () => {
       expect(sacnSock2.pendingSends.length).toBe(1);
     });
     const pkt2 = sacnSock2.pendingSends.shift()!;
+    expect(pkt2.port).toBe(6038); // Preserves explicit custom port 6038 on sACN
     expect((pkt2.pkt[113] << 8) | pkt2.pkt[114]).toBe(5);
     pkt2.cb(null);
     sacnExplicitUni.stop();
+
+    // 4) KinetDriver also honors custom ports (5568, 6454) rather than replacing them with 6038.
+    const { KinetDriver } = await import('./kinetDriver');
+    const kinetCustom = new KinetDriver({ ...udpOutput('kinet', '127.0.0.1'), port: 5568 }, ev);
+    kinetCustom.start();
+    const kinetSock = mocks.udp.sockets[2];
+    await vi.waitFor(() => {
+      kinetCustom.send(0, 0, new Uint8Array([10, 20, 30, 77]));
+      expect(kinetSock.pendingSends.length).toBe(1);
+    });
+    expect(kinetSock.pendingSends[0].port).toBe(5568);
+    kinetSock.pendingSends.splice(0).forEach((s) => s.cb(null));
+    kinetCustom.stop();
   });
 
   it('ArtNetDriver keeps sending ArtDmx when port 6454 is busy on non-loopback target, warns cleanly, and listens for ArtPollReply when free', async () => {

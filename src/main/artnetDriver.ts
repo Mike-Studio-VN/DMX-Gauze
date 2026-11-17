@@ -20,12 +20,19 @@ export class ArtNetDriver implements OutputDriver {
   private readonly life = new UdpSocketLifecycle()
   private rxSock: dgram.Socket | null = null
   private rxDisabled = false
+  private warnNotified = false
+  private receivedReply = false
   private seq = 0
 
   constructor(
     private readonly cfg: OutputSettings,
     private readonly ev: DriverEvents,
+    private readonly opts: { listenPort?: number } = {},
   ) {}
+
+  private listenPort(): number {
+    return this.opts.listenPort && this.opts.listenPort > 0 ? this.opts.listenPort : ARTNET_PORT
+  }
 
   private targetPort(): number {
     return this.cfg.port > 0 ? this.cfg.port : ARTNET_PORT
@@ -34,6 +41,8 @@ export class ArtNetDriver implements OutputDriver {
   private handleMessage = (msg: Uint8Array, rinfo: dgram.RemoteInfo): void => {
     const reply = parseArtPollReply(msg)
     if (!reply) return
+    this.receivedReply = true
+    this.ev.onWarn(null)
     this.ev.onNode({
       ip: reply.ip === '0.0.0.0' ? rinfo.address : reply.ip,
       name: reply.name || rinfo.address,
@@ -55,9 +64,16 @@ export class ArtNetDriver implements OutputDriver {
 
   private ensurePollReplyListener(): void {
     if (this.life.closing || this.rxSock || this.rxDisabled) return
-    if (isLoopbackTarget(this.cfg.ip) && this.targetPort() === ARTNET_PORT) return
-
-    const listenPort = ARTNET_PORT
+    const listenPort = this.listenPort()
+    if (isLoopbackTarget(this.cfg.ip) && this.targetPort() === listenPort) {
+      if (!this.receivedReply && !this.warnNotified) {
+        this.warnNotified = true
+        this.ev.onWarn(
+          `Đích localhost:${listenPort}: không bind ${listenPort} để tránh tranh receiver cục bộ — trạng thái discovery không xác định (không đồng nghĩa receiver offline); vẫn gửi ArtDmx và nhận phản hồi bổ sung qua cổng nguồn động nếu node hỗ trợ.`,
+        )
+      }
+      return
+    }
     const rx = dgram.createSocket({ type: 'udp4', reuseAddr: true })
     this.rxSock = rx
 
@@ -98,6 +114,8 @@ export class ArtNetDriver implements OutputDriver {
 
   start(): void {
     this.rxDisabled = false
+    this.warnNotified = false
+    this.receivedReply = false
     this.closeRxSocket()
     const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true })
     this.life.attach(sock)

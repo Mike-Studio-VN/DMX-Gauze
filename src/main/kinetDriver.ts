@@ -1,9 +1,7 @@
 import dgram from 'node:dgram'
-import { ARTNET_PORT } from '@shared/dmx'
 import type { DriverEvents, OutputDriver } from '@shared/drivers'
 import {
   KINET_PORT,
-  SACN_PORT,
   buildKinetPollPacket,
   buildKinetV1Packet,
   buildKinetV2Packet,
@@ -27,9 +25,7 @@ export class KinetDriver implements OutputDriver {
   ) {}
 
   private targetPort(): number {
-    return this.cfg.port > 0 && this.cfg.port !== ARTNET_PORT && this.cfg.port !== SACN_PORT
-      ? this.cfg.port
-      : KINET_PORT
+    return this.cfg.port > 0 ? this.cfg.port : KINET_PORT
   }
 
   start(): void {
