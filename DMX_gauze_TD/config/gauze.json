@@ -1,0 +1,322 @@
+{
+  "ip": "255.255.255.0",
+  "net": 0,
+  "subnet": 0,
+  "universe": 0,
+  "patch": {
+    "mode": "linked",
+    "addresses": {
+      "G1M": 1,
+      "M13": 5
+    }
+  },
+  "limits": {
+    "G1M": {
+      "min": 0.0,
+      "max": 100.0
+    },
+    "M13": {
+      "min": 0.0,
+      "max": 100.0
+    },
+    "M01": {
+      "min": 0,
+      "max": 100
+    },
+    "M02": {
+      "min": 0,
+      "max": 100
+    },
+    "M03": {
+      "min": 0,
+      "max": 100
+    },
+    "M04": {
+      "min": 0,
+      "max": 100
+    },
+    "M05": {
+      "min": 0,
+      "max": 100
+    },
+    "M06": {
+      "min": 0,
+      "max": 100
+    },
+    "M07": {
+      "min": 0,
+      "max": 100
+    },
+    "M08": {
+      "min": 0,
+      "max": 100
+    },
+    "M09": {
+      "min": 0,
+      "max": 100
+    },
+    "M10": {
+      "min": 0,
+      "max": 100
+    },
+    "M11": {
+      "min": 0,
+      "max": 100
+    },
+    "M12": {
+      "min": 0,
+      "max": 100
+    }
+  },
+  "calibration": {
+    "1m": [
+      [
+        100,
+        20
+      ]
+    ],
+    "3m": [
+      [
+        100,
+        60
+      ]
+    ]
+  },
+  "speed_default": 100,
+  "fine_default": 0,
+  "lock": 77,
+  "perform_on_start": true,
+  "out_len": 512,
+  "layout": {
+    "enabled": 0,
+    "num_layers": 2,
+    "layers": [
+      {
+        "modules": 12,
+        "sync": 1,
+        "visible": 1,
+        "xform": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "modules": 1,
+        "sync": 0,
+        "visible": 1,
+        "xform": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "modules": 0,
+        "sync": 0,
+        "visible": 1,
+        "xform": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "modules": 0,
+        "sync": 0,
+        "visible": 1,
+        "xform": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      }
+    ],
+    "modules": [
+      {
+        "length": 1.0,
+        "width": 1.0,
+        "min": 0,
+        "max": 100,
+        "addr": 1,
+        "max_speed": 12.75,
+        "speed": 100,
+        "visible": 1
+      },
+      {
+        "length": 1.0,
+        "width": 1.0,
+        "min": 0,
+        "max": 100,
+        "addr": 0,
+        "max_speed": 12.75,
+        "speed": 100,
+        "visible": 1
+      },
+      {
+        "length": 1.0,
+        "width": 1.0,
+        "min": 0,
+        "max": 100,
+        "addr": 0,
+        "max_speed": 12.75,
+        "speed": 100,
+        "visible": 1
+      },
+      {
+        "length": 1.0,
+        "width": 1.0,
+        "min": 0,
+        "max": 100,
+        "addr": 0,
+        "max_speed": 12.75,
+        "speed": 100,
+        "visible": 1
+      },
+      {
+        "length": 1.0,
+        "width": 1.0,
+        "min": 0,
+        "max": 100,
+        "addr": 0,
+        "max_speed": 12.75,
+        "speed": 100,
+        "visible": 1
+      },
+      {
+        "length": 1.0,
+        "width": 1.0,
+        "min": 0,
+        "max": 100,
+        "addr": 0,
+        "max_speed": 12.75,
+        "speed": 100,
+        "visible": 1
+      },
+      {
+        "length": 1.0,
+        "width": 1.0,
+        "min": 0,
+        "max": 100,
+        "addr": 0,
+        "max_speed": 12.75,
+        "speed": 100,
+        "visible": 1
+      },
+      {
+        "length": 1.0,
+        "width": 1.0,
+        "min": 0,
+        "max": 100,
+        "addr": 0,
+        "max_speed": 12.75,
+        "speed": 100,
+        "visible": 1
+      },
+      {
+        "length": 1.0,
+        "width": 1.0,
+        "min": 0,
+        "max": 100,
+        "addr": 0,
+        "max_speed": 12.75,
+        "speed": 100,
+        "visible": 1
+      },
+      {
+        "length": 1.0,
+        "width": 1.0,
+        "min": 0,
+        "max": 100,
+        "addr": 0,
+        "max_speed": 12.75,
+        "speed": 100,
+        "visible": 1
+      },
+      {
+        "length": 1.0,
+        "width": 1.0,
+        "min": 0,
+        "max": 100,
+        "addr": 0,
+        "max_speed": 12.75,
+        "speed": 100,
+        "visible": 1
+      },
+      {
+        "length": 1.0,
+        "width": 1.0,
+        "min": 0,
+        "max": 100,
+        "addr": 0,
+        "max_speed": 12.75,
+        "speed": 100,
+        "visible": 1
+      },
+      {
+        "length": 3.0,
+        "width": 1.0,
+        "min": 0,
+        "max": 100,
+        "addr": 5,
+        "max_speed": 12.75,
+        "speed": 100,
+        "visible": 1
+      },
+      {
+        "length": 1.0,
+        "width": 1.0,
+        "min": 0,
+        "max": 100,
+        "addr": 0,
+        "max_speed": 12.75,
+        "speed": 100,
+        "visible": 1
+      },
+      {
+        "length": 1.0,
+        "width": 1.0,
+        "min": 0,
+        "max": 100,
+        "addr": 0,
+        "max_speed": 12.75,
+        "speed": 100,
+        "visible": 1
+      },
+      {
+        "length": 1.0,
+        "width": 1.0,
+        "min": 0,
+        "max": 100,
+        "addr": 0,
+        "max_speed": 12.75,
+        "speed": 100,
+        "visible": 1
+      }
+    ]
+  }
+}
