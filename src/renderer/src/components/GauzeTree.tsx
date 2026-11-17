@@ -227,7 +227,7 @@ export function GauzeTree() {
                             />
                           )}
                         </div>
-                        <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted tabular-nums">
+                        <div className="mt-0.5 flex items-center gap-1.5 whitespace-nowrap text-[11px] text-muted tabular-nums">
                           <span>CH {chStart}–{chEnd}</span>
                           <span>·</span>
                           <span>{(st?.pos ?? 0).toFixed(2)}/{m.length}m</span>
