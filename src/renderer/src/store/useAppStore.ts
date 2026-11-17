@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { autoAssign, nextFree, orderedModules, validateAddress } from '@shared/addressing'
 import type { AppInfo, SnapshotDto } from '@shared/api'
 import { DEFAULT_SPEED, H2_MAX_SPEED_CMS } from '@shared/dmx'
+import { resolveClipStartNoOverlap, syncModuleClipsContinuity } from '@shared/timeline'
 import {
   createBlankProject,
   createDefaultProject,
@@ -104,7 +105,12 @@ interface AppState {
   deleteButton: (id: string) => void
 
   addClip: (clip: TimelineClip) => void
-  updateClip: (clipId: string, patch: Partial<TimelineClip>, coalesceKey?: string) => void
+  updateClip: (
+    clipId: string,
+    patch: Partial<TimelineClip>,
+    coalesceKey?: string,
+    syncEdge?: 'start' | 'end',
+  ) => void
   deleteClip: (clipId: string) => void
   deleteTimelineLayerClips: (layerId: string) => void
   copySelection: () => void
@@ -628,13 +634,39 @@ export const useAppStore = create<AppState>((set, get) => {
 
     addClip(clip) {
       const { project } = get()
-      const clips = [...(project.clips ?? []), clip].sort((a, b) => a.startTime - b.startTime)
+      const existing = project.clips ?? []
+      const sameMod = existing.filter((c) => c.moduleId === clip.moduleId).sort((a, b) => a.startTime - b.startTime)
+      const safeStart = resolveClipStartNoOverlap(sameMod, clip.duration, clip.startTime)
+      const prev = [...sameMod].reverse().find((c) => c.startTime + c.duration <= safeStart + 1e-3)
+      const next = sameMod.find((c) => c.startTime >= safeStart + clip.duration - 1e-3)
+      const kfs = [...clip.keyframes].sort((a, b) => a.offset - b.offset)
+      if (kfs.length > 0 && prev && prev.keyframes.length > 0) {
+        const prevSorted = [...prev.keyframes].sort((a, b) => a.offset - b.offset)
+        kfs[0] = { ...kfs[0], height: prevSorted[prevSorted.length - 1].height }
+      }
+      if (kfs.length > 1 && next && next.keyframes.length > 0) {
+        const nextSorted = [...next.keyframes].sort((a, b) => a.offset - b.offset)
+        kfs[kfs.length - 1] = { ...kfs[kfs.length - 1], height: nextSorted[0].height }
+      }
+      const nextClip: TimelineClip = { ...clip, startTime: safeStart, keyframes: kfs }
+      const clips = syncModuleClipsContinuity([...existing, nextClip], clip.moduleId)
       applyProject({ ...project, clips }, { extra: { selectedClipId: clip.id, focusScope: 'timeline' } })
     },
 
-    updateClip(clipId, patch, coalesceKey) {
+    updateClip(clipId, patch, coalesceKey, syncEdge) {
       const { project } = get()
-      const clips = (project.clips ?? []).map((c) => (c.id === clipId ? { ...c, ...patch } : c))
+      const existing = project.clips ?? []
+      const target = existing.find((c) => c.id === clipId)
+      if (!target) return
+      const updated = existing.map((c) => (c.id === clipId ? { ...c, ...patch } : c))
+      const clips =
+        patch.keyframes !== undefined || patch.startTime !== undefined || patch.duration !== undefined
+          ? syncModuleClipsContinuity(
+              updated,
+              target.moduleId,
+              syncEdge ? { clipId, edge: syncEdge } : undefined,
+            )
+          : updated
       applyProject({ ...project, clips }, { coalesceKey })
     },
 
@@ -710,8 +742,11 @@ export const useAppStore = create<AppState>((set, get) => {
         const targetTime = atTime ?? minStart + 1
         const delta = targetTime - minStart
         const targetLayer = s.selectedTimelineLayerId
-        const newClips: TimelineClip[] = s.copiedClips.map((c, idx) => {
-          // Nếu dán sang layer khác và layer đó có module, giữ module hoặc giữ nguyên
+        let accClips = [...(s.project.clips ?? [])]
+        const pastedIds: string[] = []
+        const affectedModIds = new Set<string>()
+        for (let idx = 0; idx < s.copiedClips.length; idx++) {
+          const c = s.copiedClips[idx]
           let layerId = c.layerId
           let moduleId = c.moduleId
           if (targetLayer && targetLayer !== c.layerId) {
@@ -719,17 +754,24 @@ export const useAppStore = create<AppState>((set, get) => {
             const sameMod = s.project.modules.find((m) => m.layerId === targetLayer)
             if (sameMod) moduleId = sameMod.id
           }
-          return {
+          const sameModClips = accClips.filter((x) => x.moduleId === moduleId)
+          const safeStart = resolveClipStartNoOverlap(sameModClips, c.duration, c.startTime + delta)
+          const newId = `clip-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 5)}`
+          accClips.push({
             ...structuredClone(c),
-            id: `clip-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 5)}`,
+            id: newId,
             layerId,
             moduleId,
-            startTime: Math.max(0, Number((c.startTime + delta).toFixed(2))),
-          }
-        })
-        const clips = [...(s.project.clips ?? []), ...newClips].sort((a, b) => a.startTime - b.startTime)
-        applyProject({ ...s.project, clips }, { extra: { selectedClipId: newClips[0]?.id ?? null } })
-        s.notify(`Đã dán ${newClips.length} clip vào Timeline`, 'info')
+            startTime: safeStart,
+          })
+          pastedIds.push(newId)
+          affectedModIds.add(moduleId)
+        }
+        for (const mId of affectedModIds) {
+          accClips = syncModuleClipsContinuity(accClips, mId)
+        }
+        applyProject({ ...s.project, clips: accClips }, { extra: { selectedClipId: pastedIds[0] ?? null } })
+        s.notify(`Đã dán ${pastedIds.length} clip vào Timeline`, 'info')
         return
       }
       // Paste modules vào layer đang chọn

@@ -151,6 +151,111 @@ export function analyzeTimeline(clips: TimelineClip[], modules: ModuleCfg[]): Se
   return clips.flatMap((c) => analyzeClipSpeeds(c, modMap.get(c.moduleId)))
 }
 
+/** Tìm vị trí startTime không bị chồng chéo với các moment khác cùng module. */
+export function resolveClipStartNoOverlap(
+  sameModuleClips: TimelineClip[],
+  duration: number,
+  preferredStart: number,
+  ignoreClipId?: string,
+): number {
+  const desired = Math.max(0, preferredStart)
+  const others = sameModuleClips
+    .filter((c) => c.id !== ignoreClipId)
+    .sort((a, b) => a.startTime - b.startTime)
+  if (others.length === 0) return Number(desired.toFixed(2))
+
+  const intervals: Array<[number, number]> = []
+  let cursor = 0
+  for (const c of others) {
+    const start = Math.max(0, c.startTime)
+    if (start > cursor) intervals.push([cursor, start])
+    cursor = Math.max(cursor, start + Math.max(MIN_DURATION, c.duration))
+  }
+  intervals.push([cursor, Number.POSITIVE_INFINITY])
+
+  let bestStart = cursor
+  let bestDist = Number.POSITIVE_INFINITY
+  for (const [gapStart, gapEnd] of intervals) {
+    if (gapEnd - gapStart + 1e-6 < duration) continue
+    const maxAllowed = gapEnd === Number.POSITIVE_INFINITY ? desired : gapEnd - duration
+    const cand = Math.max(gapStart, Math.min(desired, maxAllowed))
+    const dist = Math.abs(cand - desired)
+    if (dist < bestDist - 1e-6) {
+      bestDist = dist
+      bestStart = cand
+    }
+  }
+  return Number(Math.max(0, bestStart).toFixed(2))
+}
+
+/** Giới hạn trái/phải khi trim moment để không chồng chéo moment liền kề. */
+export function resolveClipBoundsNoOverlap(
+  sameModuleClips: TimelineClip[],
+  clip: TimelineClip,
+): { minStart: number; maxEnd: number } {
+  const sorted = [...sameModuleClips].sort((a, b) => a.startTime - b.startTime || a.id.localeCompare(b.id))
+  const idx = sorted.findIndex((c) => c.id === clip.id)
+  if (idx < 0) return { minStart: 0, maxEnd: Number.POSITIVE_INFINITY }
+  const prev = idx > 0 ? sorted[idx - 1] : null
+  const next = idx < sorted.length - 1 ? sorted[idx + 1] : null
+  return {
+    minStart: prev ? Number((prev.startTime + prev.duration).toFixed(2)) : 0,
+    maxEnd: next ? Number(next.startTime.toFixed(2)) : Number.POSITIVE_INFINITY,
+  }
+}
+
+/**
+ * Chuẩn hoá toàn bộ moment của một module:
+ * 1) Không chồng chéo thời gian.
+ * 2) Key cuối của moment trước luôn khớp độ cao với key đầu của moment ngay sau.
+ */
+export function syncModuleClipsContinuity(
+  clips: TimelineClip[],
+  moduleId: string,
+  edited?: { clipId: string; edge: 'start' | 'end' },
+): TimelineClip[] {
+  const others = clips.filter((c) => c.moduleId !== moduleId)
+  const modClips = clips
+    .filter((c) => c.moduleId === moduleId)
+    .sort((a, b) => a.startTime - b.startTime || a.id.localeCompare(b.id))
+    .map((c) => ({
+      ...c,
+      keyframes: [...c.keyframes].sort((a, b) => a.offset - b.offset),
+    }))
+
+  let cursor = 0
+  for (let i = 0; i < modClips.length; i++) {
+    const c = modClips[i]
+    const startTime = Number(Math.max(cursor, Math.max(0, c.startTime)).toFixed(2))
+    modClips[i] = { ...c, startTime }
+    cursor = startTime + Math.max(MIN_DURATION, c.duration)
+  }
+
+  if (edited?.edge === 'start') {
+    const idx = modClips.findIndex((c) => c.id === edited.clipId)
+    if (idx > 0 && modClips[idx].keyframes.length > 0 && modClips[idx - 1].keyframes.length > 0) {
+      const targetH = modClips[idx].keyframes[0].height
+      const prevKfs = [...modClips[idx - 1].keyframes]
+      prevKfs[prevKfs.length - 1] = { ...prevKfs[prevKfs.length - 1], height: targetH }
+      modClips[idx - 1] = { ...modClips[idx - 1], keyframes: prevKfs }
+    }
+  }
+
+  for (let i = 0; i < modClips.length - 1; i++) {
+    const prevKfs = modClips[i].keyframes
+    const nextKfs = modClips[i + 1].keyframes
+    if (prevKfs.length === 0 || nextKfs.length === 0) continue
+    const endH = prevKfs[prevKfs.length - 1].height
+    if (nextKfs[0].height !== endH) {
+      const patched = [...nextKfs]
+      patched[0] = { ...patched[0], height: endH }
+      modClips[i + 1] = { ...modClips[i + 1], keyframes: patched }
+    }
+  }
+
+  return [...others, ...modClips].sort((a, b) => a.startTime - b.startTime || a.id.localeCompare(b.id))
+}
+
 /** Chuyển mảng TimelineClip thành TimelineKey[] theo từng module để chạy thống nhất. */
 export function clipsToKeys(clips: TimelineClip[]): TimelineKey[] {
   const keys: TimelineKey[] = []

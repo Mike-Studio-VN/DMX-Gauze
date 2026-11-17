@@ -1,5 +1,6 @@
 import { autoAssign } from './addressing'
 import { ARTNET_PORT, DEFAULT_SPEED, DEFAULT_TARGET_IP, H2_MAX_SPEED_CMS, LOCK_VALUE } from './dmx'
+import { syncModuleClipsContinuity } from './timeline'
 import type { Layer, ModuleCfg, Project, Settings, TimelineClip, Transform3D } from './types'
 
 export function defaultLayerTransform(index: number): Transform3D {
@@ -22,11 +23,16 @@ export function normalizeProject(p: Project): Project {
     visible: m.visible ?? true,
     transform: m.transform ?? defaultModuleTransform(),
   }))
+  let clips: TimelineClip[] = p.clips ?? []
+  const modIds = new Set(clips.map((c) => c.moduleId))
+  for (const modId of modIds) {
+    clips = syncModuleClipsContinuity(clips, modId)
+  }
   return {
     ...p,
     layers,
     modules,
-    clips: p.clips ?? [],
+    clips,
   }
 }
 

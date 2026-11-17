@@ -26,12 +26,14 @@ import {
   analyzeClipSpeeds,
   analyzeTimeline,
   buildCurveKeyframes,
+  resolveClipBoundsNoOverlap,
+  resolveClipStartNoOverlap,
 } from '@shared/timeline'
 import type { ClipKeyframe, Fps, ModuleCfg, TimelineClip } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 
-const MIN_CLIP_DUR = 0.2
-const CLIP_MIN_W = 84
+const MIN_CLIP_DUR = 0.4
+const CLIP_MIN_W = 24
 const CURVE_COLORS = ['#F7842E', '#FFCB72', '#7FDDA8', '#8DB8FF', '#FF9A4D']
 const BODY_H = 40
 const DOT_PAD_X = 6
@@ -40,6 +42,50 @@ const DOT_PAD_Y = 7
 interface Pt {
   x: number
   y: number
+}
+
+function heightToY(h: number, minH: number, maxH: number, height: number, padY = DOT_PAD_Y): number {
+  const usableH = Math.max(4, height - padY * 2)
+  const span = Math.max(0.1, maxH - minH)
+  const hNorm = clamp((h - minH) / span, 0, 1)
+  return padY + (1 - hNorm) * usableH
+}
+
+function buildTrackConnectorSegments(
+  modClips: TimelineClip[],
+  minH: number,
+  maxH: number,
+  pxPerSec: number,
+  timelineWidth: number,
+  height: number,
+  padX = DOT_PAD_X,
+  padY = DOT_PAD_Y,
+): Array<[number, number, number, number]> {
+  const sortedClips = [...modClips].sort((a, b) => a.startTime - b.startTime)
+  if (sortedClips.length === 0) {
+    const y = heightToY(minH, minH, maxH, height, padY)
+    return [[0, y, timelineWidth, y]]
+  }
+
+  const clipMeta = sortedClips.map((c) => {
+    const kfs = [...c.keyframes].sort((a, b) => a.offset - b.offset)
+    const left = c.startTime * pxPerSec
+    const width = Math.max(CLIP_MIN_W, c.duration * pxPerSec)
+    const startY = heightToY(kfs[0]?.height ?? minH, minH, maxH, height, padY)
+    const endY = heightToY(kfs[kfs.length - 1]?.height ?? minH, minH, maxH, height, padY)
+    return { left, width, startY, endY }
+  })
+
+  const segs: Array<[number, number, number, number]> = []
+  segs.push([0, clipMeta[0].startY, clipMeta[0].left + padX, clipMeta[0].startY])
+  for (let i = 0; i < clipMeta.length - 1; i++) {
+    const a = clipMeta[i]
+    const b = clipMeta[i + 1]
+    segs.push([a.left + a.width - padX, a.endY, b.left + padX, b.startY])
+  }
+  const last = clipMeta[clipMeta.length - 1]
+  segs.push([last.left + last.width - padX, last.endY, timelineWidth, last.endY])
+  return segs
 }
 
 function mapKeyframesToPts(
@@ -272,17 +318,24 @@ export function TimelineEditor() {
 
     const onMove = (ev: PointerEvent) => {
       const dxSec = (ev.clientX - startX) / pxPerSec
+      const sameModClips = clipsRef.current.filter((c) => c.moduleId === clip.moduleId)
       if (mode === 'move') {
-        const nextStart = Math.max(0, Number((origStart + dxSec).toFixed(2)))
+        const nextStart = resolveClipStartNoOverlap(sameModClips, origDur, origStart + dxSec, clip.id)
         updateClip(clip.id, { startTime: nextStart }, `clip-move-${clip.id}`)
       } else if (mode === 'trim-right') {
-        const nextDur = Math.max(MIN_CLIP_DUR, Number((origDur + dxSec).toFixed(2)))
+        const bounds = resolveClipBoundsNoOverlap(sameModClips, clip)
+        const maxDur = Number.isFinite(bounds.maxEnd)
+          ? Math.max(MIN_CLIP_DUR, bounds.maxEnd - origStart)
+          : Number.POSITIVE_INFINITY
+        const nextDur = Math.min(maxDur, Math.max(MIN_CLIP_DUR, Number((origDur + dxSec).toFixed(2))))
         const ratio = nextDur / Math.max(0.01, origDur)
         const nextKfs = origKfs.map((k) => ({ ...k, offset: Number((k.offset * ratio).toFixed(2)) }))
         updateClip(clip.id, { duration: nextDur, keyframes: nextKfs }, `clip-trim-${clip.id}`)
       } else {
+        const bounds = resolveClipBoundsNoOverlap(sameModClips, clip)
+        const minShift = bounds.minStart - origStart
         const maxShift = origDur - MIN_CLIP_DUR
-        const clampedShift = Math.max(-origStart, Math.min(maxShift, dxSec))
+        const clampedShift = Math.max(minShift, Math.min(maxShift, dxSec))
         const nextStart = Number((origStart + clampedShift).toFixed(2))
         const nextDur = Number((origDur - clampedShift).toFixed(2))
         const ratio = nextDur / Math.max(0.01, origDur)
@@ -318,7 +371,11 @@ export function TimelineEditor() {
     const maxH = Math.max(minH + 0.1, mod?.maxHeight ?? mod?.length ?? 1)
     const usableW = Math.max(4, widthPx - DOT_PAD_X * 2)
     const usableH = Math.max(4, heightPx - DOT_PAD_Y * 2)
-    const baseKfs = clip.keyframes
+    const baseKfs = [...clip.keyframes].sort((a, b) => a.offset - b.offset)
+    const baseIdx = baseKfs.findIndex((k) => k.id === kfId)
+    const isFirst = baseIdx === 0
+    const isLast = baseIdx === baseKfs.length - 1
+    const syncEdge = isFirst ? 'start' : isLast ? 'end' : undefined
 
     const applyPointer = (clientX: number, clientY: number) => {
       const rect = svgEl.getBoundingClientRect()
@@ -328,14 +385,18 @@ export function TimelineEditor() {
       const tNorm = clamp((localX - DOT_PAD_X) / usableW, 0, 1)
       const hNorm = clamp(1 - (localY - DOT_PAD_Y) / usableH, 0, 1)
 
-      const nextOffset = Number((tNorm * clip.duration).toFixed(2))
+      const nextOffset = isFirst
+        ? 0
+        : isLast
+          ? clip.duration
+          : clamp(Number((tNorm * clip.duration).toFixed(2)), 0.05, Math.max(0.05, clip.duration - 0.05))
       const nextHeight = Number((minH + hNorm * (maxH - minH)).toFixed(2))
 
       const nextKfs = baseKfs
         .map((k) => (k.id === kfId ? { ...k, offset: nextOffset, height: nextHeight } : k))
         .sort((a, b) => a.offset - b.offset)
 
-      updateClip(clip.id, { keyframes: nextKfs }, `kf-drag-${kfId}`)
+      updateClip(clip.id, { keyframes: nextKfs }, `kf-drag-${kfId}`, syncEdge)
     }
 
     const onMove = (ev: PointerEvent) => applyPointer(ev.clientX, ev.clientY)
@@ -393,6 +454,18 @@ export function TimelineEditor() {
       selectedClipMod.minHeight,
       selectedClipMod.maxHeight,
     )
+    const sameMod = clips.filter((c) => c.moduleId === selectedClip.moduleId).sort((a, b) => a.startTime - b.startTime)
+    const idx = sameMod.findIndex((c) => c.id === selectedClip.id)
+    const prevClip = idx > 0 ? sameMod[idx - 1] : null
+    const nextClip = idx >= 0 && idx < sameMod.length - 1 ? sameMod[idx + 1] : null
+    if (prevClip && prevClip.keyframes.length > 0 && kfs.length > 0) {
+      const prevKfs = [...prevClip.keyframes].sort((a, b) => a.offset - b.offset)
+      kfs[0] = { ...kfs[0], height: prevKfs[prevKfs.length - 1].height }
+    }
+    if (nextClip && nextClip.keyframes.length > 0 && kfs.length > 1) {
+      const nextKfs = [...nextClip.keyframes].sort((a, b) => a.offset - b.offset)
+      kfs[kfs.length - 1] = { ...kfs[kfs.length - 1], height: nextKfs[0].height }
+    }
     const curveMode: 'smooth' | 'linear' =
       presetId === 'triangle' || presetId === 'steps' || presetId === 'hold' ? 'linear' : 'smooth'
     updateClip(selectedClip.id, { keyframes: kfs, curveMode })
@@ -670,7 +743,47 @@ export function TimelineEditor() {
                             Mở rộng layer để vẽ sóng từng module...
                           </div>
                         ) : (
-                          layerClips.map((clip) => {
+                          <>
+                            {mods.map((mod, modIdx) => {
+                              const mClips = layerClips.filter((c) => c.moduleId === mod.id)
+                              if (mClips.length === 0) return null
+                              const color = CURVE_COLORS[modIdx % CURVE_COLORS.length]
+                              const minH = mod.minHeight
+                              const maxH = Math.max(minH + 0.1, mod.maxHeight ?? mod.length)
+                              const segs = buildTrackConnectorSegments(
+                                mClips,
+                                minH,
+                                maxH,
+                                pxPerSec,
+                                timelineWidth,
+                                56,
+                                4,
+                                8,
+                              )
+                              return (
+                                <svg
+                                  key={`line-${mod.id}`}
+                                  width={timelineWidth}
+                                  height={56}
+                                  viewBox={`0 0 ${timelineWidth} 56`}
+                                  className="pointer-events-none absolute inset-0"
+                                >
+                                  {segs.map(([x1, y1, x2, y2], sIdx) => (
+                                    <line
+                                      key={sIdx}
+                                      x1={x1}
+                                      y1={y1}
+                                      x2={x2}
+                                      y2={y2}
+                                      stroke={color}
+                                      strokeWidth={1.5}
+                                      strokeOpacity={0.55}
+                                    />
+                                  ))}
+                                </svg>
+                              )
+                            })}
+                            {layerClips.map((clip) => {
                             const modIdx = Math.max(
                               0,
                               mods.findIndex((m) => m.id === clip.moduleId),
@@ -715,7 +828,8 @@ export function TimelineEditor() {
                                 ))}
                               </svg>
                             )
-                          })
+                          })}
+                          </>
                         )}
                       </>
                     ) : (
@@ -778,11 +892,9 @@ export function TimelineEditor() {
                           onDragLeave={() => setDragOverTarget(null)}
                           onDrop={(e) => handleDropModule(e, layer.id, mod)}
                           onDoubleClick={(e) => {
-                            if (modClips.length === 0) {
-                              const rect = e.currentTarget.getBoundingClientRect()
-                              const dropSec = Math.max(0, Number(((e.clientX - rect.left) / pxPerSec).toFixed(2)))
-                              createDefaultWaveClip(mod, layer.id, dropSec)
-                            }
+                            const rect = e.currentTarget.getBoundingClientRect()
+                            const dropSec = Math.max(0, Number(((e.clientX - rect.left) / pxPerSec).toFixed(2)))
+                            createDefaultWaveClip(mod, layer.id, dropSec)
                           }}
                           style={{ width: timelineWidth }}
                           className={`relative h-16 transition ${
@@ -802,9 +914,44 @@ export function TimelineEditor() {
                             />
                           ))}
 
+                          {/* Dòng line xuyên suốt từ đầu (0s) đến cuối timeline nối các moment của Module */}
+                          {(() => {
+                            const modMinH = mod.minHeight
+                            const modMaxH = Math.max(modMinH + 0.1, mod.maxHeight ?? mod.length)
+                            const connectorSegs = buildTrackConnectorSegments(
+                              modClips,
+                              modMinH,
+                              modMaxH,
+                              pxPerSec,
+                              timelineWidth,
+                              BODY_H,
+                            )
+                            return (
+                              <svg
+                                width={timelineWidth}
+                                height={BODY_H}
+                                viewBox={`0 0 ${timelineWidth} ${BODY_H}`}
+                                className="pointer-events-none absolute top-[20px] left-0 z-[1]"
+                              >
+                                {connectorSegs.map(([x1, y1, x2, y2], sIdx) => (
+                                  <line
+                                    key={sIdx}
+                                    x1={x1}
+                                    y1={y1}
+                                    x2={x2}
+                                    y2={y2}
+                                    stroke={seriesColor}
+                                    strokeWidth={1.75}
+                                    strokeOpacity={modClips.length > 0 ? 0.78 : 0.38}
+                                  />
+                                ))}
+                              </svg>
+                            )
+                          })()}
+
                           {modClips.length === 0 && (
-                            <div className="pointer-events-none flex h-full items-center pl-3 text-[10.5px] text-muted/55">
-                              Double-click hoặc bấm + bên trái để tạo đường sóng (0 → 0)...
+                            <div className="pointer-events-none relative z-[2] flex h-full items-center pl-3 text-[10.5px] text-muted/55">
+                              Double-click hoặc bấm + bên trái để tạo moment sóng (0 → 0)...
                             </div>
                           )}
 
@@ -836,7 +983,7 @@ export function TimelineEditor() {
                                   selectTimelineClip(clip.id)
                                 }}
                                 style={{ left: leftPx, width: widthPx }}
-                                className={`kiln-clip absolute top-1 bottom-1 flex flex-col select-none ${
+                                className={`kiln-clip absolute top-1 bottom-1 z-[2] flex flex-col select-none ${
                                   badSeg ? 'bad' : isSelected ? 'sel' : ''
                                 }`}
                               >
@@ -900,6 +1047,30 @@ export function TimelineEditor() {
                                         fill={badSeg ? '#FF7D6E' : baseStroke}
                                         fillOpacity={isSelected ? 0.14 : 0.08}
                                       />
+                                    )}
+
+                                    {/* Đoạn nối mép trái/phải để đường line liền mạch ra ngoài clip */}
+                                    {pts.length >= 2 && (
+                                      <>
+                                        <line
+                                          x1={0}
+                                          y1={pts[0].y}
+                                          x2={pts[0].x}
+                                          y2={pts[0].y}
+                                          stroke={seriesColor}
+                                          strokeWidth={1.75}
+                                          strokeOpacity={0.78}
+                                        />
+                                        <line
+                                          x1={pts[pts.length - 1].x}
+                                          y1={pts[pts.length - 1].y}
+                                          x2={widthPx}
+                                          y2={pts[pts.length - 1].y}
+                                          stroke={seriesColor}
+                                          strokeWidth={1.75}
+                                          strokeOpacity={0.78}
+                                        />
+                                      </>
                                     )}
 
                                     {/* Vẽ từng đoạn để highlight đoạn quá tốc độ */}
@@ -1066,8 +1237,9 @@ export function TimelineEditor() {
             <span className="text-[10.5px] text-muted">Điểm ({selectedClip.keyframes.length}):</span>
             {[...selectedClip.keyframes]
               .sort((a, b) => a.offset - b.offset)
-              .map((kf, idx) => {
+              .map((kf, idx, arr) => {
                 const active = selectedKeyId === kf.id
+                const syncEdge = idx === 0 ? 'start' : idx === arr.length - 1 ? 'end' : undefined
                 return (
                   <div
                     key={kf.id}
@@ -1106,7 +1278,7 @@ export function TimelineEditor() {
                       onChange={(e) => {
                         const h = clamp(Number(e.target.value) || 0, selectedClipMod.minHeight, selectedClipMod.maxHeight)
                         const nextKfs = selectedClip.keyframes.map((x) => (x.id === kf.id ? { ...x, height: h } : x))
-                        updateClip(selectedClip.id, { keyframes: nextKfs }, `kfh-${kf.id}`)
+                        updateClip(selectedClip.id, { keyframes: nextKfs }, `kfh-${kf.id}`, syncEdge)
                       }}
                       className="w-10 bg-transparent text-right text-[11px] text-[#FFB26B] tabular-nums outline-none"
                     />

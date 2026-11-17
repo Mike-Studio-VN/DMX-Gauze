@@ -132,6 +132,53 @@ describe('timecode & timeline', () => {
       expect(Math.max(...kfs.map((k) => k.height))).toBeCloseTo(2, 1)
     }
   })
+
+  it('không cho moment cùng module chồng chéo và đồng bộ key cuối-đầu liên tiếp', async () => {
+    const { resolveClipStartNoOverlap, syncModuleClipsContinuity } = await import('./timeline')
+    const c1 = {
+      id: 'c1',
+      layerId: 'l1',
+      moduleId: 'm1',
+      startTime: 1,
+      duration: 4,
+      keyframes: [
+        { id: 'k1', offset: 0, height: 0 },
+        { id: 'k2', offset: 4, height: 0.8 },
+      ],
+    }
+    const c2 = {
+      id: 'c2',
+      layerId: 'l1',
+      moduleId: 'm1',
+      startTime: 3, // chồng lấn vào c1 (1..5)
+      duration: 3,
+      keyframes: [
+        { id: 'k3', offset: 0, height: 0.2 },
+        { id: 'k4', offset: 3, height: 0 },
+      ],
+    }
+
+    // Đặt vị trí không chồng chéo khi có moment từ 1..5
+    expect(resolveClipStartNoOverlap([c1], 3, 3)).toBe(5)
+
+    // Đồng bộ không chồng chéo + khớp key cuối c1 (0.8) -> key đầu c2 (0.8)
+    const synced = syncModuleClipsContinuity([c1, c2], 'm1')
+    expect(synced[0].startTime).toBe(1)
+    expect(synced[1].startTime).toBe(5)
+    expect(synced[1].keyframes[0].height).toBe(0.8)
+
+    // Kéo key đầu c2 -> 0.45 thì key cuối c1 đồng bộ theo về 0.45
+    const edited = syncModuleClipsContinuity(
+      [
+        synced[0],
+        { ...synced[1], keyframes: [{ id: 'k3', offset: 0, height: 0.45 }, synced[1].keyframes[1]] },
+      ],
+      'm1',
+      { clipId: 'c2', edge: 'start' },
+    )
+    expect(edited[0].keyframes[1].height).toBe(0.45)
+    expect(edited[1].keyframes[0].height).toBe(0.45)
+  })
 })
 
 describe('ltc decoder', () => {
