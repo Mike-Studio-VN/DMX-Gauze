@@ -5,23 +5,20 @@ import type { DriverEvents, OutputDriver } from '@shared/drivers'
 import type { OutputSettings } from '@shared/types'
 import { UdpSocketLifecycle } from './udpSocketLifecycle'
 
-const LOOPBACK_POLL_WINDOW_MS = 1500
-
 /**
  * Driver Art-Net qua UDP (cổng mặc định 6454, tôn trọng mọi custom port người dùng cấu hình).
  * - Socket gửi luôn bind cổng động (0) để không xung đột cổng 6454 với receiver cục bộ (vd: TD dmx_in),
- *   và vẫn nhận ArtPollReply gửi về cổng nguồn động.
- * - Nghe ArtPollReply chuẩn trên UDP 6454:
- *   + Đích LAN: giữ listener 6454 (tắt + cảnh báo mềm nếu 6454 đang bận).
- *   + Đích loopback (localhost/127.0.0.1): nếu receiver đặt cổng khác 6454 thì nghe 6454 bình thường;
- *     nếu receiver dùng đúng 6454 thì chỉ mở listener ngắn hạn khi quét (reuseAddr: false, tự đóng sau
- *     1.5 s) để vẫn nhận phản hồi chuẩn 6454 mà không chiếm giữ/giành gói của receiver cục bộ.
+ *   và nhận ArtPollReply gửi về cổng nguồn động đó.
+ * - Listener ArtPollReply trên cổng chuẩn 6454:
+ *   + Đích LAN hoặc đích loopback dùng cổng đích != 6454: mở listener trên 6454 (tắt + cảnh báo mềm
+ *     nếu 6454 bận, vẫn gửi ArtDmx bình thường).
+ *   + Đích loopback dùng đúng cổng 6454: không bind 6454 để tránh chiếm/giành gói unicast trên cùng
+ *     tuple (127.0.0.1, 6454) với receiver cục bộ (vd: TD dmx_in); nhận reply qua cổng nguồn động.
  */
 export class ArtNetDriver implements OutputDriver {
   readonly id = 'artnet' as const
   private readonly life = new UdpSocketLifecycle()
   private rxSock: dgram.Socket | null = null
-  private rxCloseTimer: ReturnType<typeof setTimeout> | null = null
   private rxDisabled = false
   private seq = 0
 
@@ -45,15 +42,7 @@ export class ArtNetDriver implements OutputDriver {
     })
   }
 
-  private clearRxTimer(): void {
-    if (this.rxCloseTimer) {
-      clearTimeout(this.rxCloseTimer)
-      this.rxCloseTimer = null
-    }
-  }
-
   private closeRxSocket(): void {
-    this.clearRxTimer()
     const rx = this.rxSock
     this.rxSock = null
     if (!rx) return
@@ -64,22 +53,16 @@ export class ArtNetDriver implements OutputDriver {
     }
   }
 
-  private ensurePollReplyListener(explicit: boolean): void {
-    if (this.life.closing) return
-    const loopbackSamePort = isLoopbackTarget(this.cfg.ip) && this.targetPort() === ARTNET_PORT
-    if (loopbackSamePort && !explicit) return
-    if (explicit && loopbackSamePort) {
-      this.rxDisabled = false
-    }
-    if (this.rxSock || this.rxDisabled) return
+  private ensurePollReplyListener(): void {
+    if (this.life.closing || this.rxSock || this.rxDisabled) return
+    if (isLoopbackTarget(this.cfg.ip) && this.targetPort() === ARTNET_PORT) return
 
     const listenPort = ARTNET_PORT
-    const rx = dgram.createSocket({ type: 'udp4', reuseAddr: !loopbackSamePort })
+    const rx = dgram.createSocket({ type: 'udp4', reuseAddr: true })
     this.rxSock = rx
 
     const disableRx = (reason: string) => {
       this.rxDisabled = true
-      this.clearRxTimer()
       if (this.rxSock === rx) this.rxSock = null
       try {
         rx.close()
@@ -99,28 +82,15 @@ export class ArtNetDriver implements OutputDriver {
     rx.on('message', this.handleMessage)
 
     try {
-      const bindDone = () => {
+      rx.bind(listenPort, () => {
         if (this.life.closing || this.rxSock !== rx) {
           try {
             rx.close()
           } catch {
             /* ignore */
           }
-          return
         }
-        if (loopbackSamePort) {
-          this.clearRxTimer()
-          this.rxCloseTimer = setTimeout(() => {
-            if (this.rxSock === rx) this.closeRxSocket()
-          }, LOOPBACK_POLL_WINDOW_MS)
-          this.rxCloseTimer.unref?.()
-        }
-      }
-      if (loopbackSamePort) {
-        rx.bind(listenPort, '127.0.0.1', bindDone)
-      } else {
-        rx.bind(listenPort, bindDone)
-      }
+      })
     } catch (err) {
       disableRx((err as Error).message)
     }
@@ -173,8 +143,8 @@ export class ArtNetDriver implements OutputDriver {
     )
   }
 
-  poll(explicit = true): void {
-    this.ensurePollReplyListener(explicit)
+  poll(): void {
+    this.ensurePollReplyListener()
     this.life.trackSend((sock, done) => {
       const pkt = buildArtPoll()
       sock.send(pkt, this.targetPort(), this.cfg.ip, (err) => {

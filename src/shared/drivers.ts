@@ -13,7 +13,7 @@ export interface OutputDriver {
   readonly id: DriverId
   start(): void
   send(net: number, subUni: number, data: Uint8Array): void
-  poll(explicit?: boolean): void
+  poll(): void
   stop(): void
 }
 

@@ -31,11 +31,6 @@ export function resolveOutputSettingsPatch(
     ...patch,
     ...(autoPort !== null ? { port: autoPort } : {}),
   }
-  if (patch.port !== undefined) {
-    merged.portExplicit = patch.portExplicit ?? true
-  } else if (driverChanged && autoPort !== null) {
-    delete merged.portExplicit
-  }
   if (driverChanged && nextDriver === 'sacn') {
     merged.sacnUniverse = patch.sacnUniverse ?? current.sacnUniverse ?? Math.max(1, current.universe + 1)
     merged.sacnPriority = patch.sacnPriority ?? current.sacnPriority ?? 100

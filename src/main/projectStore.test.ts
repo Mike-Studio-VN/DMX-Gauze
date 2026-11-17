@@ -215,20 +215,29 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
     }
   });
 
-  it('migrates legacy saved project with Art-Net + port 5568 to 6454 and persists 40/50/60 fps', async () => {
-    const legacy = createDefaultProject();
-    legacy.settings.output.driver = 'artnet';
-    legacy.settings.output.port = 5568;
-    legacy.settings.timeline.fps = 25;
-
+  it('preserves saved positive custom ports (including 5568/6038 on broadcast Art-Net), defaults missing port, and persists 40/50/60 fps', async () => {
     const autosavePath = path.join(electronState.userDataDir, 'project.json');
-    await fs.writeFile(autosavePath, JSON.stringify(legacy, null, 2), 'utf8');
 
-    const loadedLegacy = await loadSavedProject();
-    expect(loadedLegacy.project.settings.output.driver).toBe('artnet');
-    expect(loadedLegacy.project.settings.output.port).toBe(6454);
-    expect(loadedLegacy.project.settings.timeline.fps).toBe(25);
-    expect(JSON.parse(await fs.readFile(autosavePath, 'utf8')).settings.output.port).toBe(6454);
+    // Saved broadcast Art-Net project deliberately configured on port 5568 must NOT be rewritten to 6454.
+    const broadcast5568 = createDefaultProject();
+    broadcast5568.settings.output.driver = 'artnet';
+    broadcast5568.settings.output.port = 5568;
+    broadcast5568.settings.timeline.fps = 25;
+    await fs.writeFile(autosavePath, JSON.stringify(broadcast5568, null, 2), 'utf8');
+
+    const loaded5568 = await loadSavedProject();
+    expect(loaded5568.project.settings.output.driver).toBe('artnet');
+    expect(loaded5568.project.settings.output.port).toBe(5568);
+    expect(loaded5568.project.settings.timeline.fps).toBe(25);
+    expect(JSON.parse(await fs.readFile(autosavePath, 'utf8')).settings.output.port).toBe(5568);
+
+    // Saved project missing output.port falls back to protocol default (6454 for Art-Net).
+    const missingPort = createDefaultProject();
+    missingPort.settings.output.driver = 'artnet';
+    delete (missingPort.settings.output as { port?: number }).port;
+    await fs.writeFile(autosavePath, JSON.stringify(missingPort, null, 2), 'utf8');
+    const loadedDefault = await loadSavedProject();
+    expect(loadedDefault.project.settings.output.port).toBe(6454);
 
     const hiFps = createDefaultProject();
     hiFps.settings.timeline.fps = 60;
@@ -238,23 +247,13 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
     expect(loadedHi.project.settings.timeline.fps).toBe(60);
     expect(loadedHi.project.settings.ltc.fps).toBe(25);
 
-    // Explicit custom Art-Net ports (5568/6038) on saved projects must be preserved.
-    const explicit5568 = createDefaultProject();
-    explicit5568.settings.output.driver = 'artnet';
-    explicit5568.settings.output.port = 5568;
-    explicit5568.settings.output.portExplicit = true;
-    await saveProjectToDisk(explicit5568);
-    const loadedExplicit = await loadSavedProject();
-    expect(loadedExplicit.project.settings.output.port).toBe(5568);
-    expect(loadedExplicit.project.settings.output.portExplicit).toBe(true);
-
-    // Existing saved project with custom receiver IP + Art-Net port 5568 (no portExplicit marker) is also preserved.
+    // Existing saved project with custom receiver IP + Art-Net port 6038 is also preserved.
     const savedCustomReceiver = createDefaultProject();
     savedCustomReceiver.settings.output.driver = 'artnet';
     savedCustomReceiver.settings.output.ip = '192.168.1.50';
-    savedCustomReceiver.settings.output.port = 5568;
+    savedCustomReceiver.settings.output.port = 6038;
     await fs.writeFile(autosavePath, JSON.stringify(savedCustomReceiver, null, 2), 'utf8');
     const loadedCustomReceiver = await loadSavedProject();
-    expect(loadedCustomReceiver.project.settings.output.port).toBe(5568);
+    expect(loadedCustomReceiver.project.settings.output.port).toBe(6038);
   });
 });

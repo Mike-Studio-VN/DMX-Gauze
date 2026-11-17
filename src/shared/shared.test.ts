@@ -953,38 +953,32 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
     expect(resolveLtcFps(50, 25)).toBe(25)
     expect(resolveLtcFps(25)).toBe(25)
 
-    // Migrate project cũ Art-Net + 5568 -> 6454 và hỗ trợ load/save 40/50/60 fps
-    const oldArtNet5568 = createDefaultProject()
-    oldArtNet5568.settings.output.driver = 'artnet'
-    oldArtNet5568.settings.output.port = 5568
-    oldArtNet5568.settings.timeline.fps = 25
-    const migrated = normalizeProject(oldArtNet5568)
-    expect(migrated.settings.output.port).toBe(6454)
-    expect(migrated.settings.timeline.fps).toBe(25)
+    // Giữ nguyên mọi custom port dương đã cấu hình (kể cả Art-Net broadcast + 5568/6038, sACN + 6454); chỉ điền mặc định khi thiếu port
+    const broadcastArtNet5568 = createDefaultProject()
+    broadcastArtNet5568.settings.output.driver = 'artnet'
+    broadcastArtNet5568.settings.output.port = 5568
+    expect(normalizeProject(broadcastArtNet5568).settings.output.port).toBe(5568)
 
-    // Giữ nguyên custom port Art-Net (6455, 5568, 6038) khi cấu hình rõ ràng hoặc trên receiver riêng
+    const broadcastArtNet6038 = createDefaultProject()
+    broadcastArtNet6038.settings.output.driver = 'artnet'
+    broadcastArtNet6038.settings.output.port = 6038
+    expect(normalizeProject(broadcastArtNet6038).settings.output.port).toBe(6038)
+
+    const sacnCustom6454 = createDefaultProject()
+    sacnCustom6454.settings.output.driver = 'sacn'
+    sacnCustom6454.settings.output.port = 6454
+    expect(normalizeProject(sacnCustom6454).settings.output.port).toBe(6454)
+
+    const missingArtNetPort = createDefaultProject()
+    missingArtNetPort.settings.output.driver = 'artnet'
+    delete (missingArtNetPort.settings.output as { port?: number }).port
+    const filledArtNet = normalizeProject(missingArtNetPort)
+    expect(filledArtNet.settings.output.port).toBe(6454)
+
     const customArtNet = createDefaultProject()
     customArtNet.settings.output.driver = 'artnet'
     customArtNet.settings.output.port = 6455
     expect(normalizeProject(customArtNet).settings.output.port).toBe(6455)
-
-    const explicitPortPatch = resolveOutputSettingsPatch(migrated.settings.output, { port: 5568 })
-    expect(explicitPortPatch.port).toBe(5568)
-    expect(explicitPortPatch.portExplicit).toBe(true)
-    const explicitArtNet5568 = createDefaultProject()
-    explicitArtNet5568.settings.output = explicitPortPatch
-    expect(normalizeProject(explicitArtNet5568).settings.output.port).toBe(5568)
-
-    const legacyCustomIp5568 = createDefaultProject()
-    legacyCustomIp5568.settings.output.driver = 'artnet'
-    legacyCustomIp5568.settings.output.ip = '192.168.1.50'
-    legacyCustomIp5568.settings.output.port = 5568
-    expect(normalizeProject(legacyCustomIp5568).settings.output.port).toBe(5568)
-
-    const customArtNet6038 = createDefaultProject()
-    customArtNet6038.settings.output.driver = 'artnet'
-    customArtNet6038.settings.output.port = 6038
-    expect(normalizeProject(customArtNet6038).settings.output.port).toBe(6038)
 
     // Lưu / mở project 60 fps + ltc.fps riêng, từ chối ltc.fps > 30
     const hiFps = createDefaultProject()
@@ -997,11 +991,10 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
     ;(badLtcFps.settings.ltc as { fps?: number }).fps = 60
     expect(() => normalizeProject(badLtcFps)).toThrow()
 
-    // Đổi giao thức thì port tự đổi theo (xóa cờ portExplicit cũ), sACN map sacnUniverse ?? universe + 1
-    const sacnOut = resolveOutputSettingsPatch(explicitPortPatch, { driver: 'sacn' })
+    // Đổi giao thức thì port tự đổi theo, sACN map sacnUniverse ?? universe + 1
+    const sacnOut = resolveOutputSettingsPatch(filledArtNet.settings.output, { driver: 'sacn' })
     expect(sacnOut.port).toBe(5568)
-    expect(sacnOut.portExplicit).toBeUndefined()
-    expect(sacnOut.sacnUniverse).toBe(migrated.settings.output.universe + 1)
+    expect(sacnOut.sacnUniverse).toBe(filledArtNet.settings.output.universe + 1)
     const backToArtNet = resolveOutputSettingsPatch(sacnOut, { driver: 'artnet' })
     expect(backToArtNet.port).toBe(6454)
   })

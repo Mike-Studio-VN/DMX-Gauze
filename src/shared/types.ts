@@ -14,8 +14,6 @@ export interface OutputSettings {
   /** IP đích (Art-Net / sACN unicast / KiNET). Mặc định 255.255.255.255 (broadcast). */
   ip: string
   port: number
-  /** Đánh dấu người dùng đã chỉnh cổng thủ công để không bị migrate về cổng mặc định. */
-  portExplicit?: boolean
   /** Art-Net port-address: net (0-127), subnet (0-15), universe (0-15). */
   net: number
   subnet: number
@@ -165,8 +163,6 @@ export interface ConnectionStatus {
   driver: DriverId
   ip: string
   port: number
-  /** Đánh dấu người dùng đã chỉnh cổng thủ công để không bị migrate về cổng mặc định. */
-  portExplicit?: boolean
   portAddress: number
   sendHz: number
   nodes: NodeInfo[]

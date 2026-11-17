@@ -484,7 +484,7 @@ describe('Core + Async Driver integration cleanup & drain tests', () => {
     }
   });
 
-  it('ArtNetDriver honors explicit custom ports (5568/6038), discovers loopback replies on 6454 without monopolizing it, and SacnDriver binds 0', async () => {
+  it('ArtNetDriver honors explicit custom ports (5568/6038), keeps 6454 free on loopback 127.0.0.1:6454 while receiving source-port replies, and SacnDriver binds 0', async () => {
     const { buildArtPollReply } = await import('@shared/artnet');
     const ev = { onNode: vi.fn(), onError: vi.fn(), onWarn: vi.fn() };
 
@@ -518,62 +518,28 @@ describe('Core + Async Driver integration cleanup & drain tests', () => {
     sock6038.pendingSends.splice(0).forEach((s) => s.cb(null));
     artnet6038.stop();
 
-    // 2) Loopback target on standard port 6454:
-    //    - Routine tick poll(false) keeps 6454 completely untouched.
-    //    - Explicit poll(true) opens a transient non-reusable 127.0.0.1:6454 listener so local nodes
-    //      replying to 6454 are discoverable, then closes automatically after the discovery window.
+    // 2) Loopback target on standard port 6454: never binds/steals 6454, receives ArtPollReply on ephemeral source socket.
     mocks.udp.reset();
-    vi.useFakeTimers();
-    try {
-      const artnetLocal = new ArtNetDriver({ ...udpOutput('artnet', '127.0.0.1'), port: 6454 }, ev);
-      artnetLocal.start();
-      const localSendSock = mocks.udp.sockets[0];
-      expect(localSendSock.boundPort).toBe(0);
+    const artnetLocal = new ArtNetDriver({ ...udpOutput('artnet', '127.0.0.1'), port: 6454 }, ev);
+    artnetLocal.start();
+    const localSendSock = mocks.udp.sockets[0];
+    expect(localSendSock.boundPort).toBe(0);
 
-      artnetLocal.poll(false);
-      await vi.runAllTicks();
-      expect(mocks.udp.sockets).toHaveLength(1); // Keepalive poll does not touch 6454
-
-      artnetLocal.poll(true);
-      await vi.runAllTicks();
-      expect(mocks.udp.sockets).toHaveLength(2);
-      const transientRx = mocks.udp.sockets[1];
-      expect(transientRx.boundPort).toBe(6454);
-      expect(transientRx.boundAddress).toBe('127.0.0.1');
-      expect(transientRx.reuseAddr).toBe(false);
-      expect(transientRx.closed).toBe(false);
-
-      const localReply = buildArtPollReply([127, 0, 0, 1], 'LocalNode', 'Local Art-Net Node');
-      transientRx.emitter.emit('message', Buffer.from(localReply), { address: '127.0.0.1', port: 6454 });
-      expect(ev.onNode).toHaveBeenCalledWith(expect.objectContaining({ ip: '127.0.0.1', name: 'LocalNode' }));
-
-      // Discovery window expires -> socket closes automatically so 6454 is not monopolized
-      vi.advanceTimersByTime(1600);
-      expect(transientRx.closed).toBe(true);
-      localSendSock.pendingSends.splice(0).forEach((s) => s.cb(null));
-      artnetLocal.stop();
-    } finally {
-      vi.useRealTimers();
-    }
-
-    // Also verify loopback with 6454 already occupied by a local receiver (e.g. TD dmx_in):
-    // bind(6454) fails cleanly with EADDRINUSE without blocking ArtDmx sends!
-    mocks.udp.reset();
-    mocks.udp.failBindPorts.add(6454);
-    const evLocalBusy = { onNode: vi.fn(), onError: vi.fn(), onWarn: vi.fn() };
-    const artnetHost = new ArtNetDriver({ ...udpOutput('artnet', 'localhost'), port: 6454 }, evLocalBusy);
-    artnetHost.start();
-    const hostSock = mocks.udp.sockets[0];
-    expect(hostSock.boundPort).toBe(0);
     await vi.waitFor(() => {
-      artnetHost.poll(true);
-      artnetHost.send(0, 0, new Uint8Array([1, 2, 3, 77]));
-      expect(hostSock.pendingSends.length).toBe(2);
-      expect(mocks.udp.sockets[1]?.closed).toBe(true);
+      artnetLocal.poll();
+      artnetLocal.send(0, 0, new Uint8Array([10, 20, 30, 77]));
+      expect(localSendSock.pendingSends.length).toBe(2);
     });
-    expect(hostSock.pendingSends[1].port).toBe(6454);
-    hostSock.pendingSends.splice(0).forEach((s) => s.cb(null));
-    artnetHost.stop();
+    expect(mocks.udp.sockets).toHaveLength(1); // Never binds 6454 when receiver is on 127.0.0.1:6454
+    expect(localSendSock.pendingSends[0].port).toBe(6454);
+    expect(localSendSock.pendingSends[1].port).toBe(6454);
+
+    const localReply = buildArtPollReply([127, 0, 0, 1], 'LocalNode', 'Local Art-Net Node');
+    localSendSock.emitter.emit('message', Buffer.from(localReply), { address: '127.0.0.1', port: 6454 });
+    expect(ev.onNode).toHaveBeenCalledWith(expect.objectContaining({ ip: '127.0.0.1', name: 'LocalNode' }));
+
+    localSendSock.pendingSends.splice(0).forEach((s) => s.cb(null));
+    artnetLocal.stop();
 
     // 3) SacnDriver binds ephemeral port 0 (no conflict with TD dmx_in on 127.0.0.1:5568) and maps universe = sacnUniverse ?? universe + 1.
     mocks.udp.failBindPorts.clear();

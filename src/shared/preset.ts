@@ -1,6 +1,6 @@
 import { autoAssign } from './addressing'
 import { ARTNET_PORT, DEFAULT_SPEED, DEFAULT_TARGET_IP, H2_MAX_SPEED_CMS, LOCK_VALUE } from './dmx'
-import { KINET_PORT, SACN_PORT } from './protocols'
+import { defaultPortForDriver } from './protocols'
 import { FPS_OPTIONS, LTC_FPS_OPTIONS } from './timecode'
 import type {
   ClipKeyframe,
@@ -76,45 +76,19 @@ function validateSettings(rawSettings: unknown): Settings {
   const driver = rawOut.driver as DriverId
   if (!VALID_DRIVERS.has(driver)) failProject('settings.output.driver không hợp lệ')
   const ip = reqString(rawOut.ip, 'settings.output.ip')
-  let port = reqFinite(rawOut.port, 'settings.output.port', 1, 65535, true)
-  const portExplicit = reqOptionalBool(rawOut.portExplicit, 'settings.output.portExplicit', false)
-  const net = reqFinite(rawOut.net, 'settings.output.net', 0, 127, true)
-  const subnet = reqFinite(rawOut.subnet, 'settings.output.subnet', 0, 15, true)
-  const universe = reqFinite(rawOut.universe, 'settings.output.universe', 0, 15, true)
-  const sendHz = reqFinite(rawOut.sendHz, 'settings.output.sendHz', 1, 120)
-  // Chỉ migrate cấu hình mặc định cũ chưa tuỳ biến (giữ nguyên mọi custom port/IP/universe đã cấu hình).
-  const hasLtcFps = isRecord(rawSettings.ltc) && rawSettings.ltc.fps !== undefined
-  const timelineFps = isRecord(rawSettings.timeline) ? rawSettings.timeline.fps : undefined
-  const hasHighTimelineFps = typeof timelineFps === 'number' && timelineFps > 30
-  const isLegacyUntouchedDefaults =
-    !portExplicit &&
-    ip === DEFAULT_TARGET_IP &&
-    net === 0 &&
-    subnet === 0 &&
-    universe === 0 &&
-    sendHz === 25 &&
-    rawOut.sacnUniverse === undefined &&
-    rawOut.kinetVersion === undefined &&
-    !hasLtcFps &&
-    !hasHighTimelineFps
-  if (isLegacyUntouchedDefaults) {
-    if (driver === 'artnet' && port === SACN_PORT) {
-      port = ARTNET_PORT
-    } else if (driver === 'sacn' && port === ARTNET_PORT) {
-      port = SACN_PORT
-    } else if (driver === 'kinet' && (port === ARTNET_PORT || port === SACN_PORT)) {
-      port = KINET_PORT
-    }
-  }
+  // Giữ nguyên mọi cổng dương đã lưu (tránh đoán nhầm custom port là legacy default); chỉ điền mặc định khi thiếu port.
+  const port =
+    rawOut.port === undefined || rawOut.port === null
+      ? (defaultPortForDriver(driver) ?? ARTNET_PORT)
+      : reqFinite(rawOut.port, 'settings.output.port', 1, 65535, true)
   const output: OutputSettings = {
     driver,
     ip,
     port,
-    ...(portExplicit ? { portExplicit: true } : {}),
-    net,
-    subnet,
-    universe,
-    sendHz,
+    net: reqFinite(rawOut.net, 'settings.output.net', 0, 127, true),
+    subnet: reqFinite(rawOut.subnet, 'settings.output.subnet', 0, 15, true),
+    universe: reqFinite(rawOut.universe, 'settings.output.universe', 0, 15, true),
+    sendHz: reqFinite(rawOut.sendHz, 'settings.output.sendHz', 1, 120),
   }
   if (rawOut.sacnUniverse !== undefined) {
     output.sacnUniverse = reqFinite(rawOut.sacnUniverse, 'settings.output.sacnUniverse', 1, 63999, true)
