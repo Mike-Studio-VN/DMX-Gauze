@@ -3,7 +3,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import * as THREE from 'three';
 import { computeManualMotionProgress, resolveCueButtonBaselines } from '@shared/convert';
-import { createDefaultProject } from '@shared/preset';
+import { createDefaultProject, normalizeProject } from '@shared/preset';
 import { pickFirstVisibleHit } from '@shared/stage3d';
 import { FPS_OPTIONS } from '@shared/timecode';
 import type { TimelineClip } from '@shared/types';
@@ -1253,5 +1253,48 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
 
     useAppStore.getState().updateOutputSettings({ driver: 'kinet' });
     expect(useAppStore.getState().project.settings.output.port).toBe(6038);
+  });
+});
+
+describe('Save errors are reported and out-of-range inputs are clamped', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('autosave and Ctrl+S failures raise an error toast instead of failing silently', async () => {
+    vi.useFakeTimers();
+    setupBrowserEnv();
+    const { getBridge } = await import('./services/bridge');
+    const bridge = getBridge();
+    vi.spyOn(bridge, 'saveProject').mockRejectedValue(new Error('disk full'));
+    vi.spyOn(bridge, 'saveProjectFile').mockRejectedValue(new Error('disk full'));
+    useAppStore.getState().updateNotificationSettings({
+      enabled: true,
+      kinds: { info: true, success: true, warn: true, error: true },
+    });
+    useAppStore.getState().updateOutputSettings({ sendHz: 25 });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(useAppStore.getState().toast).toMatchObject({ kind: 'error', title: 'Lỗi lưu' });
+    useAppStore.getState().dismissToast();
+    await vi.advanceTimersByTimeAsync(1000); // qua cửa sổ chống toast trùng 800 ms
+    await useAppStore.getState().saveCurrentProject();
+    expect(useAppStore.getState().toast).toMatchObject({ kind: 'error', title: 'Lỗi lưu' });
+    expect(useAppStore.getState().dirty).toBe(true);
+  });
+
+  it('module and LTC values are clamped to what normalizeProject accepts', () => {
+    vi.useFakeTimers();
+    setupBrowserEnv();
+    const id = useAppStore.getState().project.modules[0].id;
+    useAppStore.getState().updateModule(id, { length: 600, width: 900, maxSpeedCms: 20000 });
+    useAppStore.getState().updateLtcSettings({ offsetFrames: 900, freewheelFrames: 1000 });
+    const { project } = useAppStore.getState();
+    expect(() => normalizeProject(project)).not.toThrow();
+    expect(project.modules[0].length).toBe(500);
+    expect(project.settings.ltc.offsetFrames).toBe(600);
   });
 });
