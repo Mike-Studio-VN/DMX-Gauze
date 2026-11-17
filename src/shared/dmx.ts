@@ -25,3 +25,8 @@ export function rangesOverlap(a: number, b: number): boolean {
   const [b0, b1] = addressRange(b)
   return a0 <= b1 && b0 <= a1
 }
+
+export function isValidIPv4(s: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s.trim())
+  return !!m && m.slice(1).every((p) => Number(p) <= 255)
+}

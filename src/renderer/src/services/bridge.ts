@@ -1,0 +1,90 @@
+import type { AppInfo, GauzeBridge, SnapshotDto } from '@shared/api'
+import { GauzeCore } from '@shared/core'
+import { MockDriver } from '@shared/drivers'
+import { createDefaultProject } from '@shared/preset'
+import type { Command, CoreConfig, Project } from '@shared/types'
+
+const STORAGE_KEY = 'dmx-gauze-project-v1'
+
+function createWebBridge(): GauzeBridge {
+  const listeners = new Set<(s: SnapshotDto) => void>()
+  const core = new GauzeCore((_cfg, ev) => new MockDriver(ev, 'Chế độ Web Mock (không gửi UDP)'))
+
+  core.onSnapshot((snap) => {
+    const dto: SnapshotDto = { ...snap, frame: Array.from(snap.frame) }
+    for (const cb of listeners) cb(dto)
+  })
+
+  return {
+    async getAppInfo(): Promise<AppInfo> {
+      return { version: '0.1.0', platform: 'web', runtime: 'web' }
+    },
+    async loadProject(): Promise<Project> {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY)
+        if (raw) {
+          const parsed = JSON.parse(raw) as Project
+          if (parsed && parsed.version === 1 && Array.isArray(parsed.modules)) return parsed
+        }
+      } catch {
+        /* ignore */
+      }
+      return createDefaultProject()
+    },
+    async saveProject(project: Project): Promise<void> {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(project))
+    },
+    async exportProject(project: Project): Promise<boolean> {
+      const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'dmx-gauze-project.json'
+      a.click()
+      URL.revokeObjectURL(url)
+      return true
+    },
+    async importProject(): Promise<Project | null> {
+      return new Promise((resolve) => {
+        const input = document.createElement('input')
+        input.type = 'file'
+        input.accept = '.json,application/json'
+        input.onchange = async () => {
+          const f = input.files?.[0]
+          if (!f) return resolve(null)
+          try {
+            const parsed = JSON.parse(await f.text()) as Project
+            if (parsed && parsed.version === 1 && Array.isArray(parsed.modules)) {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed))
+              resolve(parsed)
+            } else resolve(null)
+          } catch {
+            resolve(null)
+          }
+        }
+        input.click()
+      })
+    },
+    async configure(cfg: CoreConfig): Promise<void> {
+      core.configure(cfg)
+      core.start()
+    },
+    async command(cmd: Command) {
+      return core.command(cmd)
+    },
+    async pollNow(): Promise<void> {
+      core.pollNow()
+    },
+    onSnapshot(cb: (snap: SnapshotDto) => void): () => void {
+      listeners.add(cb)
+      return () => listeners.delete(cb)
+    },
+  }
+}
+
+let cached: GauzeBridge | null = null
+
+export function getBridge(): GauzeBridge {
+  if (!cached) cached = window.gauze ?? createWebBridge()
+  return cached
+}
