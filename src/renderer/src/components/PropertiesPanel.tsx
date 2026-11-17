@@ -256,9 +256,19 @@ function MomentEditor({
 
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-1.5">
-          <span className="text-[11px] font-semibold tracking-wide text-[#FFB26B] uppercase">
-            Các điểm ({sorted.length})
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-semibold tracking-wide text-[#FFB26B] uppercase">
+              Các điểm ({sorted.length})
+            </span>
+            {(() => {
+              const activeIdx = sorted.findIndex((k) => k.id === selectedKeyId)
+              return activeIdx >= 0 ? (
+                <span className="rounded-md bg-brand px-1.5 py-0.5 text-[10px] font-bold text-[#1C0E04]">
+                  K{activeIdx + 1}
+                </span>
+              ) : null
+            })()}
+          </div>
           <button
             type="button"
             onClick={() => {
@@ -289,13 +299,19 @@ function MomentEditor({
               <div
                 key={kf.id}
                 onClick={() => onSelectKey(kf.id)}
-                className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 transition ${
+                className={`flex cursor-pointer items-center gap-1.5 rounded-xl px-2 py-1.5 transition ${
                   active
-                    ? 'bg-brand/15 shadow-[inset_0_0_0_1.5px_var(--acc)]'
-                    : 'bg-black/30 shadow-[inset_0_0_0_1px_var(--line)]'
+                    ? 'bg-brand/22 shadow-[inset_0_0_0_2px_var(--acc),0_0_16px_-6px_rgba(247,132,46,0.7)]'
+                    : 'bg-black/30 opacity-80 shadow-[inset_0_0_0_1px_var(--line)] hover:opacity-100'
                 }`}
               >
-                <span className="w-6 shrink-0 text-[10.5px] font-semibold text-info">K{idx + 1}</span>
+                <span
+                  className={`inline-flex w-7 shrink-0 items-center justify-center rounded-md py-0.5 text-[10.5px] transition ${
+                    active ? 'bg-brand font-bold text-[#1C0E04]' : 'font-semibold text-info'
+                  }`}
+                >
+                  K{idx + 1}
+                </span>
                 <label className="flex min-w-0 flex-1 items-center gap-0.5">
                   <input
                     type="number"
@@ -304,7 +320,10 @@ function MomentEditor({
                     max={Number.isFinite(bounds.maxEnd) ? bounds.maxEnd : undefined}
                     title="Thời gian của điểm trên Timeline (s)"
                     value={draftTime?.id === kf.id ? draftTime.raw : timelineTime}
-                    onFocus={() => setDraftTime({ id: kf.id, raw: String(timelineTime) })}
+                    onFocus={() => {
+                      onSelectKey(kf.id)
+                      setDraftTime({ id: kf.id, raw: String(timelineTime) })
+                    }}
                     onChange={(e) => {
                       const raw = e.target.value
                       setDraftTime({ id: kf.id, raw })
@@ -324,7 +343,9 @@ function MomentEditor({
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
                     }}
-                    className="w-full min-w-0 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none"
+                    className={`w-full min-w-0 bg-transparent text-right text-[11px] tabular-nums outline-none ${
+                      active ? 'font-semibold text-fg' : 'text-fg'
+                    }`}
                   />
                   <span className="text-[10px] text-muted">s</span>
                 </label>
@@ -337,7 +358,10 @@ function MomentEditor({
                     max="100"
                     title="Độ cao theo phần trăm hành trình (0–100%)"
                     value={draftPct?.id === kf.id ? draftPct.raw : pct}
-                    onFocus={() => setDraftPct({ id: kf.id, raw: String(pct) })}
+                    onFocus={() => {
+                      onSelectKey(kf.id)
+                      setDraftPct({ id: kf.id, raw: String(pct) })
+                    }}
                     onChange={(e) => {
                       const raw = e.target.value
                       setDraftPct({ id: kf.id, raw })
@@ -355,7 +379,9 @@ function MomentEditor({
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
                     }}
-                    className="w-full min-w-0 bg-transparent text-right text-[11px] text-[#FFB26B] tabular-nums outline-none"
+                    className={`w-full min-w-0 bg-transparent text-right text-[11px] tabular-nums outline-none ${
+                      active ? 'font-semibold text-[#FFD08A]' : 'text-[#FFB26B]'
+                    }`}
                   />
                   <span className="text-[10px] text-muted">%</span>
                 </label>

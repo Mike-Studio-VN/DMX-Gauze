@@ -428,8 +428,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   ) => {
     e.stopPropagation()
     e.preventDefault()
-    selectTimelineClip(clip.id)
-    setSelectedKeyId(kfId)
+    selectTimelineClip(clip.id, kfId)
     const svgEl = e.currentTarget.closest('svg')
     if (!svgEl) return
 
@@ -1334,49 +1333,90 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
                                         )
                                       })}
 
-                                    {/* Chấm keyframe kéo thả 2D */}
-                                    {sortedKfs.map((kf, idx) => {
-                                      const pt = pts[idx]
-                                      if (!pt) return null
-                                      const activeKf = isSelected && selectedKeyId === kf.id
-                                      const prevBad = idx > 0 && issues[idx - 1] && !issues[idx - 1].feasible
-                                      const nextBad = idx < issues.length && issues[idx] && !issues[idx].feasible
-                                      const dotColor = prevBad || nextBad ? '#FF7D6E' : baseStroke
+                                    {/* Chấm keyframe kéo thả 2D (vẽ điểm đang chọn sau cùng để nổi bật lên trên cùng) */}
+                                    {[...sortedKfs]
+                                      .map((kf, idx) => ({ kf, idx, activeKf: isSelected && selectedKeyId === kf.id }))
+                                      .sort((a, b) => Number(a.activeKf) - Number(b.activeKf))
+                                      .map(({ kf, idx, activeKf }) => {
+                                        const pt = pts[idx]
+                                        if (!pt) return null
+                                        const prevBad = idx > 0 && issues[idx - 1] && !issues[idx - 1].feasible
+                                        const nextBad = idx < issues.length && issues[idx] && !issues[idx].feasible
+                                        const dotColor = prevBad || nextBad ? '#FF7D6E' : baseStroke
+                                        const tagOnLeft = pt.x > widthPx - 28
+                                        const tagX = tagOnLeft ? Math.max(2, pt.x - 24) : Math.min(widthPx - 22, pt.x + 7)
+                                        const tagY = pt.y > BODY_H / 2 ? Math.max(1, pt.y - 14) : Math.min(BODY_H - 12, pt.y + 3)
 
-                                      return (
-                                        <g
-                                          key={kf.id}
-                                          onPointerDown={(e) => startKeyframeDrag(e, clip, mod, kf.id, widthPx, BODY_H)}
-                                          onContextMenu={(e) => {
-                                            e.preventDefault()
-                                            e.stopPropagation()
-                                            if (clip.keyframes.length <= 2) {
-                                              notify('Mỗi đường sóng cần giữ ít nhất 2 điểm (đầu & cuối)', 'warn')
-                                              return
-                                            }
-                                            const nextKfs = clip.keyframes.filter((k) => k.id !== kf.id)
-                                            updateClip(clip.id, { keyframes: nextKfs })
-                                          }}
-                                          className="cursor-grab active:cursor-grabbing"
-                                        >
-                                          <title>
-                                            {`K${idx + 1}: ${(clip.startTime + kf.offset).toFixed(2)}s · ${heightToPercent(kf.height, mod)}% (Kéo để chỉnh · Chuột phải xoá điểm)`}
-                                          </title>
-                                          <circle cx={pt.x} cy={pt.y} r={8} fill="transparent" />
-                                          {activeKf && (
-                                            <circle cx={pt.x} cy={pt.y} r={6} fill={dotColor} fillOpacity={0.3} />
-                                          )}
-                                          <circle
-                                            cx={pt.x}
-                                            cy={pt.y}
-                                            r={activeKf ? 4.2 : 3.4}
-                                            fill={dotColor}
-                                            stroke="#FBF3EA"
-                                            strokeWidth={activeKf ? 1.8 : 1.4}
-                                          />
-                                        </g>
-                                      )
-                                    })}
+                                        return (
+                                          <g
+                                            key={kf.id}
+                                            onPointerDown={(e) => startKeyframeDrag(e, clip, mod, kf.id, widthPx, BODY_H)}
+                                            onContextMenu={(e) => {
+                                              e.preventDefault()
+                                              e.stopPropagation()
+                                              if (clip.keyframes.length <= 2) {
+                                                notify('Mỗi đường sóng cần giữ ít nhất 2 điểm (đầu & cuối)', 'warn')
+                                                return
+                                              }
+                                              const nextKfs = clip.keyframes.filter((k) => k.id !== kf.id)
+                                              updateClip(clip.id, { keyframes: nextKfs })
+                                            }}
+                                            className="cursor-grab active:cursor-grabbing"
+                                          >
+                                            <title>
+                                              {`K${idx + 1}: ${(clip.startTime + kf.offset).toFixed(2)}s · ${heightToPercent(kf.height, mod)}% (Kéo để chỉnh · Chuột phải xoá điểm)`}
+                                            </title>
+                                            {activeKf && (
+                                              <>
+                                                <line
+                                                  x1={pt.x}
+                                                  y1={0}
+                                                  x2={pt.x}
+                                                  y2={BODY_H}
+                                                  stroke="#FFCB72"
+                                                  strokeWidth={1}
+                                                  strokeDasharray="2 2"
+                                                  strokeOpacity={0.8}
+                                                />
+                                                <circle cx={pt.x} cy={pt.y} r={8.5} fill="#F7842E" fillOpacity={0.32} />
+                                                <circle cx={pt.x} cy={pt.y} r={6.4} fill="none" stroke="#FFCB72" strokeWidth={1.3} />
+                                              </>
+                                            )}
+                                            <circle cx={pt.x} cy={pt.y} r={8} fill="transparent" />
+                                            <circle
+                                              cx={pt.x}
+                                              cy={pt.y}
+                                              r={activeKf ? 4.8 : 3.2}
+                                              fill={activeKf ? '#FBF3EA' : dotColor}
+                                              stroke={activeKf ? '#F7842E' : '#FBF3EA'}
+                                              strokeWidth={activeKf ? 2 : 1.2}
+                                            />
+                                            {activeKf && (
+                                              <g transform={`translate(${tagX}, ${tagY})`} className="pointer-events-none">
+                                                <rect
+                                                  width={19}
+                                                  height={11}
+                                                  rx={3}
+                                                  fill="#1C0E04"
+                                                  fillOpacity={0.92}
+                                                  stroke="#FFCB72"
+                                                  strokeWidth={0.9}
+                                                />
+                                                <text
+                                                  x={9.5}
+                                                  y={8}
+                                                  textAnchor="middle"
+                                                  fill="#FFCB72"
+                                                  fontSize={7.5}
+                                                  fontWeight={700}
+                                                >
+                                                  K{idx + 1}
+                                                </text>
+                                              </g>
+                                            )}
+                                          </g>
+                                        )
+                                      })}
                                   </svg>
                                 </div>
                               </div>

@@ -85,7 +85,7 @@ interface AppState {
   selectLayer: (layerId: string) => void
   selectAll: () => void
   selectButton: (id: string | null) => void
-  selectTimelineClip: (clipId: string | null) => void
+  selectTimelineClip: (clipId: string | null, keyId?: string | null) => void
   selectTimelineKey: (keyId: string | null) => void
   selectTimelineLayer: (layerId: string | null) => void
 
@@ -489,11 +489,17 @@ export const useAppStore = create<AppState>((set, get) => {
 
     selectButton: (selectedButtonId) => set({ selectedButtonId, focusScope: 'buttons' }),
 
-    selectTimelineClip(selectedClipId) {
+    selectTimelineClip(selectedClipId, keyId) {
       const clip = selectedClipId ? (get().project.clips ?? []).find((c) => c.id === selectedClipId) : null
+      const preservedKey =
+        keyId !== undefined
+          ? keyId
+          : selectedClipId && get().selectedClipId === selectedClipId
+            ? get().selectedKeyId
+            : null
       set({
         selectedClipId,
-        selectedKeyId: null,
+        selectedKeyId: preservedKey,
         selectedTimelineLayerId: null,
         ...(clip ? { selectedLayerId: null, selectedIds: [clip.moduleId] } : {}),
         focusScope: 'timeline',

@@ -1,4 +1,5 @@
 // Quy đổi mét / tốc độ / giây ⇄ giá trị DMX (xem plan mục 8.2).
+import type { ModuleCfg, Snapshot } from './types'
 
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v))
@@ -37,4 +38,66 @@ export function durationToCh3(distM: number, seconds: number, maxSpeedCms: numbe
   const minSeconds = (dist * 100) / maxSpeedCms
   const ideal = ((dist * 100) / Math.max(seconds, 0.01) / maxSpeedCms) * 255
   return { ch3: clamp(Math.ceil(ideal), 1, 255), minSeconds, tooFast: ideal > 255 }
+}
+
+export interface ManualMotionBaseline {
+  start: number
+  goal: number
+}
+
+export interface ManualMotionProgress {
+  /** Tỉ lệ hoàn thành 0..1 trên quãng đường hiện tại. */
+  progress: number
+  /** Thời gian còn lại ước tính (giây, lớn nhất trong nhóm module đang chạy). */
+  etaSec: number
+  /** Còn ít nhất 1 module đang chuyển động theo snapshot. */
+  anyMoving: boolean
+  /** Tất cả module đều đã chạm ngưỡng mục tiêu. */
+  reached: boolean
+}
+
+/** Tính tiến độ (0..1) và thời gian còn lại (s) cho animation dọc của nút Lên / Xuống ở Manual. */
+export function computeManualMotionProgress(
+  baselines: Record<string, ManualMotionBaseline>,
+  modules: ModuleCfg[],
+  snapshot: Pick<Snapshot, 'modules'> | null,
+): ManualMotionProgress {
+  const entries = Object.entries(baselines)
+  if (entries.length === 0) {
+    return { progress: 1, etaSec: 0, anyMoving: false, reached: true }
+  }
+  const modById = new Map(modules.map((m) => [m.id, m]))
+  let sumProgress = 0
+  let maxEta = 0
+  let anyMoving = false
+  let allReached = true
+
+  for (const [id, base] of entries) {
+    const mod = modById.get(id)
+    const st = snapshot?.modules[id]
+    const curPos = st?.pos ?? base.start
+    const span = base.goal - base.start
+    const distLeft = Math.abs(base.goal - curPos)
+
+    if (st?.moving) anyMoving = true
+    if (distLeft > 0.008) allReached = false
+
+    const p = Math.abs(span) < 0.005 ? 1 : clamp((curPos - base.start) / span, 0, 1)
+    sumProgress += p
+
+    if (distLeft > 0.008 && mod) {
+      const ch3 = st?.ch3 && st.ch3 > 0 ? st.ch3 : mod.defaultSpeed
+      const speedCms = Math.max(1, ch3ToCms(ch3, mod.maxSpeedCms))
+      const eta = (distLeft * 100) / speedCms
+      if (eta > maxEta) maxEta = eta
+    }
+  }
+
+  const progress = clamp(sumProgress / entries.length, 0, 1)
+  return {
+    progress: allReached ? 1 : progress,
+    etaSec: allReached ? 0 : maxEta,
+    anyMoving,
+    reached: allReached,
+  }
 }

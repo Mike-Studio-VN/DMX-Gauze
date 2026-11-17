@@ -32,6 +32,32 @@ describe('convert', () => {
     expect(fast.tooFast).toBe(true)
     expect(fast.minSeconds).toBeCloseTo(2.5, 3)
   })
+
+  it('tính tiến độ & ETA cho nút Lên/Xuống ở chế độ Manual', async () => {
+    const { computeManualMotionProgress } = await import('./convert')
+    const p = createDefaultProject()
+    const m = { ...p.modules[0], id: 'm1', minHeight: 0, maxHeight: 3, length: 3, maxSpeedCms: 100 }
+    // Đang đi xuống từ 0m -> 3m, hiện tại ở 1.5m với ch3=255 (100 cm/s -> còn 1.5s)
+    const downRes = computeManualMotionProgress(
+      { m1: { start: 0, goal: 3 } },
+      [m],
+      { modules: { m1: { pos: 1.5, target: 3, ch3: 255, moving: true } } },
+    )
+    expect(downRes.progress).toBeCloseTo(0.5, 3)
+    expect(downRes.etaSec).toBeCloseTo(1.5, 2)
+    expect(downRes.anyMoving).toBe(true)
+    expect(downRes.reached).toBe(false)
+
+    // Đang đi lên từ 2m -> 0m, đã chạm 0m
+    const upDone = computeManualMotionProgress(
+      { m1: { start: 2, goal: 0 } },
+      [m],
+      { modules: { m1: { pos: 0, target: 0, ch3: 255, moving: false } } },
+    )
+    expect(upDone.progress).toBe(1)
+    expect(upDone.etaSec).toBe(0)
+    expect(upDone.reached).toBe(true)
+  })
 })
 
 describe('addressing & preset', () => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { type CSSProperties, useEffect, useState } from 'react'
 import { motion } from 'motion/react'
 import {
   ArrowDown,
@@ -12,10 +12,78 @@ import {
   Square,
   Trash2,
 } from 'lucide-react'
-import { clamp } from '@shared/convert'
+import {
+  type ManualMotionBaseline,
+  clamp,
+  computeManualMotionProgress,
+} from '@shared/convert'
 import type { CueButton, ModuleCfg, SpeedUnit } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 import { TimelineEditor } from './TimelineEditor'
+
+type ManualBtnPhase = 'idle' | 'run'
+
+interface ManualRunState {
+  dir: 'up' | 'down'
+  phase: ManualBtnPhase
+  startedAt: number
+  baselines: Record<string, ManualMotionBaseline>
+  progress: number
+  etaSec: number
+}
+
+function ManualProgressButton({
+  dir,
+  label,
+  hint,
+  phase,
+  progress,
+  etaSec,
+  onClick,
+}: {
+  dir: 'up' | 'down'
+  label: string
+  hint: string
+  phase: ManualBtnPhase
+  progress: number
+  etaSec: number
+  onClick: () => void
+}) {
+  const Icon = dir === 'up' ? ArrowUp : ArrowDown
+  const pct = Math.round(clamp(progress, 0, 1) * 100)
+  const etaText = etaSec > 0.2 ? `${Math.ceil(etaSec)}s` : '...'
+
+  return (
+    <div className="manual-vslot">
+      <button
+        type="button"
+        title={hint}
+        onClick={onClick}
+        data-state={phase}
+        style={{ '--p': clamp(progress, 0, 1).toFixed(4) } as CSSProperties}
+        className={`manual-vbtn ${dir}`}
+      >
+        <span className="manual-vbtn-track" aria-hidden>
+          <span className="manual-vbtn-bar" />
+        </span>
+
+        <span className="manual-vbtn-idle" aria-hidden>
+          <span className="manual-vbtn-arw">
+            <span className="manual-vbtn-arw-inner">
+              <Icon size={15} strokeWidth={2.4} />
+            </span>
+          </span>
+          <b>{label}</b>
+        </span>
+
+        <span className="manual-vbtn-run" aria-hidden>
+          <b>{pct}%</b>
+          <small>{etaText}</small>
+        </span>
+      </button>
+    </div>
+  )
+}
 
 function ActionBtn({
   icon: Icon,
@@ -44,12 +112,12 @@ function ActionBtn({
       type="button"
       title={hint}
       onClick={onClick}
-      whileHover={{ y: -1 }}
-      whileTap={{ scale: 0.94 }}
+      whileHover={{ y: -2 }}
+      whileTap={{ scale: 0.96 }}
       transition={{ type: 'spring', stiffness: 520, damping: 28 }}
-      className={`h-12 px-4 text-xs ${cls}`}
+      className={`h-14 px-4 text-sm font-semibold ${cls}`}
     >
-      <Icon size={15} aria-hidden />
+      <Icon size={16} aria-hidden />
       <span>{label}</span>
     </motion.button>
   )
@@ -426,25 +494,99 @@ function ModeButtons() {
 }
 
 function ModeManual() {
-  const { selectedIds, sendCommand, notify } = useAppStore()
+  const { project, snapshot, selectedIds, sendCommand, notify } = useAppStore()
   const [unit, setUnit] = useState<SpeedUnit>('cms')
   const [val, setVal] = useState(47)
+  const [runState, setRunState] = useState<ManualRunState | null>(null)
 
   const speedSpec = { unit, value: Math.max(0.1, val) }
 
-  const runManual = (cmd: { type: 'move'; target: 'min' | 'max' } | { type: 'stop' }) => {
+  const runManual = async (cmd: { type: 'move'; target: 'min' | 'max' } | { type: 'stop' }) => {
     if (selectedIds.length === 0) {
       notify('Chưa chọn module nào để điều khiển', 'warn')
       return
     }
-    if (cmd.type === 'stop') void sendCommand({ type: 'stop', ids: selectedIds })
-    else void sendCommand({ type: 'move', ids: selectedIds, target: cmd.target, speed: speedSpec })
+    if (cmd.type === 'stop') {
+      setRunState(null)
+      await sendCommand({ type: 'stop', ids: selectedIds })
+      return
+    }
+    const dir: 'up' | 'down' = cmd.target === 'min' ? 'up' : 'down'
+    const baselines: Record<string, ManualMotionBaseline> = {}
+    for (const id of selectedIds) {
+      const mod = project.modules.find((m) => m.id === id)
+      if (!mod) continue
+      const start = snapshot?.modules[id]?.pos ?? 0
+      const goal = cmd.target === 'min' ? mod.minHeight : Math.min(mod.length, mod.maxHeight)
+      baselines[id] = { start, goal }
+    }
+    const res = await sendCommand({ type: 'move', ids: selectedIds, target: cmd.target, speed: speedSpec })
+    if (!res.ok) {
+      setRunState(null)
+      return
+    }
+    const initial = computeManualMotionProgress(baselines, project.modules, snapshot)
+    setRunState({
+      dir,
+      phase: 'run',
+      startedAt: performance.now(),
+      baselines,
+      progress: initial.progress,
+      etaSec: initial.etaSec,
+    })
   }
+
+  useEffect(() => {
+    if (!runState || runState.phase !== 'run') return
+    const res = computeManualMotionProgress(runState.baselines, project.modules, snapshot)
+    const elapsed = performance.now() - runState.startedAt
+
+    if (res.reached) {
+      const resetDelay = Math.max(180, 220 - elapsed)
+      const tShow = window.setTimeout(() => {
+        setRunState((cur) => (cur?.phase === 'run' && cur.dir === runState.dir ? { ...cur, progress: 1, etaSec: 0 } : cur))
+      }, 0)
+      const tEnd = window.setTimeout(() => {
+        setRunState((cur) => (cur?.phase === 'run' && cur.dir === runState.dir ? null : cur))
+      }, resetDelay)
+      return () => {
+        window.clearTimeout(tShow)
+        window.clearTimeout(tEnd)
+      }
+    }
+
+    if (elapsed >= 260 && (!res.anyMoving || snapshot?.locked)) {
+      const t = window.setTimeout(() => {
+        setRunState((cur) => (cur?.phase === 'run' && cur.dir === runState.dir ? null : cur))
+      }, 0)
+      return () => window.clearTimeout(t)
+    }
+
+    if (Math.abs(runState.progress - res.progress) > 0.002 || Math.abs(runState.etaSec - res.etaSec) > 0.05) {
+      const t = window.setTimeout(() => {
+        setRunState((cur) =>
+          cur?.phase === 'run' && cur.dir === runState.dir
+            ? { ...cur, progress: res.progress, etaSec: res.etaSec }
+            : cur,
+        )
+      }, 0)
+      return () => window.clearTimeout(t)
+    }
+
+    if (elapsed < 260) {
+      const t = window.setTimeout(() => {
+        setRunState((cur) => (cur?.phase === 'run' && cur.dir === runState.dir ? { ...cur } : cur))
+      }, Math.max(20, 270 - elapsed))
+      return () => window.clearTimeout(t)
+    }
+    return undefined
+  }, [runState, snapshot, project.modules])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
         e.preventDefault()
+        setRunState(null)
         void sendCommand({ type: 'stop', ids: 'all' })
       }
     }
@@ -497,26 +639,30 @@ function ModeManual() {
 
       <div className="flex flex-1 items-center">
         <div className="grid w-full grid-cols-3 gap-3">
-          <ActionBtn
-            icon={ArrowUp}
+          <ManualProgressButton
+            dir="up"
             label="Lên"
             hint="Di chuyển lên giới hạn Min đã cài"
-            variant="info"
-            onClick={() => runManual({ type: 'move', target: 'min' })}
+            phase={runState?.dir === 'up' ? runState.phase : 'idle'}
+            progress={runState?.dir === 'up' ? runState.progress : 0}
+            etaSec={runState?.dir === 'up' ? runState.etaSec : 0}
+            onClick={() => void runManual({ type: 'move', target: 'min' })}
           />
           <ActionBtn
             icon={Square}
             label="Dừng"
             hint="Dừng ngay và giữ nguyên vị trí hiện tại (Space)"
             variant="danger"
-            onClick={() => runManual({ type: 'stop' })}
+            onClick={() => void runManual({ type: 'stop' })}
           />
-          <ActionBtn
-            icon={ArrowDown}
+          <ManualProgressButton
+            dir="down"
             label="Xuống"
             hint="Di chuyển xuống giới hạn Max đã cài"
-            variant="brand"
-            onClick={() => runManual({ type: 'move', target: 'max' })}
+            phase={runState?.dir === 'down' ? runState.phase : 'idle'}
+            progress={runState?.dir === 'down' ? runState.progress : 0}
+            etaSec={runState?.dir === 'down' ? runState.etaSec : 0}
+            onClick={() => void runManual({ type: 'move', target: 'max' })}
           />
         </div>
       </div>
