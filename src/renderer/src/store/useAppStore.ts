@@ -2,11 +2,12 @@ import { create } from 'zustand'
 import { autoAssign, nextFree, orderedModules, validateAddress } from '@shared/addressing'
 import type { AppInfo, SnapshotDto } from '@shared/api'
 import { DEFAULT_SPEED, H2_MAX_SPEED_CMS } from '@shared/dmx'
-import { createDefaultProject } from '@shared/preset'
+import { createBlankProject, createDefaultProject } from '@shared/preset'
 import type {
   Command,
   CommandResult,
   CueButton,
+  Layer,
   LtcSettings,
   ModuleCfg,
   OutputSettings,
@@ -27,6 +28,9 @@ interface AppState {
   ready: boolean
   info: AppInfo | null
   project: Project
+  projectFilePath: string | null
+  dirty: boolean
+  collapsedLayers: Record<string, boolean>
   selectedIds: string[]
   snapshot: SnapshotDto | null
   activeTab: ControlTab
@@ -37,6 +41,11 @@ interface AppState {
   notify: (text: string, kind?: ToastMsg['kind']) => void
   setActiveTab: (tab: ControlTab) => void
   setSettingsOpen: (open: boolean) => void
+
+  toggleLayerCollapse: (layerId: string) => void
+  addLayer: (name: string) => string | null
+  renameLayer: (layerId: string, name: string) => void
+  removeLayer: (layerId: string) => void
 
   selectModule: (id: string, opts?: { multi?: boolean; range?: boolean }) => void
   selectLayer: (layerId: string) => void
@@ -64,8 +73,12 @@ interface AppState {
 
   sendCommand: (cmd: Command) => Promise<CommandResult>
   pollNow: () => void
+
+  newProject: () => Promise<void>
+  openProject: () => Promise<void>
+  saveCurrentProject: () => Promise<void>
+  saveAsProject: () => Promise<void>
   exportProject: () => Promise<void>
-  importProject: () => Promise<void>
   resetPreset: () => void
 }
 
@@ -89,6 +102,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   ready: false,
   info: null,
   project: createDefaultProject(),
+  projectFilePath: null,
+  dirty: false,
+  collapsedLayers: {},
   selectedIds: ['m-front-1'],
   snapshot: null,
   activeTab: 'manual',
@@ -107,22 +123,75 @@ export const useAppStore = create<AppState>((set, get) => ({
     const b = getBridge()
     if (unsubSnap) unsubSnap()
     unsubSnap = b.onSnapshot((snapshot) => set({ snapshot }))
-    const [info, project] = await Promise.all([b.getAppInfo(), b.loadProject()])
+    const [info, loaded] = await Promise.all([b.getAppInfo(), b.loadProject()])
     await b.configure({
-      modules: project.modules,
-      output: project.settings.output,
-      lockValue: project.settings.lockValue,
+      modules: loaded.project.modules,
+      output: loaded.project.settings.output,
+      lockValue: loaded.project.settings.lockValue,
     })
     set({
       ready: true,
       info,
-      project,
-      selectedIds: project.modules[0] ? [project.modules[0].id] : [],
+      project: loaded.project,
+      projectFilePath: loaded.filePath,
+      dirty: false,
+      selectedIds: loaded.project.modules[0] ? [loaded.project.modules[0].id] : [],
     })
   },
 
   setActiveTab: (activeTab) => set({ activeTab }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+
+  toggleLayerCollapse(layerId) {
+    const cur = get().collapsedLayers
+    set({ collapsedLayers: { ...cur, [layerId]: !cur[layerId] } })
+  },
+
+  addLayer(name) {
+    const trimmed = name.trim()
+    if (!trimmed) return 'Nhập tên layer mới'
+    const { project, collapsedLayers } = get()
+    const layer: Layer = {
+      id: `layer-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      name: trimmed,
+    }
+    const next = { ...project, layers: [...project.layers, layer] }
+    set({ project: next, dirty: true, collapsedLayers: { ...collapsedLayers, [layer.id]: false } })
+    persistAndSync(next)
+    return null
+  },
+
+  renameLayer(layerId, name) {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    const { project } = get()
+    const next = {
+      ...project,
+      layers: project.layers.map((l) => (l.id === layerId ? { ...l, name: trimmed } : l)),
+    }
+    set({ project: next, dirty: true })
+    persistAndSync(next)
+  },
+
+  removeLayer(layerId) {
+    const { project, selectedIds } = get()
+    if (project.layers.length <= 1) {
+      get().notify('Cần giữ lại ít nhất 1 layer', 'warn')
+      return
+    }
+    const modsInLayer = project.modules.filter((m) => m.layerId === layerId)
+    const remainingMods = project.modules.filter((m) => m.layerId !== layerId)
+    if (modsInLayer.length > 0 && remainingMods.length === 0) {
+      get().notify('Không thể xoá layer duy nhất đang chứa module', 'warn')
+      return
+    }
+    const layers = project.layers.filter((l) => l.id !== layerId)
+    const modules = project.settings.addressMode === 'auto' ? autoAssign(layers, remainingMods) : remainingMods
+    const next = { ...project, layers, modules }
+    const nextSel = selectedIds.filter((id) => modules.some((m) => m.id === id))
+    set({ project: next, dirty: true, selectedIds: nextSel.length ? nextSel : [modules[0].id] })
+    persistAndSync(next)
+  },
 
   selectModule(id, opts) {
     const { project, selectedIds } = get()
@@ -155,7 +224,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   addModule(layerId, opts) {
-    const { project } = get()
+    const { project, collapsedLayers } = get()
     const id = `m-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     const addr = opts.startAddress ?? nextFree(project.modules)
     if (addr === null) return 'Hết kênh trống trong Universe 0 (tối đa 512 kênh)'
@@ -178,7 +247,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     let modules = [...project.modules, mod]
     if (project.settings.addressMode === 'auto') modules = autoAssign(project.layers, modules)
     const next = { ...project, modules }
-    set({ project: next, selectedIds: [id] })
+    set({
+      project: next,
+      dirty: true,
+      selectedIds: [id],
+      collapsedLayers: { ...collapsedLayers, [layerId]: false },
+    })
     persistAndSync(next)
     return null
   },
@@ -193,7 +267,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (project.settings.addressMode === 'auto') modules = autoAssign(project.layers, modules)
     const next = { ...project, modules }
     const nextSel = selectedIds.filter((x) => x !== id)
-    set({ project: next, selectedIds: nextSel.length ? nextSel : [modules[0].id] })
+    set({ project: next, dirty: true, selectedIds: nextSel.length ? nextSel : [modules[0].id] })
     persistAndSync(next)
   },
 
@@ -211,7 +285,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     let modules = [...project.modules, copy]
     if (project.settings.addressMode === 'auto') modules = autoAssign(project.layers, modules)
     const next = { ...project, modules }
-    set({ project: next, selectedIds: [newId] })
+    set({ project: next, dirty: true, selectedIds: [newId] })
     persistAndSync(next)
   },
 
@@ -229,7 +303,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     ;[list[idx], list[swapIdx]] = [list[swapIdx], list[idx]]
     const modules = project.settings.addressMode === 'auto' ? autoAssign(project.layers, list) : list
     const next = { ...project, modules }
-    set({ project: next })
+    set({ project: next, dirty: true })
     persistAndSync(next)
   },
 
@@ -254,7 +328,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       modules = autoAssign(project.layers, modules)
     }
     const next = { ...project, modules }
-    set({ project: next })
+    set({ project: next, dirty: true })
     persistAndSync(next)
     return null
   },
@@ -263,7 +337,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { project } = get()
     const modules = addressMode === 'auto' ? autoAssign(project.layers, project.modules) : project.modules
     const next = { ...project, modules, settings: { ...project.settings, addressMode } }
-    set({ project: next })
+    set({ project: next, dirty: true })
     persistAndSync(next)
   },
 
@@ -271,7 +345,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { project } = get()
     const modules = autoAssign(project.layers, project.modules)
     const next = { ...project, modules, settings: { ...project.settings, addressMode: 'auto' as const } }
-    set({ project: next })
+    set({ project: next, dirty: true })
     persistAndSync(next)
     get().notify('Đã tự động gán lại địa chỉ liên tiếp từ kênh 1', 'info')
   },
@@ -282,7 +356,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       ...project,
       settings: { ...project.settings, output: { ...project.settings.output, ...patch } },
     }
-    set({ project: next })
+    set({ project: next, dirty: true })
     persistAndSync(next)
   },
 
@@ -292,7 +366,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       ...project,
       settings: { ...project.settings, ltc: { ...project.settings.ltc, ...patch } },
     }
-    set({ project: next })
+    set({ project: next, dirty: true })
     persistAndSync(next)
   },
 
@@ -302,14 +376,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       ...project,
       settings: { ...project.settings, timeline: { ...project.settings.timeline, ...patch } },
     }
-    set({ project: next })
+    set({ project: next, dirty: true })
     persistAndSync(next)
   },
 
   setLockValue(lockValue) {
     const { project } = get()
     const next = { ...project, settings: { ...project.settings, lockValue } }
-    set({ project: next })
+    set({ project: next, dirty: true })
     persistAndSync(next)
   },
 
@@ -318,14 +392,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const exists = project.buttons.some((b) => b.id === btn.id)
     const buttons = exists ? project.buttons.map((b) => (b.id === btn.id ? btn : b)) : [...project.buttons, btn]
     const next = { ...project, buttons }
-    set({ project: next })
+    set({ project: next, dirty: true })
     persistAndSync(next)
   },
 
   deleteButton(id) {
     const { project } = get()
     const next = { ...project, buttons: project.buttons.filter((b) => b.id !== id) }
-    set({ project: next })
+    set({ project: next, dirty: true })
     persistAndSync(next)
   },
 
@@ -333,7 +407,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { project } = get()
     const keys = [...project.keys, key].sort((a, b) => a.time - b.time)
     const next = { ...project, keys }
-    set({ project: next })
+    set({ project: next, dirty: true })
     persistAndSync(next)
   },
 
@@ -341,14 +415,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { project } = get()
     const keys = project.keys.map((k) => (k.id === id ? { ...k, ...patch } : k)).sort((a, b) => a.time - b.time)
     const next = { ...project, keys }
-    set({ project: next })
+    set({ project: next, dirty: true })
     persistAndSync(next)
   },
 
   deleteKey(id) {
     const { project } = get()
     const next = { ...project, keys: project.keys.filter((k) => k.id !== id) }
-    set({ project: next })
+    set({ project: next, dirty: true })
     persistAndSync(next)
   },
 
@@ -363,26 +437,67 @@ export const useAppStore = create<AppState>((set, get) => ({
     void getBridge().pollNow()
   },
 
+  async newProject() {
+    const blank = createBlankProject(get().project.settings)
+    await getBridge().clearCurrentFile()
+    set({
+      project: blank,
+      projectFilePath: null,
+      dirty: true,
+      collapsedLayers: {},
+      selectedIds: blank.modules[0] ? [blank.modules[0].id] : [],
+    })
+    persistAndSync(blank)
+    get().notify('Đã tạo dự án mới', 'info')
+  },
+
+  async openProject() {
+    try {
+      const loaded = await getBridge().openProjectFile()
+      if (!loaded) return
+      set({
+        project: loaded.project,
+        projectFilePath: loaded.filePath,
+        dirty: false,
+        collapsedLayers: {},
+        selectedIds: loaded.project.modules[0] ? [loaded.project.modules[0].id] : [],
+      })
+      persistAndSync(loaded.project)
+      get().notify('Đã mở dự án', 'info')
+    } catch (err) {
+      get().notify(`Không mở được file: ${(err as Error).message}`, 'error')
+    }
+  },
+
+  async saveCurrentProject() {
+    const res = await getBridge().saveProjectFile(get().project)
+    if (res.saved) {
+      set({ projectFilePath: res.filePath, dirty: false })
+      get().notify('Đã lưu dự án', 'info')
+    }
+  },
+
+  async saveAsProject() {
+    const res = await getBridge().saveProjectAs(get().project)
+    if (res.saved) {
+      set({ projectFilePath: res.filePath, dirty: false })
+      get().notify('Đã lưu dự án sang file mới', 'info')
+    }
+  },
+
   async exportProject() {
     const ok = await getBridge().exportProject(get().project)
     if (ok) get().notify('Đã xuất file dự án', 'info')
   },
 
-  async importProject() {
-    const loaded = await getBridge().importProject()
-    if (!loaded) return
-    set({
-      project: loaded,
-      selectedIds: loaded.modules[0] ? [loaded.modules[0].id] : [],
-    })
-    persistAndSync(loaded)
-    get().notify('Đã nhập dự án mới', 'info')
-  },
-
   resetPreset() {
     const def = createDefaultProject()
+    void getBridge().clearCurrentFile()
     set({
       project: def,
+      projectFilePath: null,
+      dirty: false,
+      collapsedLayers: {},
       selectedIds: def.modules[0] ? [def.modules[0].id] : [],
     })
     persistAndSync(def)

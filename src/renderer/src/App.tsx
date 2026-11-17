@@ -1,5 +1,18 @@
-import { useEffect } from 'react'
-import { Lock, OctagonX, Settings, Unlock, Wifi, WifiOff } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import {
+  ChevronDown,
+  Download,
+  FilePlus,
+  FolderOpen,
+  Lock,
+  OctagonX,
+  Save,
+  SaveAll,
+  Settings,
+  Unlock,
+  Wifi,
+  WifiOff,
+} from 'lucide-react'
 import { IconButton } from './components/IconButton'
 import { GauzeTree } from './components/GauzeTree'
 import { Stage3D } from './components/Stage3D'
@@ -20,15 +33,58 @@ function Panel({ title, children }: { title: string; children?: React.ReactNode 
 }
 
 export function App() {
-  const { ready, info, project, snapshot, toast, init, setSettingsOpen, sendCommand } = useAppStore()
+  const {
+    ready,
+    info,
+    project,
+    projectFilePath,
+    dirty,
+    snapshot,
+    toast,
+    init,
+    setSettingsOpen,
+    sendCommand,
+    newProject,
+    openProject,
+    saveCurrentProject,
+    saveAsProject,
+    exportProject,
+  } = useAppStore()
+
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     void init()
   }, [init])
 
+  // Đóng menu Project khi click ra ngoài hoặc bấm Escape, và hỗ trợ Cmd/Ctrl+S
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (menuOpen && menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false)
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        if (e.shiftKey) void saveAsProject()
+        else void saveCurrentProject()
+      }
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [menuOpen, saveCurrentProject, saveAsProject])
+
   const st = snapshot?.status
   const locked = snapshot?.locked ?? true
   const out = project.settings.output
+  const fileLabel = projectFilePath ? projectFilePath.split(/[\\/]/).pop() : 'Chưa lưu'
 
   const statusMeta = (() => {
     if (!st || st.state === 'idle') return { dot: 'bg-muted', text: 'Đang khởi tạo...', cls: 'text-muted', icon: Wifi }
@@ -56,8 +112,120 @@ export function App() {
     <div className="flex h-full flex-col gap-3 p-3">
       <header className="flex items-center justify-between gap-2 rounded-ui border border-line bg-panel px-3 py-2">
         <div className="flex flex-wrap items-center gap-3">
-          <span className="grid size-9 place-items-center rounded-ui bg-brand font-bold text-brand-fg">G</span>
-          <h1 className="text-base font-semibold">DMX Gauze</h1>
+          {/* Bấm vào tên app để mở menu Project */}
+          <div className="relative" ref={menuRef}>
+            <button
+              type="button"
+              onClick={() => setMenuOpen((o) => !o)}
+              aria-expanded={menuOpen}
+              title="Menu dự án: New, Open, Save, Save As, Settings, Xuất file"
+              className={`flex cursor-pointer items-center gap-2.5 rounded-ui px-1.5 py-1 transition hover:bg-panel-2 ${
+                menuOpen ? 'bg-panel-2' : ''
+              }`}
+            >
+              <span className="grid size-9 place-items-center rounded-ui bg-brand font-bold text-brand-fg">G</span>
+              <span className="text-left">
+                <span className="flex items-center gap-1 text-base leading-tight font-semibold">
+                  DMX Gauze
+                  <ChevronDown size={15} className={`text-muted transition ${menuOpen ? 'rotate-180' : ''}`} />
+                </span>
+                <span className="block text-[11px] leading-tight text-muted">
+                  {fileLabel}
+                  {dirty ? ' *' : ''}
+                </span>
+              </span>
+            </button>
+
+            {menuOpen && (
+              <div
+                role="menu"
+                className="absolute top-full left-0 z-50 mt-2 w-60 overflow-hidden rounded-ui border border-info/40 bg-panel py-1.5 text-xs shadow-2xl"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    void newProject()
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-fg hover:bg-panel-2"
+                >
+                  <FilePlus size={15} className="text-info" />
+                  <span className="flex-1">Dự án mới (New)</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    void openProject()
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-fg hover:bg-panel-2"
+                >
+                  <FolderOpen size={15} className="text-info" />
+                  <span className="flex-1">Mở file... (Open)</span>
+                </button>
+
+                <div className="my-1 border-t border-line" />
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    void saveCurrentProject()
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-fg hover:bg-panel-2"
+                >
+                  <Save size={15} className="text-brand" />
+                  <span className="flex-1">Lưu (Save)</span>
+                  <kbd className="text-[10px] text-muted">Ctrl+S</kbd>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    void saveAsProject()
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-fg hover:bg-panel-2"
+                >
+                  <SaveAll size={15} className="text-brand" />
+                  <span className="flex-1">Lưu thành... (Save As)</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    void exportProject()
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-fg hover:bg-panel-2"
+                >
+                  <Download size={15} className="text-muted" />
+                  <span className="flex-1">Xuất file project</span>
+                </button>
+
+                <div className="my-1 border-t border-line" />
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    setSettingsOpen(true)
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-fg hover:bg-panel-2"
+                >
+                  <Settings size={15} className="text-muted" />
+                  <span className="flex-1">Cài đặt (Settings)</span>
+                </button>
+              </div>
+            )}
+          </div>
 
           <button
             type="button"

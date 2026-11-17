@@ -1,6 +1,47 @@
 import { autoAssign } from './addressing'
 import { ARTNET_PORT, DEFAULT_SPEED, DEFAULT_TARGET_IP, H2_MAX_SPEED_CMS, LOCK_VALUE } from './dmx'
-import type { ModuleCfg, Project } from './types'
+import type { ModuleCfg, Project, Settings } from './types'
+
+export function createBlankProject(baseSettings?: Settings): Project {
+  const layerId = `layer-${Date.now()}`
+  const mod: ModuleCfg = {
+    id: `m-${Date.now()}`,
+    name: 'Màn 1',
+    layerId,
+    length: 1,
+    width: 1,
+    minHeight: 0,
+    maxHeight: 1,
+    startAddress: 1,
+    maxSpeedCms: H2_MAX_SPEED_CMS,
+    defaultSpeed: DEFAULT_SPEED,
+  }
+  const settings: Settings = baseSettings
+    ? structuredClone(baseSettings)
+    : {
+        output: {
+          driver: 'mock',
+          ip: DEFAULT_TARGET_IP,
+          port: ARTNET_PORT,
+          net: 0,
+          subnet: 0,
+          universe: 0,
+          sendHz: 40,
+        },
+        addressMode: 'auto',
+        lockValue: LOCK_VALUE,
+        ltc: { deviceId: '', channel: 'left', freewheelFrames: 10, offsetFrames: 0 },
+        timeline: { startTime: 0, fps: 25 },
+      }
+  return {
+    version: 1,
+    layers: [{ id: layerId, name: 'Lớp 1' }],
+    modules: [mod],
+    buttons: [],
+    keys: [],
+    settings,
+  }
+}
 
 export function createDefaultProject(): Project {
   const frontId = 'layer-front'

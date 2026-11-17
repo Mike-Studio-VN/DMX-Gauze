@@ -16,7 +16,7 @@ export function SettingsModal() {
     setAddressMode,
     pollNow,
     exportProject,
-    importProject,
+    openProject,
     resetPreset,
     notify,
   } = useAppStore()
@@ -324,11 +324,11 @@ export function SettingsModal() {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => void importProject()}
+                onClick={() => void openProject()}
                 className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-line bg-bg px-3 py-1.5 text-fg hover:bg-line"
               >
                 <FolderOpen size={14} />
-                Nhập JSON
+                Mở / Nhập JSON
               </button>
               <button
                 type="button"

@@ -5,7 +5,15 @@ import { GauzeCore } from '@shared/core'
 import { MockDriver } from '@shared/drivers'
 import type { Command, CoreConfig, Project } from '@shared/types'
 import { ArtNetDriver } from './artnetDriver'
-import { exportProjectDialog, importProjectDialog, loadSavedProject, saveProjectToDisk } from './projectStore'
+import {
+  clearCurrentFilePath,
+  exportProjectDialog,
+  loadSavedProject,
+  openProjectDialog,
+  saveProjectAsDialog,
+  saveProjectFile,
+  saveProjectToDisk,
+} from './projectStore'
 
 let mainWin: BrowserWindow | null = null
 
@@ -64,8 +72,11 @@ ipcMain.handle('app:info', (): AppInfo => ({
 }))
 ipcMain.handle('project:load', () => loadSavedProject())
 ipcMain.handle('project:save', (_e, p: Project) => saveProjectToDisk(p))
+ipcMain.handle('project:clear-file', () => clearCurrentFilePath())
+ipcMain.handle('project:open-file', () => openProjectDialog())
+ipcMain.handle('project:save-file', (_e, p: Project) => saveProjectFile(p))
+ipcMain.handle('project:save-as', (_e, p: Project) => saveProjectAsDialog(p))
 ipcMain.handle('project:export', (_e, p: Project) => exportProjectDialog(p))
-ipcMain.handle('project:import', () => importProjectDialog())
 ipcMain.handle('dmx:configure', (_e, cfg: CoreConfig) => {
   core.configure(cfg)
   core.restartTimer()
@@ -74,7 +85,7 @@ ipcMain.handle('dmx:command', (_e, cmd: Command) => core.command(cmd))
 ipcMain.handle('dmx:poll', () => core.pollNow())
 
 app.whenReady().then(async () => {
-  const initial = await loadSavedProject()
+  const { project: initial } = await loadSavedProject()
   core.configure({
     modules: initial.modules,
     output: initial.settings.output,
