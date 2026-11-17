@@ -22,11 +22,10 @@ import { addressRange } from '@shared/dmx'
 import { LtcDecoder } from '@shared/ltc'
 import { FPS_OPTIONS, formatTc, tcToSeconds } from '@shared/timecode'
 import {
-  TimelineRunner,
   analyzeClipSpeeds,
   analyzeTimeline,
   buildCurveKeyframes,
-  evaluateModuleTimelineHeight,
+  buildTimelineFollowCommands,
   fullCurvePath,
   heightToPercent,
   mapKeyframesToPts,
@@ -122,7 +121,6 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   const [collapsedLayers, setCollapsedLayers] = useState<Record<string, boolean>>({})
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null)
 
-  const runnerRef = useRef(new TimelineRunner())
   const rulerRef = useRef<HTMLDivElement>(null)
   const timeRef = useRef(time)
   timeRef.current = time
@@ -130,7 +128,14 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   clipsRef.current = clips
   const keysRef = useRef(project.keys)
   keysRef.current = project.keys
+  const modulesRef = useRef(project.modules)
+  modulesRef.current = project.modules
+  const snapshotRef = useRef(snapshot)
+  snapshotRef.current = snapshot
+  const sendCommandRef = useRef(sendCommand)
+  sendCommandRef.current = sendCommand
   const lastScrubSendRef = useRef(0)
+  const lastFollowSendRef = useRef(0)
 
   const maxTime = useMemo(
     () => Math.max(20, ...clips.map((c) => c.startTime + c.duration + 4), ...project.keys.map((k) => k.time + 4)),
@@ -140,23 +145,45 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   const allIssues = useMemo(() => analyzeTimeline(clips, project.modules), [clips, project.modules])
   const unfeasibleIssues = useMemo(() => allIssues.filter((i) => !i.feasible), [allIssues])
 
+  const dispatchTimelineFollow = (t: number, lookaheadSec: number) => {
+    const snap = snapshotRef.current
+    if (snap?.locked) return
+    const cmds = buildTimelineFollowCommands(
+      modulesRef.current,
+      clipsRef.current,
+      keysRef.current,
+      t,
+      lookaheadSec,
+      snap,
+    )
+    for (const c of cmds) void sendCommandRef.current(c, { quietWarnings: true })
+  }
+
   useEffect(() => {
     if (!playing || ltcActive) return
     let raf = 0
     let last = performance.now()
+    lastFollowSendRef.current = 0
     const step = (now: number) => {
       const dt = (now - last) / 1000
       last = now
       const next = Math.min(maxTime, timeRef.current + dt)
       setTime(next)
-      const cmds = runnerRef.current.update(next, keysRef.current, clipsRef.current)
-      for (const c of cmds) void sendCommand(c)
-      if (next >= maxTime) setPlaying(false)
-      else raf = requestAnimationFrame(step)
+      if (now - lastFollowSendRef.current >= 38) {
+        lastFollowSendRef.current = now
+        dispatchTimelineFollow(next, 0.06)
+      }
+      if (next >= maxTime) {
+        dispatchTimelineFollow(maxTime, 0)
+        setPlaying(false)
+      } else {
+        raf = requestAnimationFrame(step)
+      }
     }
+    dispatchTimelineFollow(timeRef.current, 0.06)
     raf = requestAnimationFrame(step)
     return () => cancelAnimationFrame(raf)
-  }, [playing, ltcActive, maxTime, sendCommand])
+  }, [playing, ltcActive, maxTime])
 
   useEffect(() => {
     if (!ltcActive) {
@@ -184,8 +211,10 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
             setLtcStatus('lock')
             const sec = tcToSeconds(f, fps) + project.settings.ltc.offsetFrames / fps
             setTime(sec)
-            const cmds = runnerRef.current.update(sec, keysRef.current, clipsRef.current)
-            for (const c of cmds) void sendCommand(c)
+            if (lastFrameAt - lastFollowSendRef.current >= 35) {
+              lastFollowSendRef.current = lastFrameAt
+              dispatchTimelineFollow(sec, 0.06)
+            }
           },
           fps === 29.97 ? 30 : fps,
         )
@@ -217,21 +246,14 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       stream?.getTracks().forEach((t) => t.stop())
       void ctx?.close()
     }
-  }, [ltcActive, fps, project.settings.ltc, sendCommand, notify])
+  }, [ltcActive, fps, project.settings.ltc, notify])
 
   const previewTimelineAt = (t: number) => {
-    if (snapshot?.locked) return
-    for (const mod of project.modules) {
-      const targetH = evaluateModuleTimelineHeight(clipsRef.current, keysRef.current, mod, t)
-      if (targetH !== null) {
-        void sendCommand({ type: 'move', ids: [mod.id], target: targetH, speed: { unit: 'sec', value: 0.06 } })
-      }
-    }
+    dispatchTimelineFollow(t, 0)
   }
 
   const seekTo = (t: number, forcePreview = true) => {
     const clampedT = clamp(t, 0, maxTime)
-    runnerRef.current.reset()
     setTime(clampedT)
     if (!forcePreview) return
     const now = performance.now()
@@ -502,15 +524,16 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     setLtcActive(false)
     if (playing) {
       setPlaying(false)
+      void sendCommand({ type: 'stop', ids: 'all' })
       return
     }
     if (snapshot?.locked) {
       notify('Đang khoá an toàn — bấm "Đang khoá" để mở khoá và chạy mô phỏng rèm', 'warn')
     }
     if (time >= maxTime - 0.05) {
-      runnerRef.current.reset()
       setTime(project.settings.timeline.startTime)
     }
+    lastFollowSendRef.current = 0
     setPlaying(true)
   }
 

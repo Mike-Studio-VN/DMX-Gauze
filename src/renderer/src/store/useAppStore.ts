@@ -127,7 +127,7 @@ interface AppState {
   updateKey: (id: string, patch: Partial<TimelineKey>) => void
   deleteKey: (id: string) => void
 
-  sendCommand: (cmd: Command) => Promise<CommandResult>
+  sendCommand: (cmd: Command, opts?: { quietWarnings?: boolean }) => Promise<CommandResult>
   pollNow: () => void
 
   newProject: () => Promise<void>
@@ -1041,7 +1041,7 @@ export const useAppStore = create<AppState>((set, get) => {
       applyProject({ ...project, keys: project.keys.filter((k) => k.id !== id) })
     },
 
-    async sendCommand(cmd) {
+    async sendCommand(cmd, opts) {
       let effectiveCmd = cmd
       if ((cmd.type === 'move' || cmd.type === 'stop') && Array.isArray(cmd.ids)) {
         const { project } = get()
@@ -1070,7 +1070,7 @@ export const useAppStore = create<AppState>((set, get) => {
       }
       const res = await getBridge().command(effectiveCmd)
       if (!res.ok && res.message) get().notify(res.message, 'error')
-      else if (res.warnings?.length) get().notify(res.warnings[0], 'warn')
+      else if (!opts?.quietWarnings && res.warnings?.length) get().notify(res.warnings[0], 'warn')
       return res
     },
 

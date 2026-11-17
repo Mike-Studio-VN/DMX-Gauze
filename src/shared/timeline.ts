@@ -1,6 +1,6 @@
 import { clamp } from './convert'
 import { parseTc } from './timecode'
-import type { ClipKeyframe, Command, Fps, ModuleCfg, TimelineClip, TimelineKey } from './types'
+import type { ClipKeyframe, Command, Fps, ModuleCfg, Snapshot, TimelineClip, TimelineKey } from './types'
 
 const MIN_DURATION = 0.05
 
@@ -304,7 +304,15 @@ export class TimelineRunner {
       }
       if (sig === prev) continue
       this.last.set(id, sig)
-      if (sig === 'pre') continue
+      if (sig === 'pre') {
+        cmds.push({
+          type: 'move',
+          ids: [id],
+          target: ks[0].targets[id],
+          speed: { unit: 'sec', value: Math.max(MIN_DURATION, ks[0].time - time) },
+        })
+        continue
+      }
       if (sig === 'end') {
         const natural = ks.length >= 2 && prev === `seg:${ks.length - 2}`
         if (!natural) cmds.push({ type: 'move', ids: [id], target: ks[ks.length - 1].targets[id], speed: { unit: 'default' } })
@@ -478,11 +486,13 @@ export function evaluateModuleTimelineHeight(
         if (c.curveMode === 'linear') {
           return Math.max(minH, Math.min(maxH, Number((p1.height + (p2.height - p1.height) * u).toFixed(3))))
         }
-        // Nội suy Catmull-Rom khớp với đồ thị mượt trên Timeline
+        // Nội suy Catmull-Rom khớp với đồ thị mượt trên Timeline, giữ phẳng đoạn đồng độ cao
         const p0 = sorted[seg - 1] ?? p1
         const p3 = sorted[seg + 2] ?? p2
-        const c1 = p1.height + (p2.height - p0.height) / 6
-        const c2 = p2.height - (p3.height - p1.height) / 6
+        const segLo = Math.min(p1.height, p2.height)
+        const segHi = Math.max(p1.height, p2.height)
+        const c1 = clamp(p1.height + (p2.height - p0.height) / 6, segLo, segHi)
+        const c2 = clamp(p2.height - (p3.height - p1.height) / 6, segLo, segHi)
         const inv = 1 - u
         const h =
           inv * inv * inv * p1.height +
@@ -511,6 +521,54 @@ export function evaluateModuleTimelineHeight(
     }
   }
   return Math.max(minH, Math.min(maxH, modKeys[modKeys.length - 1].targets[mod.id]))
+}
+
+/**
+ * Tạo tập lệnh DMX theo dõi liên tục đường cong timeline (hỗ trợ cả Mượt Catmull-Rom và Thẳng).
+ * Dùng cả cho Play (lookaheadSec > 0) và scrub/nhảy playhead (lookaheadSec = 0).
+ */
+export function buildTimelineFollowCommands(
+  modules: ModuleCfg[],
+  clips: TimelineClip[],
+  keys: TimelineKey[],
+  time: number,
+  lookaheadSec = 0.06,
+  snap?: Pick<Snapshot, 'modules'> | null,
+): Command[] {
+  const cmds: Command[] = []
+  for (const mod of modules) {
+    const hNow = evaluateModuleTimelineHeight(clips, keys, mod, time)
+    if (hNow === null) continue
+    const hAhead =
+      lookaheadSec > 0 ? (evaluateModuleTimelineHeight(clips, keys, mod, time + lookaheadSec) ?? hNow) : hNow
+
+    const st = snap?.modules[mod.id]
+    const curPos = st?.pos ?? hNow
+    const curTarget = st?.target ?? curPos
+    if (st && Math.abs(hAhead - curTarget) < 0.0015 && Math.abs(hAhead - curPos) < 0.0015) {
+      continue
+    }
+
+    let speedCms: number
+    if (lookaheadSec <= 0) {
+      speedCms = mod.maxSpeedCms
+    } else {
+      const velCurveCms = (Math.abs(hAhead - hNow) * 100) / Math.max(0.02, lookaheadSec)
+      const lagError = Math.abs(hNow - curPos)
+      speedCms =
+        lagError > 0.08
+          ? mod.maxSpeedCms
+          : clamp(velCurveCms + (lagError * 100) / 0.25, 1, mod.maxSpeedCms)
+    }
+
+    cmds.push({
+      type: 'move',
+      ids: [mod.id],
+      target: hAhead,
+      speed: { unit: 'cms', value: Number(speedCms.toFixed(2)) },
+    })
+  }
+  return cmds
 }
 
 /** Phân tích chuỗi người dùng nhập khi double-click nhãn playhead (số giây như "3.5", "3,5", "12s" hoặc timecode "hh:mm:ss:ff"). */

@@ -473,3 +473,94 @@ describe('stage3d', () => {
     expect(recovered[2]).toBeCloseTo(-0.25, 3)
   })
 })
+
+describe('timeline -> GauzeCore end-to-end execution', () => {
+  it('rèm thực sự chạy lên xuống chính xác theo timeline (cả pre-roll từ vị trí lệch, mượt Catmull-Rom và khung DMX)', async () => {
+    const { GauzeCore } = await import('./core')
+    const { MockDriver } = await import('./drivers')
+    const { CH, LOCK_VALUE } = await import('./dmx')
+    const { dmxToPos } = await import('./convert')
+    const { buildTimelineFollowCommands, evaluateModuleTimelineHeight } = await import('./timeline')
+
+    let now = 10_000
+    const core = new GauzeCore((_cfg, ev) => new MockDriver(ev), () => now)
+    const p = createDefaultProject()
+    core.configure({
+      modules: p.modules,
+      output: p.settings.output,
+      lockValue: LOCK_VALUE,
+    })
+    core.start()
+    core.command({ type: 'lock', locked: false })
+
+    // Giả lập Trước 1 đang thả ở 0.8m (từ chế độ Manual trước đó)
+    core.command({ type: 'move', ids: ['m-front-1'], target: 0.8, speed: { unit: 'cms', value: 120 } })
+    for (let i = 0; i < 40; i += 1) {
+      now += 25
+      core.tick()
+    }
+    expect(core.snapshot().modules['m-front-1'].pos).toBeCloseTo(0.8, 2)
+
+    // Chạy timeline từ t=0s..8.2s: bước mô phỏng core 20ms, cập nhật follow command mỗi 40ms
+    const sampled: Record<number, { front: number; back: number }> = {}
+    let nextFollowT = 0
+    for (let ms = 0; ms <= 8200; ms += 20) {
+      const t = ms / 1000
+      if (t + 1e-6 >= nextFollowT) {
+        nextFollowT += 0.04
+        const snap = core.snapshot()
+        const cmds = buildTimelineFollowCommands(p.modules, p.clips ?? [], p.keys, t, 0.06, snap)
+        for (const cmd of cmds) {
+          const res = core.command(cmd)
+          expect(res.ok).toBe(true)
+        }
+      }
+      now += 20
+      core.tick()
+      if ([1000, 2000, 3000, 4000, 5000, 6500, 8100].includes(ms)) {
+        const s = core.snapshot()
+        sampled[ms] = {
+          front: s.modules['m-front-1'].pos,
+          back: s.modules['m-back-1'].pos,
+        }
+      }
+    }
+
+    // 1) Pre-roll đưa Trước 1 từ 0.8m về 0.0m trước khi sóng bắt đầu ở 1s
+    expect(sampled[1000].front).toBeLessThan(0.05)
+    // 2) Trước 1 đi xuống ~0.7m (2s) -> đỉnh 1.0m (3s) -> đi lên ~0.7m (4s) -> về 0.0m (5s)
+    expect(sampled[2000].front).toBeGreaterThan(0.62)
+    expect(sampled[2000].front).toBeLessThan(0.78)
+    expect(sampled[3000].front).toBeGreaterThan(0.95)
+    expect(sampled[4000].front).toBeGreaterThan(0.62)
+    expect(sampled[4000].front).toBeLessThan(0.78)
+    expect(sampled[5000].front).toBeLessThan(0.08)
+
+    // 3) Sau 1 (3m) đi xuống ~2.4m (5s) rồi thu về 0.0m (8s)
+    expect(sampled[5000].back).toBeGreaterThan(2.3)
+    expect(sampled[8100].back).toBeLessThan(0.05)
+
+    // 4) Kiểm tra frame DMX thực sự xuất CH4=77 và vị trí khớp chiều dài cuối clip
+    const finalSnap = core.snapshot()
+    expect(finalSnap.frame[CH.LOCK]).toBe(77)
+    expect(dmxToPos(finalSnap.frame[CH.POSITION], finalSnap.frame[CH.FINE], 1)).toBeCloseTo(0, 2)
+
+    // 5) Đảm bảo đoạn giữ đỉnh phẳng không bị võng vượt biên trong evaluateModuleTimelineHeight
+    const holdClip = {
+      id: 'hold-test',
+      layerId: 'l1',
+      moduleId: 'm1',
+      startTime: 0,
+      duration: 5,
+      curveMode: 'smooth' as const,
+      keyframes: [
+        { id: 'h1', offset: 0, height: 0 },
+        { id: 'h2', offset: 1, height: 0.5 },
+        { id: 'h3', offset: 4, height: 0.5 },
+        { id: 'h4', offset: 5, height: 0 },
+      ],
+    }
+    expect(evaluateModuleTimelineHeight([holdClip], [], { id: 'm1', minHeight: 0, maxHeight: 1, length: 1 }, 2.5)).toBe(0.5)
+    core.stop()
+  })
+})
