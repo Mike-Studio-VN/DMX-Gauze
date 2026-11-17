@@ -2,8 +2,18 @@ import { create } from 'zustand'
 import { autoAssign, layerLoopAddress, nextFree, orderedModules, validateAddress } from '@shared/addressing'
 import type { AppInfo, SnapshotDto } from '@shared/api'
 import { clamp } from '@shared/convert'
-import { DEFAULT_SPEED, H2_MAX_SPEED_CMS } from '@shared/dmx'
-import { resolveClipStartNoOverlap, syncModuleClipsContinuity } from '@shared/timeline'
+import { DEFAULT_SPEED, H2_MAX_SPEED_CMS, isValidStartAddress, rangesOverlap } from '@shared/dmx'
+import {
+  type CurvePresetId,
+  LAYER_MOTION_PRESETS,
+  type LayerMotionPresetId,
+  buildLayerMotionClips,
+  buildMultiClipShiftPatch,
+  buildPresetPatchForClips,
+  buildTimingPatchForSelectedClips,
+  resolveClipStartNoOverlap,
+  syncModuleClipsContinuity,
+} from '@shared/timeline'
 import {
   createBlankProject,
   createDefaultProject,
@@ -21,17 +31,91 @@ import type {
   Project,
   TimelineClip,
   TimelineKey,
+  Transform3D,
 } from '@shared/types'
 import { getBridge } from '../services/bridge'
 
 export type ControlTab = 'buttons' | 'manual' | 'timeline'
 export type FocusScope = 'tree' | 'buttons' | 'timeline'
-export type SettingsTab = 'network' | 'safety' | 'ltc' | 'project'
+export type SettingsTab = 'network' | 'safety' | 'ltc' | 'notifications'
+export type ToastKind = 'info' | 'success' | 'warn' | 'error'
+export type ToastIcon =
+  | 'info'
+  | 'success'
+  | 'warn'
+  | 'error'
+  | 'running'
+  | 'stopped'
+  | 'estop'
+  | 'disconnected'
+  | 'connected'
+  | 'save'
 
 export interface ToastMsg {
   id: number
+  title: string
   text: string
-  kind: 'info' | 'warn' | 'error'
+  kind: ToastKind
+  icon: ToastIcon
+}
+
+export interface NotificationSettings {
+  enabled: boolean
+  durationMs: number
+  kinds: Record<ToastKind, boolean>
+}
+
+const NOTIF_STORAGE_KEY = 'dmx-gauze-notifications-v1'
+
+const DEFAULT_NOTIF_SETTINGS: NotificationSettings = {
+  enabled: true,
+  durationMs: 3500,
+  kinds: {
+    info: true,
+    success: true,
+    warn: true,
+    error: true,
+  },
+}
+
+function loadNotificationSettings(): NotificationSettings {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(NOTIF_STORAGE_KEY) : null
+    if (!raw) return structuredClone(DEFAULT_NOTIF_SETTINGS)
+    const parsed = JSON.parse(raw) as Partial<NotificationSettings>
+    return {
+      enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : true,
+      durationMs:
+        typeof parsed.durationMs === 'number' && Number.isFinite(parsed.durationMs)
+          ? clamp(Math.round(parsed.durationMs), 1500, 15000)
+          : 3500,
+      kinds: {
+        info: parsed.kinds?.info !== false,
+        success: parsed.kinds?.success !== false,
+        warn: parsed.kinds?.warn !== false,
+        error: parsed.kinds?.error !== false,
+      },
+    }
+  } catch {
+    return structuredClone(DEFAULT_NOTIF_SETTINGS)
+  }
+}
+
+function saveNotificationSettings(cfg: NotificationSettings): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(NOTIF_STORAGE_KEY, JSON.stringify(cfg))
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+const DEFAULT_TITLES: Record<ToastKind, string> = {
+  info: 'Thông báo',
+  success: 'Thành công',
+  warn: 'Cảnh báo',
+  error: 'Lỗi hệ thống',
 }
 
 interface AppState {
@@ -49,6 +133,7 @@ interface AppState {
   selectedLayerId: string | null
   selectedButtonId: string | null
   selectedClipId: string | null
+  selectedClipIds: string[]
   selectedKeyId: string | null
   selectedTimelineLayerId: string | null
 
@@ -58,12 +143,16 @@ interface AppState {
 
   snapshot: SnapshotDto | null
   activeTab: ControlTab
+  playheadTime: number
   settingsOpen: boolean
   settingsTab: SettingsTab
   toast: ToastMsg | null
+  notificationSettings: NotificationSettings
 
   init: () => Promise<void>
-  notify: (text: string, kind?: ToastMsg['kind']) => void
+  notify: (text: string, kind?: ToastKind, opts?: { title?: string; icon?: ToastIcon }) => void
+  dismissToast: () => void
+  updateNotificationSettings: (patch: Partial<NotificationSettings>) => void
   setActiveTab: (tab: ControlTab) => void
   setFocusScope: (scope: FocusScope) => void
   setSettingsOpen: (open: boolean, tab?: SettingsTab) => void
@@ -74,6 +163,7 @@ interface AppState {
   toggleLayerCollapse: (layerId: string) => void
   toggleLayerVisibility: (layerId: string) => void
   toggleLayerSync: (layerId: string) => void
+  syncLayerFromModule: (layerId: string, moduleId: string) => void
   toggleModuleVisibility: (moduleId: string) => void
   setModulesDmxLoop: (ids: string[], enabled: boolean) => void
   addLayer: (name: string, opts?: { id?: string }) => string | null
@@ -84,8 +174,10 @@ interface AppState {
   selectModule: (id: string, opts?: { multi?: boolean; range?: boolean }) => void
   selectLayer: (layerId: string) => void
   selectAll: () => void
+  deselectAll: () => void
   selectButton: (id: string | null) => void
   selectTimelineClip: (clipId: string | null, keyId?: string | null) => void
+  selectTimelineClips: (clipIds: string[], opts?: { additive?: boolean }) => void
   selectTimelineKey: (keyId: string | null) => void
   selectTimelineLayer: (layerId: string | null) => void
 
@@ -99,6 +191,26 @@ interface AppState {
   moveModule: (id: string, dir: -1 | 1) => void
   reorderModule: (dragId: string, targetLayerId: string, targetIndexInLayer: number) => void
   updateModule: (id: string, patch: Partial<ModuleCfg>, coalesceKey?: string) => string | null
+  updateModulesBatch: (
+    ids: string[],
+    patch: {
+      nameBase?: string
+      layerId?: string
+      length?: number
+      width?: number
+      minHeight?: number
+      maxHeight?: number
+      maxSpeedCms?: number
+      defaultSpeed?: number
+      startAddressBase?: number
+      resetTransform?: boolean
+      transformAxis?: {
+        field: keyof Transform3D
+        index: 0 | 1 | 2
+        value: number
+      }
+    },
+  ) => string | null
 
   setAddressMode: (mode: 'auto' | 'manual') => void
   reAutoAssign: () => void
@@ -118,7 +230,20 @@ interface AppState {
     syncEdge?: 'start' | 'end',
   ) => void
   deleteClip: (clipId: string) => void
+  applyPresetToSelectedClips: (opts: { presetId?: CurvePresetId; curveMode?: 'smooth' | 'linear' }) => boolean
+  updateSelectedClipsTiming: (opts: { startTime?: number; endTime?: number }) => boolean
+  moveSelectedClipsByDelta: (
+    origStarts: ReadonlyMap<string, number>,
+    rawDeltaSec: number,
+    coalesceKey?: string,
+  ) => number | null
   deleteTimelineLayerClips: (layerId: string) => void
+  setPlayheadTime: (time: number) => void
+  applyLayerMotionPreset: (
+    layerId: string,
+    presetId: LayerMotionPresetId,
+    opts?: { duration?: number; staggerSec?: number },
+  ) => number
   copySelection: () => void
   pasteSelection: (atTime?: number) => void
   deleteSelection: () => void
@@ -140,9 +265,12 @@ interface AppState {
 
 const MAX_HISTORY = 50
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+let toastTimer: ReturnType<typeof setTimeout> | null = null
 let unsubSnap: (() => void) | null = null
 let lastCoalesceKey = ''
 let lastCoalesceAt = 0
+let lastToastSig = ''
+let lastToastAt = 0
 
 function persistAndSync(project: Project): void {
   const b = getBridge()
@@ -199,6 +327,15 @@ export const useAppStore = create<AppState>((set, get) => {
     lastCoalesceKey = opts?.coalesceKey ?? ''
     lastCoalesceAt = now
 
+    const validClipIds = new Set((next.clips ?? []).map((c) => c.id))
+    const prunedClipIds = (opts?.extra?.selectedClipIds ?? state.selectedClipIds).filter((id) => validClipIds.has(id))
+    const nextClipId =
+      opts?.extra?.selectedClipId !== undefined
+        ? opts.extra.selectedClipId
+        : state.selectedClipId && validClipIds.has(state.selectedClipId)
+          ? state.selectedClipId
+          : (prunedClipIds[0] ?? null)
+
     const past = coalesced ? state.past : [...state.past.slice(-(MAX_HISTORY - 1)), state.project]
     set({
       project: next,
@@ -206,6 +343,8 @@ export const useAppStore = create<AppState>((set, get) => {
       future: [],
       dirty: opts?.dirty ?? true,
       ...opts?.extra,
+      selectedClipIds: prunedClipIds,
+      selectedClipId: nextClipId,
     })
     persistAndSync(next)
   }
@@ -225,6 +364,7 @@ export const useAppStore = create<AppState>((set, get) => {
     selectedLayerId: null,
     selectedButtonId: null,
     selectedClipId: null,
+    selectedClipIds: [],
     selectedKeyId: null,
     selectedTimelineLayerId: null,
 
@@ -234,22 +374,90 @@ export const useAppStore = create<AppState>((set, get) => {
 
     snapshot: null,
     activeTab: 'timeline',
+    playheadTime: 0,
     settingsOpen: false,
     settingsTab: 'network',
     toast: null,
+    notificationSettings: loadNotificationSettings(),
 
-    notify(text, kind = 'info') {
-      const id = Date.now()
-      set({ toast: { id, text, kind } })
-      setTimeout(() => {
+    setPlayheadTime(time) {
+      if (!Number.isFinite(time)) return
+      const next = Math.max(0, Number(time.toFixed(2)))
+      if (get().playheadTime !== next) set({ playheadTime: next })
+    },
+
+    notify(text, kind = 'info', opts) {
+      const cfg = get().notificationSettings
+      if (!cfg.enabled || !cfg.kinds[kind]) return
+      const title = opts?.title ?? DEFAULT_TITLES[kind]
+      const icon: ToastIcon = opts?.icon ?? kind
+      const sig = `${kind}|${title}|${text}`
+      const now = Date.now()
+      if (sig === lastToastSig && now - lastToastAt < 800) return
+      lastToastSig = sig
+      lastToastAt = now
+
+      const id = now
+      if (toastTimer) clearTimeout(toastTimer)
+      set({ toast: { id, title, text, kind, icon } })
+      const dur = clamp(Math.round(cfg.durationMs), 1500, 15000)
+      toastTimer = setTimeout(() => {
         if (get().toast?.id === id) set({ toast: null })
-      }, 3500)
+      }, dur)
+    },
+
+    dismissToast() {
+      if (toastTimer) {
+        clearTimeout(toastTimer)
+        toastTimer = null
+      }
+      set({ toast: null })
+    },
+
+    updateNotificationSettings(patch) {
+      const cur = get().notificationSettings
+      const next: NotificationSettings = {
+        enabled: patch.enabled ?? cur.enabled,
+        durationMs:
+          patch.durationMs !== undefined && Number.isFinite(patch.durationMs)
+            ? clamp(Math.round(patch.durationMs), 1500, 15000)
+            : cur.durationMs,
+        kinds: patch.kinds ? { ...cur.kinds, ...patch.kinds } : cur.kinds,
+      }
+      saveNotificationSettings(next)
+      set({ notificationSettings: next })
     },
 
     async init() {
       const b = getBridge()
       if (unsubSnap) unsubSnap()
-      unsubSnap = b.onSnapshot((snapshot) => set({ snapshot }))
+      let prevState: string | null = null
+      let prevMsg: string | null = null
+      unsubSnap = b.onSnapshot((snapshot) => {
+        set({ snapshot })
+        const st = snapshot.status
+        if (st.state === 'error' && (prevState !== 'error' || (st.message && st.message !== prevMsg))) {
+          get().notify(st.message ?? 'Lỗi kết nối đầu ra DMX / Serial', 'error', {
+            title: 'Lỗi kết nối DMX',
+            icon: 'error',
+          })
+        } else if (st.state === 'lost' && prevState !== 'lost') {
+          get().notify(st.message ?? 'Mất phản hồi từ thiết bị DMX', 'warn', {
+            title: 'Mất kết nối DMX',
+            icon: 'disconnected',
+          })
+        } else if (
+          st.state === 'online' &&
+          (prevState === 'lost' || prevState === 'error' || prevState === 'searching')
+        ) {
+          get().notify(`Đã kết nối ${st.driver.toUpperCase()} (${st.sendHz} Hz)`, 'success', {
+            title: 'Kết nối DMX sẵn sàng',
+            icon: 'connected',
+          })
+        }
+        prevState = st.state
+        prevMsg = st.message
+      })
       const [info, loaded] = await Promise.all([b.getAppInfo(), b.loadProject()])
       await b.configure({
         modules: loaded.project.modules,
@@ -329,21 +537,38 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     toggleLayerSync(layerId) {
-      const { project } = get()
+      const { project, selectedIds } = get()
       const target = project.layers.find((l) => l.id === layerId)
       if (!target) return
       const nextSync = !(target.syncLayer ?? false)
+      const selectedInLayer = selectedIds.find((id) =>
+        project.modules.some((m) => m.id === id && m.layerId === layerId),
+      )
+      const sourceMod = selectedInLayer ? project.modules.find((m) => m.id === selectedInLayer) : undefined
       const layers = project.layers.map((l) => (l.id === layerId ? { ...l, syncLayer: nextSync } : l))
       const clips = nextSync
-        ? mirrorLayerClips(project.clips ?? [], project.modules, layerId)
+        ? mirrorLayerClips(project.clips ?? [], project.modules, layerId, selectedInLayer)
         : (project.clips ?? [])
       applyProject({ ...project, layers, clips })
       get().notify(
         nextSync
-          ? `Đã bật Sync Layer "${target.name}" — các module chạy giống hệt nhau`
+          ? sourceMod
+            ? `Đã bật Sync Layer "${target.name}" theo "${sourceMod.name}"`
+            : `Đã bật Sync Layer "${target.name}" — các module chạy giống hệt nhau`
           : `Đã tắt Sync Layer "${target.name}"`,
         'info',
       )
+    },
+
+    syncLayerFromModule(layerId, moduleId) {
+      const { project } = get()
+      const layer = project.layers.find((l) => l.id === layerId)
+      const mod = project.modules.find((m) => m.id === moduleId && m.layerId === layerId)
+      if (!layer || !mod) return
+      const layers = project.layers.map((l) => (l.id === layerId ? { ...l, syncLayer: true } : l))
+      const clips = mirrorLayerClips(project.clips ?? [], project.modules, layerId, moduleId)
+      applyProject({ ...project, layers, clips })
+      get().notify(`Đã đồng bộ Layer "${layer.name}" theo "${mod.name}"`, 'info')
     },
 
     toggleModuleVisibility(moduleId) {
@@ -434,6 +659,7 @@ export const useAppStore = create<AppState>((set, get) => {
             selectedIds: ordered.slice(lo, hi + 1),
             selectedLayerId: null,
             selectedClipId: null,
+            selectedClipIds: [],
             selectedKeyId: null,
             selectedTimelineLayerId: null,
             focusScope: 'tree',
@@ -448,6 +674,7 @@ export const useAppStore = create<AppState>((set, get) => {
           selectedIds: next.length ? next : [id],
           selectedLayerId: null,
           selectedClipId: null,
+          selectedClipIds: [],
           selectedKeyId: null,
           selectedTimelineLayerId: null,
           focusScope: 'tree',
@@ -458,6 +685,7 @@ export const useAppStore = create<AppState>((set, get) => {
         selectedIds: [id],
         selectedLayerId: null,
         selectedClipId: null,
+        selectedClipIds: [],
         selectedKeyId: null,
         selectedTimelineLayerId: null,
         focusScope: 'tree',
@@ -470,6 +698,7 @@ export const useAppStore = create<AppState>((set, get) => {
         selectedLayerId: layerId,
         selectedIds: ids,
         selectedClipId: null,
+        selectedClipIds: [],
         selectedKeyId: null,
         selectedTimelineLayerId: null,
         focusScope: 'tree',
@@ -481,6 +710,19 @@ export const useAppStore = create<AppState>((set, get) => {
         selectedIds: get().project.modules.map((m) => m.id),
         selectedLayerId: null,
         selectedClipId: null,
+        selectedClipIds: [],
+        selectedKeyId: null,
+        selectedTimelineLayerId: null,
+        focusScope: 'tree',
+      })
+    },
+
+    deselectAll() {
+      set({
+        selectedIds: [],
+        selectedLayerId: null,
+        selectedClipId: null,
+        selectedClipIds: [],
         selectedKeyId: null,
         selectedTimelineLayerId: null,
         focusScope: 'tree',
@@ -499,9 +741,30 @@ export const useAppStore = create<AppState>((set, get) => {
             : null
       set({
         selectedClipId,
+        selectedClipIds: selectedClipId && clip ? [selectedClipId] : [],
         selectedKeyId: preservedKey,
         selectedTimelineLayerId: null,
         ...(clip ? { selectedLayerId: null, selectedIds: [clip.moduleId] } : {}),
+        focusScope: 'timeline',
+      })
+    },
+
+    selectTimelineClips(clipIds, opts) {
+      const clips = get().project.clips ?? []
+      const clipMap = new Map(clips.map((c) => [c.id, c]))
+      const baseIds = opts?.additive ? get().selectedClipIds : []
+      const nextSet = new Set(baseIds.filter((id) => clipMap.has(id)))
+      for (const id of clipIds) {
+        if (clipMap.has(id)) nextSet.add(id)
+      }
+      const nextIds = [...nextSet]
+      const modIds = [...new Set(nextIds.map((id) => clipMap.get(id)!.moduleId))]
+      set({
+        selectedClipIds: nextIds,
+        selectedClipId: nextIds[0] ?? null,
+        selectedKeyId: null,
+        selectedTimelineLayerId: null,
+        ...(nextIds.length > 0 ? { selectedLayerId: null, selectedIds: modIds } : {}),
         focusScope: 'timeline',
       })
     },
@@ -510,13 +773,20 @@ export const useAppStore = create<AppState>((set, get) => {
 
     selectTimelineLayer(selectedTimelineLayerId) {
       if (!selectedTimelineLayerId) {
-        set({ selectedTimelineLayerId: null, selectedClipId: null, selectedKeyId: null, focusScope: 'timeline' })
+        set({
+          selectedTimelineLayerId: null,
+          selectedClipId: null,
+          selectedClipIds: [],
+          selectedKeyId: null,
+          focusScope: 'timeline',
+        })
         return
       }
       const ids = get().project.modules.filter((m) => m.layerId === selectedTimelineLayerId).map((m) => m.id)
       set({
         selectedTimelineLayerId,
         selectedClipId: null,
+        selectedClipIds: [],
         selectedKeyId: null,
         selectedLayerId: selectedTimelineLayerId,
         selectedIds: ids,
@@ -703,7 +973,134 @@ export const useAppStore = create<AppState>((set, get) => {
           if (free !== null) modules = modules.map((m) => (m.id === id ? { ...m, startAddress: free } : m))
         }
       }
-      applyProject({ ...project, modules }, { coalesceKey })
+      const nextLayerId = patch.layerId
+      const clips =
+        nextLayerId && nextLayerId !== current.layerId
+          ? (project.clips ?? []).map((c) => (c.moduleId === id ? { ...c, layerId: nextLayerId } : c))
+          : project.clips
+      applyProject({ ...project, modules, clips }, { coalesceKey })
+      return null
+    },
+
+    updateModulesBatch(ids, patch) {
+      const { project } = get()
+      const idSet = new Set(ids)
+      const selectedMods = project.modules.filter((m) => idSet.has(m.id))
+      if (selectedMods.length === 0) return null
+
+      if (patch.layerId !== undefined && !project.layers.some((l) => l.id === patch.layerId)) {
+        return 'Layer không tồn tại'
+      }
+
+      const assignedNames = new Map<string, string>()
+      if (patch.nameBase !== undefined) {
+        const trimmed = patch.nameBase.trim()
+        if (!trimmed) return 'Tên module không được để trống'
+        const taken = new Set(
+          project.modules.filter((m) => !idSet.has(m.id)).map((m) => m.name.trim().toLowerCase()),
+        )
+        if (selectedMods.length === 1) {
+          if (taken.has(trimmed.toLowerCase())) return `Tên "${trimmed}" đã tồn tại`
+          assignedNames.set(selectedMods[0].id, trimmed)
+        } else {
+          let seq = 1
+          for (const m of selectedMods) {
+            let candidate = `${trimmed} ${seq}`
+            while (taken.has(candidate.toLowerCase())) {
+              seq += 1
+              candidate = `${trimmed} ${seq}`
+            }
+            taken.add(candidate.toLowerCase())
+            assignedNames.set(m.id, candidate)
+            seq += 1
+          }
+        }
+      }
+
+      const assignedAddrs = new Map<string, number>()
+      if (patch.startAddressBase !== undefined) {
+        if (project.settings.addressMode !== 'manual') {
+          return 'Chỉ nhập địa chỉ tay khi chế độ Địa chỉ là Thủ công'
+        }
+        const base = Math.trunc(patch.startAddressBase)
+        if (!Number.isFinite(patch.startAddressBase) || base < 1 || base > 509) {
+          return 'Địa chỉ DMX phải từ 1 đến 509'
+        }
+        let nextCandidate = base
+        const loopAddrByLayer = new Map<string, number>()
+        let probeMods = project.modules.map((m) => ({
+          ...m,
+          layerId: idSet.has(m.id) && patch.layerId !== undefined ? patch.layerId : m.layerId,
+        }))
+        for (const m of selectedMods) {
+          const effLayer = patch.layerId ?? m.layerId
+          let addr: number
+          if (m.dmxLoop && loopAddrByLayer.has(effLayer)) {
+            addr = loopAddrByLayer.get(effLayer)!
+          } else {
+            addr = nextCandidate
+            nextCandidate += 4
+            if (m.dmxLoop) loopAddrByLayer.set(effLayer, addr)
+          }
+          if (addr < 1 || addr > 509) {
+            return 'Địa chỉ DMX vượt quá giới hạn 512 kênh'
+          }
+          const err = validateAddress(probeMods, m.id, addr)
+          if (err) return err
+          assignedAddrs.set(m.id, addr)
+          probeMods = probeMods.map((pm) => (pm.id === m.id ? { ...pm, startAddress: addr } : pm))
+        }
+      }
+
+      let modules = project.modules.map((m) => {
+        if (!idSet.has(m.id)) return m
+        const merged: ModuleCfg = {
+          ...m,
+          ...(assignedNames.has(m.id) ? { name: assignedNames.get(m.id)! } : {}),
+          ...(patch.layerId !== undefined ? { layerId: patch.layerId } : {}),
+          ...(assignedAddrs.has(m.id) ? { startAddress: assignedAddrs.get(m.id)! } : {}),
+          ...(patch.length !== undefined ? { length: patch.length } : {}),
+          ...(patch.width !== undefined ? { width: patch.width } : {}),
+          ...(patch.minHeight !== undefined ? { minHeight: patch.minHeight } : {}),
+          ...(patch.maxHeight !== undefined ? { maxHeight: patch.maxHeight } : {}),
+          ...(patch.maxSpeedCms !== undefined ? { maxSpeedCms: patch.maxSpeedCms } : {}),
+          ...(patch.defaultSpeed !== undefined ? { defaultSpeed: patch.defaultSpeed } : {}),
+        }
+        if (patch.resetTransform) {
+          merged.transform = defaultModuleTransform()
+        } else if (patch.transformAxis) {
+          const { field, index, value } = patch.transformAxis
+          const baseTf = merged.transform ? { ...merged.transform } : defaultModuleTransform()
+          const arr: [number, number, number] = [...baseTf[field]]
+          arr[index] = field === 'scale' ? Math.max(0.1, value || 0.1) : value || 0
+          if (field === 'position' && index === 1) arr[1] = 0
+          merged.transform = { ...baseTf, [field]: arr }
+        }
+        if (merged.transform) {
+          merged.transform = {
+            ...merged.transform,
+            position: [merged.transform.position[0], 0, merged.transform.position[2]],
+          }
+        }
+        merged.length = Math.max(0.2, merged.length)
+        merged.width = Math.max(0.2, merged.width)
+        merged.maxHeight = Math.min(merged.length, Math.max(0, merged.maxHeight))
+        merged.minHeight = Math.min(merged.maxHeight, Math.max(0, merged.minHeight))
+        merged.maxSpeedCms = Math.max(10, merged.maxSpeedCms)
+        merged.defaultSpeed = Math.min(255, Math.max(1, Math.round(merged.defaultSpeed)))
+        return merged
+      })
+
+      if (patch.layerId !== undefined && project.settings.addressMode === 'auto') {
+        modules = autoAssign(project.layers, modules)
+      }
+
+      const clips =
+        patch.layerId !== undefined
+          ? (project.clips ?? []).map((c) => (idSet.has(c.moduleId) ? { ...c, layerId: patch.layerId! } : c))
+          : project.clips
+
+      applyProject({ ...project, modules, clips })
       return null
     },
 
@@ -821,6 +1218,7 @@ export const useAppStore = create<AppState>((set, get) => {
         {
           extra: {
             selectedClipId: clip.id,
+            selectedClipIds: [clip.id],
             selectedKeyId: null,
             selectedTimelineLayerId: null,
             selectedLayerId: null,
@@ -876,8 +1274,122 @@ export const useAppStore = create<AppState>((set, get) => {
     deleteTimelineLayerClips(layerId) {
       const { project } = get()
       const clips = (project.clips ?? []).filter((c) => c.layerId !== layerId)
-      applyProject({ ...project, clips }, { extra: { selectedClipId: null } })
+      applyProject({ ...project, clips }, { extra: { selectedClipId: null, selectedClipIds: [] } })
       get().notify('Đã xoá toàn bộ clip trong layer trên Timeline', 'info')
+    },
+
+    applyPresetToSelectedClips(opts) {
+      const { project, selectedClipIds } = get()
+      const nextClips = buildPresetPatchForClips(project.clips ?? [], project.modules, selectedClipIds, opts)
+      if (!nextClips) return false
+      applyProject({ ...project, clips: nextClips })
+      return true
+    },
+
+    updateSelectedClipsTiming(opts) {
+      const { project, selectedClipIds } = get()
+      const nextClips = buildTimingPatchForSelectedClips(project.clips ?? [], selectedClipIds, opts)
+      if (!nextClips) {
+        get().notify('Không thể cập nhật: thời gian vượt biên hoặc chồng chéo moment khác', 'warn')
+        return false
+      }
+      applyProject({ ...project, clips: nextClips })
+      return true
+    },
+
+    moveSelectedClipsByDelta(origStarts, rawDeltaSec, coalesceKey) {
+      const { project, selectedClipIds } = get()
+      const res = buildMultiClipShiftPatch(project.clips ?? [], selectedClipIds, rawDeltaSec, origStarts)
+      if (!res) return null
+      applyProject({ ...project, clips: res.clips }, { coalesceKey })
+      return res.delta
+    },
+
+    applyLayerMotionPreset(layerId, presetId, opts) {
+      const { project, playheadTime } = get()
+      const layer = project.layers.find((l) => l.id === layerId)
+      if (!layer) return 0
+      const duration = opts?.duration ?? 4
+      const staggerSec = opts?.staggerSec ?? 0.35
+      if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(staggerSec) || staggerSec < 0) {
+        get().notify('Thời lượng hoặc độ lệch sóng không hợp lệ', 'warn')
+        return 0
+      }
+      const created = buildLayerMotionClips({
+        layerId,
+        modules: project.modules,
+        existingClips: project.clips ?? [],
+        presetId,
+        startTime: playheadTime,
+        duration,
+        staggerSec,
+      })
+      if (created.length === 0) {
+        get().notify('Layer chưa có module nào để tạo hiệu ứng', 'warn')
+        return 0
+      }
+      // Giữ nguyên toàn bộ clip cũ; không gọi syncModuleClipsContinuity để tránh sửa ngầm moment khác.
+      const clips = [...(project.clips ?? []), ...created]
+      // Tắt syncLayer để mỗi module chạy đúng hành trình/stagger riêng khi phát Timeline.
+      const layers = layer.syncLayer
+        ? project.layers.map((l) => (l.id === layerId ? { ...l, syncLayer: false } : l))
+        : project.layers
+      // Nếu layer đang bật Loop DMX (dùng chung kênh), tách Loop DMX và đảm bảo mỗi module có địa chỉ DMX hợp lệ, không trùng.
+      const layerMods = project.modules.filter((m) => m.layerId === layerId)
+      const hasLoop = layerMods.some((m) => m.dmxLoop)
+      let modules = project.modules
+      if (hasLoop) {
+        const unlooped = project.modules.map((m) => (m.layerId === layerId ? { ...m, dmxLoop: false } : m))
+        if (project.settings.addressMode === 'auto') {
+          const reassigned = autoAssign(layers, unlooped)
+          if (reassigned.some((m) => !isValidStartAddress(m.startAddress))) {
+            get().notify('Không đủ 512 kênh DMX để tách Loop DMX cho các module trong layer', 'error')
+            return 0
+          }
+          modules = reassigned
+        } else {
+          const working = unlooped.map((m) => ({ ...m }))
+          const settledInLayer: ModuleCfg[] = []
+          const otherLayerMods = working.filter((m) => m.layerId !== layerId)
+          for (const mod of working) {
+            if (mod.layerId !== layerId) continue
+            const conflict = [...otherLayerMods, ...settledInLayer].some((p) =>
+              rangesOverlap(p.startAddress, mod.startAddress),
+            )
+            if (conflict) {
+              const free = nextFree(working, mod.id)
+              if (free === null) {
+                get().notify('Không đủ kênh DMX trống (Universe 0) để tách Loop DMX cho hiệu ứng độc lập', 'error')
+                return 0
+              }
+              mod.startAddress = free
+            }
+            settledInLayer.push(mod)
+          }
+          if (settledInLayer.some((m) => validateAddress(working, m.id, m.startAddress) !== null)) {
+            get().notify('Xung đột địa chỉ DMX khi tách Loop DMX trong layer', 'error')
+            return 0
+          }
+          modules = working
+        }
+      }
+      applyProject(
+        { ...project, layers, modules, clips },
+        {
+          extra: {
+            selectedClipId: created[0].id,
+            selectedClipIds: [created[0].id],
+            selectedKeyId: null,
+            selectedLayerId: null,
+            selectedTimelineLayerId: null,
+            selectedIds: [created[0].moduleId],
+            focusScope: 'timeline',
+          },
+        },
+      )
+      const label = LAYER_MOTION_PRESETS.find((p) => p.id === presetId)?.label ?? presetId
+      get().notify(`Đã tạo ${created.length} moment "${label}" tại ${created[0].startTime.toFixed(2)}s`, 'info')
+      return created.length
     },
 
     copySelection() {
@@ -1009,7 +1521,15 @@ export const useAppStore = create<AppState>((set, get) => {
         return
       }
       if (s.focusScope === 'timeline') {
-        if (s.selectedClipId) {
+        if (s.selectedClipIds.length > 1) {
+          const delSet = new Set(s.selectedClipIds)
+          const remaining = (s.project.clips ?? []).filter((c) => !delSet.has(c.id))
+          applyProject(
+            { ...s.project, clips: remaining },
+            { extra: { selectedClipId: null, selectedClipIds: [], selectedKeyId: null } },
+          )
+          s.notify(`Đã xoá ${delSet.size} clip`, 'info')
+        } else if (s.selectedClipId) {
           s.deleteClip(s.selectedClipId)
           s.notify('Đã xoá clip', 'info')
         } else if (s.selectedTimelineLayerId) {
@@ -1069,8 +1589,29 @@ export const useAppStore = create<AppState>((set, get) => {
         effectiveCmd = { ...cmd, ids: [...expanded] }
       }
       const res = await getBridge().command(effectiveCmd)
-      if (!res.ok && res.message) get().notify(res.message, 'error')
-      else if (!opts?.quietWarnings && res.warnings?.length) get().notify(res.warnings[0], 'warn')
+      if (!res.ok && res.message) {
+        get().notify(res.message, 'error', { title: 'Không thể thực thi', icon: 'error' })
+      } else if (!opts?.quietWarnings && res.warnings?.length) {
+        get().notify(res.warnings[0], 'warn', { title: 'Giới hạn an toàn', icon: 'warn' })
+      } else if (res.ok) {
+        if (effectiveCmd.type === 'estop') {
+          get().notify('Đã dừng khẩn cấp và khoá toàn bộ đầu ra DMX', 'error', {
+            title: 'E-Stop kích hoạt',
+            icon: 'estop',
+          })
+        } else if (effectiveCmd.type === 'stop' && effectiveCmd.ids === 'all') {
+          get().notify('Đã dừng toàn bộ chuyển động hiện tại', 'info', {
+            title: 'Đã dừng',
+            icon: 'stopped',
+          })
+        } else if (effectiveCmd.type === 'lock') {
+          get().notify(
+            effectiveCmd.locked ? 'Hệ thống đã chuyển sang chế độ khoá an toàn' : 'Đã mở khoá điều khiển đầu ra DMX',
+            effectiveCmd.locked ? 'info' : 'success',
+            { title: effectiveCmd.locked ? 'Khoá an toàn' : 'Mở khoá DMX', icon: effectiveCmd.locked ? 'stopped' : 'running' },
+          )
+        }
+      }
       return res
     },
 
@@ -1122,7 +1663,7 @@ export const useAppStore = create<AppState>((set, get) => {
       const res = await getBridge().saveProjectFile(get().project)
       if (res.saved) {
         set({ projectFilePath: res.filePath, dirty: false })
-        get().notify('Đã lưu dự án', 'info')
+        get().notify('Đã lưu file dự án hiện tại', 'success', { title: 'Lưu dự án', icon: 'save' })
       }
     },
 
@@ -1130,13 +1671,13 @@ export const useAppStore = create<AppState>((set, get) => {
       const res = await getBridge().saveProjectAs(get().project)
       if (res.saved) {
         set({ projectFilePath: res.filePath, dirty: false })
-        get().notify('Đã lưu dự án sang file mới', 'info')
+        get().notify('Đã lưu dự án sang file mới', 'success', { title: 'Lưu thành file mới', icon: 'save' })
       }
     },
 
     async exportProject() {
       const ok = await getBridge().exportProject(get().project)
-      if (ok) get().notify('Đã xuất file dự án', 'info')
+      if (ok) get().notify('Đã xuất file dự án thành công', 'success', { title: 'Xuất dự án', icon: 'save' })
     },
 
     resetPreset() {

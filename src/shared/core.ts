@@ -17,6 +17,7 @@ import type {
 const NODE_TIMEOUT_MS = 6000
 const POLL_EVERY_MS = 2500
 const SNAPSHOT_EVERY_MS = 50
+export const DMX_TRANSPORT_HZ = 25
 
 function limits(m: ModuleCfg): [number, number] {
   const hi = Math.min(m.maxHeight, m.length)
@@ -48,6 +49,8 @@ export class GauzeCore {
   private lastTick = 0
   private lastPoll = 0
   private lastSnap = 0
+  private flushLen = 2
+  private lastSentRoute: { net: number; subUni: number } | null = null
   private listeners = new Set<(s: Snapshot) => void>()
 
   constructor(
@@ -61,6 +64,11 @@ export class GauzeCore {
   }
 
   configure(cfg: CoreConfig): void {
+    const prevUsed = this.usedLength()
+    const prevRoute =
+      this.lastSentRoute ??
+      (this.cfg ? { net: this.cfg.output.net, subUni: (this.cfg.output.subnet << 4) | this.cfg.output.universe } : null)
+
     this.cfg = cfg
     this.modules = new Map(cfg.modules.map((m) => [m.id, m]))
     for (const m of cfg.modules) {
@@ -73,11 +81,32 @@ export class GauzeCore {
       st.target = clamp(st.target, lo, hi)
     }
     const key = JSON.stringify(cfg.output)
-    if (key !== this.driverKey) this.restartDriver(cfg.output, key)
+    if (key !== this.driverKey) {
+      this.restartDriver(cfg.output, key, prevUsed, prevRoute)
+    } else {
+      this.flushLen = Math.max(this.flushLen, prevUsed)
+    }
+    this.buildFrame()
   }
 
-  private restartDriver(out: OutputSettings, key: string): void {
-    this.driver?.stop()
+  private flushZeroRoute(driver: OutputDriver | null, route: { net: number; subUni: number } | null, len: number): void {
+    if (!driver || !route) return
+    const n = Math.min(DMX_UNIVERSE_SIZE, Math.max(2, len))
+    driver.send(route.net, route.subUni, new Uint8Array(n))
+  }
+
+  private restartDriver(
+    out: OutputSettings,
+    key: string,
+    prevUsed = this.usedLength(),
+    prevRoute: { net: number; subUni: number } | null = this.lastSentRoute,
+  ): void {
+    if (this.driver) {
+      this.flushZeroRoute(this.driver, prevRoute, Math.max(prevUsed, this.flushLen))
+      this.driver.stop()
+    }
+    this.lastSentRoute = null
+    this.flushLen = 2
     this.nodes.clear()
     this.driverError = null
     this.driverWarn = null
@@ -103,16 +132,28 @@ export class GauzeCore {
   start(): void {
     if (this.timer) return
     this.lastTick = this.now()
-    const hz = clamp(this.cfg?.output.sendHz ?? 40, 5, 60)
-    this.timer = setInterval(() => this.tick(), Math.round(1000 / hz))
+    // Phát frame DMX cố định ở 25 Hz (40 ms/frame), kể cả khi mở file dự án cũ từng lưu sendHz=40.
+    this.timer = setInterval(() => this.tick(), Math.round(1000 / DMX_TRANSPORT_HZ))
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
-    this.driver?.stop()
+    const flushTargetLen = Math.max(this.usedLength(), this.flushLen)
+    const route =
+      this.lastSentRoute ??
+      (this.cfg ? { net: this.cfg.output.net, subUni: (this.cfg.output.subnet << 4) | this.cfg.output.universe } : null)
+    this.holdAll()
+    this.locked = true
+    this.frame.fill(0)
+    if (this.driver) {
+      this.flushZeroRoute(this.driver, route, flushTargetLen)
+      this.driver.stop()
+    }
     this.driver = null
     this.driverKey = ''
+    this.lastSentRoute = null
+    this.flushLen = 2
   }
 
   /** Đổi tần số gửi khi đang chạy. */
@@ -243,6 +284,7 @@ export class GauzeCore {
   }
 
   private buildFrame(): void {
+    this.frame.fill(0)
     const lockVal = this.locked ? 0 : (this.cfg?.lockValue ?? 77)
     for (const m of this.modules.values()) {
       const st = this.states.get(m.id)
@@ -265,10 +307,17 @@ export class GauzeCore {
   private sendFrame(now: number): void {
     if (!this.driver || !this.cfg) return
     const o = this.cfg.output
+    const subUni = (o.subnet << 4) | o.universe
+    if (this.lastSentRoute && (this.lastSentRoute.net !== o.net || this.lastSentRoute.subUni !== subUni)) {
+      this.flushZeroRoute(this.driver, this.lastSentRoute, Math.max(this.flushLen, this.usedLength()))
+    }
     this.seq = (this.seq % 255) + 1
     // Dùng buildArtDmx để kiểm tra khung hợp lệ, driver tự đóng gói theo giao thức của nó.
     void buildArtDmx
-    this.driver.send(o.net, (o.subnet << 4) | o.universe, this.frame.subarray(0, this.usedLength()))
+    const sendLen = Math.min(DMX_UNIVERSE_SIZE, Math.max(this.usedLength(), this.flushLen))
+    this.driver.send(o.net, subUni, this.frame.slice(0, sendLen))
+    this.lastSentRoute = { net: o.net, subUni }
+    this.flushLen = 2
     this.framesSent += 1
     if (now - this.rateWindowStart >= 1000) {
       this.measuredHz = Math.round((this.framesSent * 1000) / (now - this.rateWindowStart))

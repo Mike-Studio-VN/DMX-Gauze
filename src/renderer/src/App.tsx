@@ -1,28 +1,33 @@
 import { useEffect, useRef, useState } from 'react'
 import mikLogo from './assets/mik-logo.png'
 import {
+  AlertTriangle,
+  Bell,
+  CheckCircle2,
   ChevronDown,
-  Clock,
   Download,
   FilePlus,
   Folder,
   FolderOpen,
   Lock,
-  Network,
   OctagonX,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Play,
   Redo2,
   RotateCcw,
   Save,
   SaveAll,
   Settings,
+  ShieldAlert,
+  Square,
   Undo2,
   Unlock,
   Wifi,
   WifiOff,
+  X,
 } from 'lucide-react'
 import { IconButton } from './components/IconButton'
 import { GauzeTree } from './components/GauzeTree'
@@ -117,6 +122,7 @@ export function App() {
     activeTab,
     snapshot,
     toast,
+    dismissToast,
     init,
     undo,
     redo,
@@ -424,21 +430,8 @@ export function App() {
                   }}
                   className="mx-2 flex h-9 w-[calc(100%-16px)] cursor-pointer items-center gap-3 rounded-xl px-2.5 text-left text-[12.5px] text-fg hover:bg-white/8"
                 >
-                  <Network size={15} className="text-info" />
-                  <span className="flex-1">Cài đặt DMX</span>
-                </button>
-
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false)
-                    setSettingsOpen(true, 'ltc')
-                  }}
-                  className="mx-2 flex h-9 w-[calc(100%-16px)] cursor-pointer items-center gap-3 rounded-xl px-2.5 text-left text-[12.5px] text-fg hover:bg-white/8"
-                >
-                  <Clock size={15} className="text-[#FFB26B]" />
-                  <span className="flex-1">Cài đặt Timecode</span>
+                  <Settings size={15} className="text-[#FFB26B]" />
+                  <span className="flex-1">Cài đặt</span>
                 </button>
 
                 <div className="mx-3 my-1.5 border-t border-line" />
@@ -458,7 +451,7 @@ export function App() {
 
                 <div className="mt-1.5 flex h-9 items-center justify-between border-t border-line px-4 text-[9.5px] font-semibold tracking-widest text-muted uppercase">
                   <span>DMX GAUZE ENGINE</span>
-                  <span>v{info?.version ?? '0.1.0'}</span>
+                  <span>v{info?.version ?? '1.0.0'}</span>
                 </div>
               </div>
             )}
@@ -634,27 +627,71 @@ export function App() {
           <span>Ctrl+Z / Ctrl+Y Hoàn tác · Ctrl+C / Ctrl+V / Delete</span>
         </div>
         <span>
-          v{info?.version ?? '0.1.0'} · {info?.runtime ?? 'web'}
+          v{info?.version ?? '1.0.0'} · {info?.runtime ?? 'web'}
         </span>
       </footer>
 
       {toast && (
         <div
           role="status"
-          className="kiln-panel fixed right-5 bottom-8 z-50 flex items-center gap-2.5 px-3.5 py-2 text-xs font-medium shadow-2xl"
+          aria-live={toast.kind === 'error' ? 'assertive' : 'polite'}
+          className="fixed right-5 bottom-8 z-50 flex w-[340px] max-w-[calc(100vw-2.5rem)] items-center gap-3 rounded-[18px] bg-[#16100C]/95 px-3.5 py-2.5 shadow-[0_14px_34px_rgba(0,0,0,0.6),inset_0_0_0_1px_rgba(255,206,160,0.14)] backdrop-blur-md"
         >
           <span
-            className={`size-2 rounded-full ${
-              toast.kind === 'error' ? 'bg-danger' : toast.kind === 'warn' ? 'bg-warn' : 'bg-info'
+            aria-hidden="true"
+            className={`flex size-9 shrink-0 items-center justify-center rounded-full shadow-sm ${
+              toast.kind === 'error'
+                ? 'bg-gradient-to-br from-[#FF9B8E] via-[#FF7D6E] to-[#C83E30] text-[#1C0E04]'
+                : toast.kind === 'warn'
+                  ? 'bg-gradient-to-br from-[#FFE0A6] via-[#FFCB72] to-[#E08E26] text-[#1C0E04]'
+                  : toast.kind === 'success'
+                    ? 'bg-gradient-to-br from-[#A6F2C7] via-[#7FDDA8] to-[#3AA36C] text-[#092114]'
+                    : 'bg-gradient-to-br from-[#FFC590] via-[#FF9442] to-[#E56A14] text-[#1C0E04]'
             }`}
-          />
-          <span
-            className={
-              toast.kind === 'error' ? 'text-danger' : toast.kind === 'warn' ? 'text-warn' : 'text-fg'
-            }
           >
-            {toast.text}
+            {(() => {
+              switch (toast.icon) {
+                case 'estop':
+                  return <OctagonX size={17} strokeWidth={2.3} />
+                case 'error':
+                  return <ShieldAlert size={17} strokeWidth={2.2} />
+                case 'warn':
+                  return <AlertTriangle size={17} strokeWidth={2.2} />
+                case 'disconnected':
+                  return <WifiOff size={16} strokeWidth={2.2} />
+                case 'connected':
+                  return <Wifi size={16} strokeWidth={2.2} />
+                case 'running':
+                  return <Play size={16} strokeWidth={2.3} />
+                case 'stopped':
+                  return <Square size={15} strokeWidth={2.3} />
+                case 'save':
+                  return <Save size={16} strokeWidth={2.2} />
+                case 'success':
+                  return <CheckCircle2 size={17} strokeWidth={2.2} />
+                default:
+                  return <Bell size={16} strokeWidth={2.2} />
+              }
+            })()}
           </span>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate text-[12.5px] leading-snug font-semibold text-fg">{toast.title}</span>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <span className="text-[10px] font-medium tracking-wider text-muted">NOW</span>
+                <button
+                  type="button"
+                  onClick={dismissToast}
+                  aria-label="Đóng thông báo"
+                  className="cursor-pointer rounded-full p-0.5 text-muted hover:bg-white/10 hover:text-fg"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            </div>
+            <p className="mt-0.5 line-clamp-2 text-[11.5px] leading-snug text-[#C2B3A4]">{toast.text}</p>
+          </div>
         </div>
       )}
 

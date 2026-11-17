@@ -99,3 +99,26 @@ export function worldPositionToModuleOffset(
   const local = inverseTransformPointByTransform3D(ltf, desiredWorld)
   return [Number((local[0] - baseX).toFixed(3)), 0, Number(local[2].toFixed(3))]
 }
+
+export interface VisibilityNode {
+  visible: boolean
+  parent?: VisibilityNode | null
+}
+
+/** Chỉ trả về true khi bản thân node 3D và mọi ancestor (Module/Layer group) đều visible. */
+export function isObjectEffectivelyVisible(node: VisibilityNode | null | undefined): boolean {
+  let cur: VisibilityNode | null | undefined = node
+  while (cur) {
+    if (!cur.visible) return false
+    cur = cur.parent
+  }
+  return true
+}
+
+/** Lấy hit đầu tiên trong kết quả raycast mà toàn bộ chuỗi ancestor đang hiển thị. */
+export function pickFirstVisibleHit<T extends { object: VisibilityNode }>(hits: readonly T[]): T | null {
+  for (const hit of hits) {
+    if (isObjectEffectivelyVisible(hit.object)) return hit
+  }
+  return null
+}

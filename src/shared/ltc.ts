@@ -100,3 +100,70 @@ export class LtcDecoder {
     this.bits = []
   }
 }
+
+export type LtcClockStatus = 'off' | 'lock' | 'freewheel' | 'lost'
+
+export interface LtcClockPollResult {
+  status: Exclude<LtcClockStatus, 'off'>
+  timeSec: number | null
+  shouldFollow: boolean
+  shouldStop: boolean
+}
+
+/**
+ * Bộ theo dõi đồng hồ LTC kèm nội suy chạy trớn (freewheel) có giới hạn trong `freewheelFrames`
+ * và chuyển trạng thái `lost` dứt khoát khi quá ngưỡng.
+ */
+export class LtcClockTracker {
+  private lastFrameAtMs: number | null = null
+  private lastSec = 0
+  private lastExtrapolatedSec = 0
+  private stopDispatchedOnLoss = false
+
+  reset(): void {
+    this.lastFrameAtMs = null
+    this.lastSec = 0
+    this.lastExtrapolatedSec = 0
+    this.stopDispatchedOnLoss = false
+  }
+
+  onDecodedFrame(sec: number, nowMs: number): number {
+    const safeSec = Math.max(0, sec)
+    this.lastFrameAtMs = nowMs
+    this.lastSec = safeSec
+    this.lastExtrapolatedSec = safeSec
+    this.stopDispatchedOnLoss = false
+    return safeSec
+  }
+
+  poll(nowMs: number, fps: number, freewheelFrames: number): LtcClockPollResult {
+    if (this.lastFrameAtMs === null) {
+      return { status: 'lost', timeSec: null, shouldFollow: false, shouldStop: false }
+    }
+    const gapMs = Math.max(0, nowMs - this.lastFrameAtMs)
+    const fwSec = Math.max(0, freewheelFrames) / Math.max(1, fps)
+    const fwMs = fwSec * 1000
+
+    if (gapMs <= 80) {
+      return { status: 'lock', timeSec: this.lastSec, shouldFollow: false, shouldStop: false }
+    }
+
+    if (fwMs > 0 && gapMs <= fwMs) {
+      const nextSec = this.lastSec + gapMs / 1000
+      this.lastExtrapolatedSec = nextSec
+      return { status: 'freewheel', timeSec: nextSec, shouldFollow: true, shouldStop: false }
+    }
+
+    const boundedEndSec = this.lastSec + fwSec
+    const finalSec = fwMs > 0 && this.lastExtrapolatedSec < boundedEndSec ? boundedEndSec : null
+    if (finalSec !== null) this.lastExtrapolatedSec = finalSec
+    const shouldStop = !this.stopDispatchedOnLoss
+    this.stopDispatchedOnLoss = true
+    return {
+      status: 'lost',
+      timeSec: finalSec,
+      shouldFollow: false,
+      shouldStop,
+    }
+  }
+}

@@ -1,6 +1,6 @@
 import { app, dialog } from 'electron'
-import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import type { ProjectFileResult, SaveFileResult } from '@shared/api'
 import { createDefaultProject, normalizeProject } from '@shared/preset'
 import type { Project } from '@shared/types'
@@ -11,26 +11,55 @@ function defaultFilePath(): string {
   return join(app.getPath('userData'), 'project.json')
 }
 
-function parseProjectJson(raw: string): Project {
-  const parsed = JSON.parse(raw) as Project
-  if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.modules) || !Array.isArray(parsed.layers)) {
-    throw new Error('File dự án không hợp lệ')
+function serializeProject(project: Project): string {
+  return JSON.stringify(normalizeProject(project), null, 2)
+}
+
+async function atomicWriteText(targetPath: string, content: string): Promise<void> {
+  const dir = dirname(targetPath)
+  await mkdir(dir, { recursive: true })
+  const tmpPath = join(
+    dir,
+    `.${basename(targetPath)}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`,
+  )
+  try {
+    await writeFile(tmpPath, content, 'utf8')
+    await rename(tmpPath, targetPath)
+  } catch (err) {
+    await unlink(tmpPath).catch(() => {})
+    throw err
   }
+}
+
+/** Cập nhật bản cache autosave best-effort sau khi file chính đã ghi thành công. */
+async function syncAutosaveCache(json: string): Promise<void> {
+  try {
+    await atomicWriteText(defaultFilePath(), json)
+  } catch (err) {
+    console.warn('[projectStore] Không thể cập nhật cache tự động lưu sau khi đã lưu file chính:', err)
+  }
+}
+
+export function parseProjectJson(raw: string): Project {
+  const parsed: unknown = JSON.parse(raw)
   return normalizeProject(parsed)
 }
 
 export async function loadSavedProject(): Promise<ProjectFileResult> {
+  currentFilePath = null
   try {
     const raw = await readFile(defaultFilePath(), 'utf8')
-    return { project: parseProjectJson(raw), filePath: currentFilePath }
-  } catch {
-    /* lần đầu chưa có file */
+    return { project: parseProjectJson(raw), filePath: null }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+      console.warn('[projectStore] File dự án tự động lưu bị hỏng hoặc thiếu cấu trúc, khôi phục preset mặc định:', err)
+    }
   }
   return { project: createDefaultProject(), filePath: null }
 }
 
 export async function saveProjectToDisk(project: Project): Promise<void> {
-  await writeFile(defaultFilePath(), JSON.stringify(project, null, 2), 'utf8')
+  await atomicWriteText(defaultFilePath(), serializeProject(project))
 }
 
 export function clearCurrentFilePath(): void {
@@ -47,40 +76,43 @@ export async function openProjectDialog(): Promise<ProjectFileResult | null> {
   const filePath = res.filePaths[0]
   const raw = await readFile(filePath, 'utf8')
   const project = parseProjectJson(raw)
+  const json = serializeProject(project)
   currentFilePath = filePath
-  await saveProjectToDisk(project)
+  await syncAutosaveCache(json)
   return { project, filePath }
 }
 
 export async function saveProjectAsDialog(project: Project): Promise<SaveFileResult> {
+  const json = serializeProject(project)
   const res = await dialog.showSaveDialog({
     title: 'Lưu dự án DMX Gauze thành...',
     defaultPath: currentFilePath ?? 'dmx-gauze-project.json',
     filters: [{ name: 'DMX Gauze Project', extensions: ['json'] }],
   })
   if (res.canceled || !res.filePath) return { saved: false, filePath: currentFilePath }
-  currentFilePath = res.filePath
-  const json = JSON.stringify(project, null, 2)
-  await writeFile(res.filePath, json, 'utf8')
-  await writeFile(defaultFilePath(), json, 'utf8')
-  return { saved: true, filePath: currentFilePath }
+  const targetPath = res.filePath
+  await atomicWriteText(targetPath, json)
+  currentFilePath = targetPath
+  await syncAutosaveCache(json)
+  return { saved: true, filePath: targetPath }
 }
 
 export async function saveProjectFile(project: Project): Promise<SaveFileResult> {
+  const json = serializeProject(project)
   if (!currentFilePath) return saveProjectAsDialog(project)
-  const json = JSON.stringify(project, null, 2)
-  await writeFile(currentFilePath, json, 'utf8')
-  await writeFile(defaultFilePath(), json, 'utf8')
+  await atomicWriteText(currentFilePath, json)
+  await syncAutosaveCache(json)
   return { saved: true, filePath: currentFilePath }
 }
 
 export async function exportProjectDialog(project: Project): Promise<boolean> {
+  const json = serializeProject(project)
   const res = await dialog.showSaveDialog({
     title: 'Xuất file dự án DMX Gauze',
     defaultPath: 'dmx-gauze-export.json',
     filters: [{ name: 'DMX Gauze Project', extensions: ['json'] }],
   })
   if (res.canceled || !res.filePath) return false
-  await writeFile(res.filePath, JSON.stringify(project, null, 2), 'utf8')
+  await atomicWriteText(res.filePath, json)
   return true
 }

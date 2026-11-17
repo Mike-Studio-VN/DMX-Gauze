@@ -2,6 +2,7 @@ import dgram from 'node:dgram'
 import type { DriverEvents, OutputDriver } from '@shared/drivers'
 import { SACN_PORT, buildSacnPacket, sacnMulticastIp } from '@shared/protocols'
 import type { OutputSettings } from '@shared/types'
+import { UdpSocketLifecycle } from './udpSocketLifecycle'
 
 /**
  * Driver sACN (ANSI E1.31) qua UDP (cổng 5568 mặc định).
@@ -9,8 +10,7 @@ import type { OutputSettings } from '@shared/types'
  */
 export class SacnDriver implements OutputDriver {
   readonly id = 'sacn' as const
-  private sock: dgram.Socket | null = null
-  private ready = false
+  private readonly life = new UdpSocketLifecycle()
   private seq = 0
 
   constructor(
@@ -33,55 +33,66 @@ export class SacnDriver implements OutputDriver {
 
   start(): void {
     const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true })
-    this.sock = sock
+    this.life.attach(sock)
 
     sock.on('error', (err) => {
-      this.ev.onError(`Lỗi UDP sACN E1.31: ${err.message}`)
+      if (!this.life.closing) this.ev.onError(`Lỗi UDP sACN E1.31: ${err.message}`)
     })
 
     sock.bind(0, () => {
       try {
         sock.setBroadcast(true)
         if (this.cfg.sacnMulticast !== false) sock.setMulticastTTL(4)
-        this.ready = true
+        if (!this.life.markReady()) return
         this.ev.onError(null)
         this.ev.onWarn(null)
       } catch (err) {
-        this.ev.onError(`Không khởi tạo được sACN E1.31: ${(err as Error).message}`)
+        if (!this.life.closing) {
+          this.ev.onError(`Không khởi tạo được sACN E1.31: ${(err as Error).message}`)
+        }
       }
     })
   }
 
   send(_net: number, _subUni: number, data: Uint8Array): void {
-    if (!this.sock || !this.ready) return
-    this.seq = (this.seq + 1) & 0xff
-    const universe = this.targetUniverse()
-    const ip = this.targetIp()
-    const port = this.targetPort()
-    const pkt = buildSacnPacket({
-      universe,
-      seq: this.seq,
-      priority: this.cfg.sacnPriority ?? 100,
-      sourceName: 'DMX Gauze',
-      data,
-    })
-    this.sock.send(pkt, port, ip, (err) => {
-      if (err) this.ev.onError(`Gửi sACN E1.31 thất bại: ${err.message}`)
-      else {
-        this.ev.onError(null)
-        this.ev.onNode({
-          ip,
-          name: `sACN U${universe}`,
-          longName: `E1.31 ${this.cfg.sacnMulticast !== false ? 'Multicast' : 'Unicast'} (${ip}:${port})`,
-          lastSeen: Date.now(),
+    this.life.trackSend(
+      (sock, done) => {
+        this.seq = (this.seq + 1) & 0xff
+        const universe = this.targetUniverse()
+        const ip = this.targetIp()
+        const port = this.targetPort()
+        const pkt = buildSacnPacket({
+          universe,
+          seq: this.seq,
+          priority: this.cfg.sacnPriority ?? 100,
+          sourceName: 'DMX Gauze',
+          data,
         })
-      }
-    })
+        sock.send(pkt, port, ip, (err) => {
+          const closing = this.life.closing
+          done()
+          if (closing) return
+          if (err) this.ev.onError(`Gửi sACN E1.31 thất bại: ${err.message}`)
+          else {
+            this.ev.onError(null)
+            this.ev.onNode({
+              ip,
+              name: `sACN U${universe}`,
+              longName: `E1.31 ${this.cfg.sacnMulticast !== false ? 'Multicast' : 'Unicast'} (${ip}:${port})`,
+              lastSeen: Date.now(),
+            })
+          }
+        })
+      },
+      (err) => {
+        if (!this.life.closing) this.ev.onError(`Gửi sACN E1.31 thất bại: ${(err as Error).message}`)
+      },
+    )
   }
 
   poll(): void {
     // sACN gửi dữ liệu trực tiếp qua multicast/unicast; cập nhật thông tin đích nếu đã sẵn sàng
-    if (!this.ready) return
+    if (!this.life.ready || this.life.closing) return
     const universe = this.targetUniverse()
     const ip = this.targetIp()
     const port = this.targetPort()
@@ -94,14 +105,6 @@ export class SacnDriver implements OutputDriver {
   }
 
   stop(): void {
-    this.ready = false
-    if (this.sock) {
-      try {
-        this.sock.close()
-      } catch {
-        /* ignore */
-      }
-      this.sock = null
-    }
+    this.life.stop()
   }
 }

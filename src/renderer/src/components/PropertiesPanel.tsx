@@ -1,5 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, AlertTriangle, ArrowLeft, Eye, EyeOff, HelpCircle, Layers, Link2, Lock, Plus, RotateCcw, Trash2, Unlock } from 'lucide-react'
+import {
+  AlertCircle,
+  AlertTriangle,
+  ArrowDown,
+  ArrowLeft,
+  ArrowUp,
+  Eye,
+  EyeOff,
+  HelpCircle,
+  Layers,
+  Link2,
+  Lock,
+  Plus,
+  RotateCcw,
+  Trash2,
+  Unlock,
+  Waves,
+} from 'lucide-react'
 import { layerLoopAddress } from '@shared/addressing'
 import { ch3ToCms, clamp } from '@shared/convert'
 import { CH, addressRange } from '@shared/dmx'
@@ -12,6 +29,8 @@ import {
 import {
   CURVE_PRESETS,
   type CurvePresetId,
+  LAYER_MOTION_PRESETS,
+  type LayerMotionPresetId,
   analyzeClipSpeeds,
   buildCurveKeyframes,
   fullCurvePath,
@@ -22,8 +41,10 @@ import {
   removeClipKeyframe,
   resolveClipBoundsNoOverlap,
   segmentPath,
+  updateClipEndTime,
   updateClipKeyframeHeight,
   updateClipKeyframeTimelineTime,
+  updateClipStartTime,
 } from '@shared/timeline'
 import type { ModuleCfg, TimelineClip, Transform3D } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
@@ -394,8 +415,25 @@ function MomentEditor({
   const bounds = resolveClipBoundsNoOverlap(sameModClips, clip)
   const issues = analyzeClipSpeeds(clip, mod)
   const bad = issues.find((i) => !i.feasible)
+  const endTime = Number((clip.startTime + clip.duration).toFixed(2))
+  const minEndTime = Number((clip.startTime + 0.4).toFixed(2))
+  const maxStartTime = Number.isFinite(bounds.maxEnd)
+    ? Math.max(bounds.minStart, Number((bounds.maxEnd - clip.duration).toFixed(2)))
+    : Number.POSITIVE_INFINITY
+  const [draftStart, setDraftStart] = useState<{ clipId: string; raw: string } | null>(null)
+  const [draftEnd, setDraftEnd] = useState<{ clipId: string; raw: string } | null>(null)
   const [draftTime, setDraftTime] = useState<{ id: string; raw: string } | null>(null)
   const [draftPct, setDraftPct] = useState<{ id: string; raw: string } | null>(null)
+
+  const commitStartTime = (rawVal: number) => {
+    const patch = updateClipStartTime(clip, rawVal, bounds)
+    if (patch) onUpdate(patch, `clip-start-${clip.id}`)
+  }
+
+  const commitEndTime = (rawVal: number) => {
+    const patch = updateClipEndTime(clip, rawVal, bounds)
+    if (patch) onUpdate(patch, `clip-end-${clip.id}`)
+  }
 
   const commitTimelineTime = (kfId: string, rawVal: number) => {
     const patch = updateClipKeyframeTimelineTime(clip, kfId, rawVal, bounds)
@@ -455,20 +493,78 @@ function MomentEditor({
       </div>
 
       <div className="space-y-2 border-b border-line pb-3">
-        <div className="flex flex-wrap items-center justify-between gap-1.5">
-          <label className="kiln-field flex h-7 min-w-[115px] flex-1 items-center gap-1 px-2">
+        <div className="grid grid-cols-2 gap-1.5">
+          <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
             <span className="shrink-0 text-[10px] text-muted">Bắt đầu</span>
             <input
               type="number"
               step="0.1"
-              min="0"
-              value={clip.startTime}
-              onChange={(e) => onUpdate({ startTime: Math.max(0, Number(e.target.value) || 0) }, `clip-start-${clip.id}`)}
+              min={bounds.minStart}
+              max={Number.isFinite(maxStartTime) ? maxStartTime : undefined}
+              aria-label="Thời điểm bắt đầu (s)"
+              value={draftStart?.clipId === clip.id ? draftStart.raw : clip.startTime}
+              onFocus={() => setDraftStart({ clipId: clip.id, raw: String(clip.startTime) })}
+              onChange={(e) => {
+                const raw = e.target.value
+                setDraftStart({ clipId: clip.id, raw })
+                if (!raw.trim() || raw.endsWith('.')) return
+                const num = Number(raw)
+                if (Number.isFinite(num) && num >= bounds.minStart && num <= maxStartTime) {
+                  commitStartTime(num)
+                }
+              }}
+              onBlur={() => {
+                if (draftStart?.clipId === clip.id) {
+                  const num = Number(draftStart.raw)
+                  if (draftStart.raw.trim() && Number.isFinite(num)) commitStartTime(num)
+                  setDraftStart(null)
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+              }}
               className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none"
             />
             <span className="shrink-0 text-[10px] text-muted">s</span>
           </label>
 
+          <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
+            <span className="shrink-0 text-[10px] text-muted">Kết thúc</span>
+            <input
+              type="number"
+              step="0.1"
+              min={minEndTime}
+              max={Number.isFinite(bounds.maxEnd) ? Number(bounds.maxEnd.toFixed(2)) : undefined}
+              aria-label="Thời điểm kết thúc (s)"
+              value={draftEnd?.clipId === clip.id ? draftEnd.raw : endTime}
+              onFocus={() => setDraftEnd({ clipId: clip.id, raw: String(endTime) })}
+              onChange={(e) => {
+                const raw = e.target.value
+                setDraftEnd({ clipId: clip.id, raw })
+                if (!raw.trim() || raw.endsWith('.')) return
+                const num = Number(raw)
+                if (Number.isFinite(num) && num >= minEndTime && num <= bounds.maxEnd) {
+                  commitEndTime(num)
+                }
+              }}
+              onBlur={() => {
+                if (draftEnd?.clipId === clip.id) {
+                  const num = Number(draftEnd.raw)
+                  if (draftEnd.raw.trim() && Number.isFinite(num)) commitEndTime(num)
+                  setDraftEnd(null)
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+              }}
+              className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none"
+            />
+            <span className="shrink-0 text-[10px] text-muted">s</span>
+          </label>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-1.5 text-[10.5px]">
+          <span className="text-muted tabular-nums">Độ dài: {clip.duration.toFixed(2)}s</span>
           <div className="kiln-seg shrink-0">
             {(
               [
@@ -488,8 +584,7 @@ function MomentEditor({
           </div>
         </div>
 
-        <div className="flex items-center justify-between gap-2 text-[10.5px]">
-          <span className="text-muted tabular-nums">Độ dài: {clip.duration.toFixed(2)}s</span>
+        <div className="flex items-center justify-end text-[10.5px]">
           {bad ? (
             <span className="kiln-chip danger">
               <AlertTriangle size={10} />
@@ -677,27 +772,40 @@ function MomentEditor({
   )
 }
 
-export function PropertiesPanel() {
+export function PropertiesPanel(props: {
+  overrideState?: Partial<ReturnType<typeof useAppStore.getState>>
+}) {
+  const overrideState = props?.overrideState
+  const storeState = useAppStore()
   const {
     project,
     selectedIds,
     selectedLayerId,
     selectedClipId,
+    selectedClipIds,
     selectedKeyId,
     snapshot,
+    playheadTime,
     updateLayer,
     toggleLayerVisibility,
     toggleLayerSync,
     updateModule,
+    updateModulesBatch,
     setModulesDmxLoop,
     setAddressMode,
     selectTimelineClip,
     selectTimelineKey,
     updateClip,
     deleteClip,
+    deleteSelection,
+    applyPresetToSelectedClips,
+    updateSelectedClipsTiming,
+    applyLayerMotionPreset,
+    syncLayerFromModule,
     notify,
-  } = useAppStore()
+  } = overrideState ? { ...storeState, ...overrideState } : storeState
 
+  const selectedClips = (project.clips ?? []).filter((c) => selectedClipIds.includes(c.id))
   const activeClip = selectedClipId ? (project.clips ?? []).find((c) => c.id === selectedClipId) ?? null : null
   const activeClipMod = activeClip ? project.modules.find((m) => m.id === activeClip.moduleId) ?? null : null
   const activeLayer = selectedLayerId ? project.layers.find((l) => l.id === selectedLayerId) ?? null : null
@@ -709,6 +817,12 @@ export function PropertiesPanel() {
 
   const [addrInput, setAddrInput] = useState('')
   const [addrError, setAddrError] = useState<string | null>(null)
+  const [layerPresetDur, setLayerPresetDur] = useState(4)
+  const [layerStagger, setLayerStagger] = useState(0.35)
+  const [draftGroupStart, setDraftGroupStart] = useState<{ key: string; raw: string } | null>(null)
+  const [draftGroupEnd, setDraftGroupEnd] = useState<{ key: string; raw: string } | null>(null)
+  const [draftModField, setDraftModField] = useState<{ key: string; raw: string } | null>(null)
+  const [groupModError, setGroupModError] = useState<string | null>(null)
 
   useEffect(() => {
     if (single) {
@@ -716,6 +830,200 @@ export function PropertiesPanel() {
       setAddrError(null)
     }
   }, [single?.id, single?.startAddress]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Trang thuộc tính nhóm khi chọn nhiều Moment bằng kéo vùng chuột phải
+  if (selectedClips.length > 1) {
+    const groupKey = selectedClips.map((c) => c.id).join(',')
+    const modes = new Set(selectedClips.map((c) => c.curveMode ?? 'smooth'))
+    const commonMode = modes.size === 1 ? [...modes][0] : null
+    const modCount = new Set(selectedClips.map((c) => c.moduleId)).size
+    const starts = selectedClips.map((c) => Number(c.startTime.toFixed(2)))
+    const ends = selectedClips.map((c) => Number((c.startTime + c.duration).toFixed(2)))
+    const durs = selectedClips.map((c) => Number(c.duration.toFixed(2)))
+    const commonStart = starts.every((v) => Math.abs(v - starts[0]) < 0.005) ? starts[0] : null
+    const commonEnd = ends.every((v) => Math.abs(v - ends[0]) < 0.005) ? ends[0] : null
+    const commonDur = durs.every((v) => Math.abs(v - durs[0]) < 0.005) ? durs[0] : null
+    const modById = new Map(project.modules.map((m) => [m.id, m]))
+    let maxGroupSpeedRatio = 0
+    let groupSpeedOver = false
+    for (const c of selectedClips) {
+      const m = modById.get(c.moduleId)
+      if (!m) continue
+      const issues = analyzeClipSpeeds(c, m)
+      for (const issue of issues) {
+        if (!issue.feasible) groupSpeedOver = true
+        const ratio = m.maxSpeedCms > 0 ? issue.requiredCms / m.maxSpeedCms : 0
+        if (ratio > maxGroupSpeedRatio) maxGroupSpeedRatio = ratio
+      }
+    }
+
+    const commitGroupTiming = (kind: 'start' | 'end', raw: string) => {
+      const trimmed = raw.trim()
+      if (!trimmed) return
+      const num = Number(trimmed)
+      if (!Number.isFinite(num)) return
+      updateSelectedClipsTiming(kind === 'start' ? { startTime: num } : { endTime: num })
+    }
+
+    return (
+      <div className="flex h-full flex-col gap-3 overflow-y-auto pr-0.5 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-line pb-2.5">
+          <span className="kiln-chip acc">Đang chọn {selectedClips.length} moment</span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => selectTimelineClip(null)}
+              className="kiln-btn h-6 px-2 text-[10.5px] text-[#C2B3A4]"
+            >
+              Bỏ chọn
+            </button>
+            <button
+              type="button"
+              onClick={() => deleteSelection()}
+              title="Xoá tất cả moment đang chọn (Delete)"
+              aria-label="Xoá tất cả moment đang chọn"
+              className="cursor-pointer rounded-full p-1 text-muted hover:bg-danger/20 hover:text-danger"
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-2 border-b border-line pb-3">
+          <div className="grid grid-cols-2 gap-1.5">
+            <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
+              <span className="shrink-0 text-[10px] text-muted">Bắt đầu</span>
+              <input
+                type="number"
+                step="0.1"
+                min="0"
+                placeholder={commonStart === null ? '—' : undefined}
+                aria-label="Thời điểm bắt đầu nhóm (s)"
+                value={
+                  draftGroupStart?.key === groupKey
+                    ? draftGroupStart.raw
+                    : commonStart !== null
+                      ? String(commonStart)
+                      : ''
+                }
+                onFocus={() =>
+                  setDraftGroupStart({ key: groupKey, raw: commonStart !== null ? String(commonStart) : '' })
+                }
+                onChange={(e) => setDraftGroupStart({ key: groupKey, raw: e.target.value })}
+                onBlur={() => {
+                  if (draftGroupStart?.key === groupKey) {
+                    commitGroupTiming('start', draftGroupStart.raw)
+                    setDraftGroupStart(null)
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                }}
+                className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none placeholder:text-muted/60"
+              />
+              <span className="shrink-0 text-[10px] text-muted">s</span>
+            </label>
+
+            <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
+              <span className="shrink-0 text-[10px] text-muted">Kết thúc</span>
+              <input
+                type="number"
+                step="0.1"
+                min="0.4"
+                placeholder={commonEnd === null ? '—' : undefined}
+                aria-label="Thời điểm kết thúc nhóm (s)"
+                value={
+                  draftGroupEnd?.key === groupKey ? draftGroupEnd.raw : commonEnd !== null ? String(commonEnd) : ''
+                }
+                onFocus={() => setDraftGroupEnd({ key: groupKey, raw: commonEnd !== null ? String(commonEnd) : '' })}
+                onChange={(e) => setDraftGroupEnd({ key: groupKey, raw: e.target.value })}
+                onBlur={() => {
+                  if (draftGroupEnd?.key === groupKey) {
+                    commitGroupTiming('end', draftGroupEnd.raw)
+                    setDraftGroupEnd(null)
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                }}
+                className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none placeholder:text-muted/60"
+              />
+              <span className="shrink-0 text-[10px] text-muted">s</span>
+            </label>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-1.5 text-[10.5px]">
+            <span className="text-muted tabular-nums">
+              Độ dài: {commonDur !== null ? `${commonDur.toFixed(2)}s` : '—'}
+            </span>
+            <div className="flex items-center gap-1.5">
+              {commonMode === null && <span className="text-[10px] text-muted">—</span>}
+              <div className="kiln-seg shrink-0">
+                {(
+                  [
+                    ['smooth', 'Mượt'],
+                    ['linear', 'Thẳng'],
+                  ] as const
+                ).map(([m, label]) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => applyPresetToSelectedClips({ curveMode: m })}
+                    className={`kiln-seg-btn h-5 px-2 text-[10px] ${commonMode === m ? 'on' : ''}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-2 text-[10.5px]">
+            <span className="text-muted">Tốc độ nhóm</span>
+            <span className={groupSpeedOver ? 'font-medium text-danger' : 'font-medium text-ok'}>
+              {groupSpeedOver
+                ? `Vượt tốc độ max (${Math.round(maxGroupSpeedRatio * 100)}%)`
+                : `Hợp lệ (${Math.round(maxGroupSpeedRatio * 100)}%)`}
+            </span>
+          </div>
+        </div>
+
+        <div className="space-y-1.5 border-b border-line pb-3">
+          <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">
+            Áp dụng Mẫu sóng chung
+          </span>
+          <div className="grid grid-cols-7 gap-1">
+            {CURVE_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => applyPresetToSelectedClips({ presetId: preset.id })}
+                title={preset.label}
+                aria-label={`Áp dụng ${preset.label} cho ${selectedClips.length} moment`}
+                className="kiln-btn h-7 w-full px-0 text-[#C2B3A4] hover:text-fg"
+              >
+                <svg width="18" height="11" viewBox="0 0 20 12" aria-hidden="true" className="shrink-0">
+                  <polyline
+                    fill="none"
+                    stroke="#FFB26B"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    points={preset.points.map(([tx, hy]) => `${(1.5 + tx * 17).toFixed(1)},${(10 - hy * 8).toFixed(1)}`).join(' ')}
+                  />
+                </svg>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <p className="text-[11px] text-muted">
+          Chỉnh đồng loạt {selectedClips.length} moment trên {modCount} module; giá trị khác nhau hiển thị{' '}
+          <strong>—</strong> và chỉ ghi đè khi bạn sửa. Chọn 1 moment để chỉnh chi tiết từng điểm P1..Pn.
+        </p>
+      </div>
+    )
+  }
 
   // Trang thuộc tính riêng cho Moment đang chọn trên Timeline
   if (activeClip && activeClipMod) {
@@ -783,6 +1091,87 @@ export function PropertiesPanel() {
           />
         </label>
 
+        {(() => {
+          const layerMods = project.modules.filter((m) => m.layerId === activeLayer.id)
+          const presetIcon = (id: LayerMotionPresetId) => {
+            if (id === 'all-up') return <ArrowUp size={12} className="shrink-0 text-[#FFB26B]" />
+            if (id === 'all-down') return <ArrowDown size={12} className="shrink-0 text-[#FFB26B]" />
+            return <Waves size={12} className="shrink-0 text-[#FFB26B]" />
+          }
+          return (
+            <div className="space-y-2 border-t border-line pt-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-semibold tracking-wide text-[#FFB26B] uppercase">
+                  Hiệu ứng chuyển động
+                </span>
+                <span className="text-[10px] text-muted tabular-nums">
+                  {playheadTime.toFixed(2)}s · {layerMods.length} mod
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-1.5">
+                <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
+                  <span className="shrink-0 text-[10px] text-muted">Thời lượng</span>
+                  <input
+                    type="number"
+                    step="0.2"
+                    min="0.4"
+                    value={layerPresetDur}
+                    onChange={(e) => {
+                      const v = Number(e.target.value)
+                      if (Number.isFinite(v) && v >= 0.4) setLayerPresetDur(v)
+                    }}
+                    className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none"
+                  />
+                  <span className="shrink-0 text-[10px] text-muted">s</span>
+                </label>
+
+                <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
+                  <span className="shrink-0 text-[10px] text-muted">Lệch sóng</span>
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0"
+                    value={layerStagger}
+                    onChange={(e) => {
+                      const v = Number(e.target.value)
+                      if (Number.isFinite(v) && v >= 0) setLayerStagger(v)
+                    }}
+                    className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none"
+                  />
+                  <span className="shrink-0 text-[10px] text-muted">s</span>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-1.5">
+                {LAYER_MOTION_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    disabled={layerMods.length === 0}
+                    onClick={() =>
+                      applyLayerMotionPreset(activeLayer.id, preset.id, {
+                        duration: layerPresetDur,
+                        staggerSec: layerStagger,
+                      })
+                    }
+                    className="kiln-btn h-8 justify-start gap-1.5 px-2.5 text-[11px] text-fg disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    {presetIcon(preset.id)}
+                    <span className="truncate">{preset.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <p className="text-[10.5px] text-muted">
+                {layerMods.length === 0
+                  ? 'Layer này chưa có module để tạo hiệu ứng.'
+                  : 'Tạo moment trên Timeline tại vị trí playhead để xem và tinh chỉnh trước khi chạy.'}
+              </p>
+            </div>
+          )
+        })()}
+
         <p className="border-t border-line pt-3 text-[11px] text-muted">
           Toàn bộ module trong lớp giữ cạnh trên dính vào thanh truss của Layer. Bật <strong>Sync Layer</strong> để các module trong lớp chạy đồng nhất mọi chuyển động.
         </p>
@@ -795,96 +1184,338 @@ export function PropertiesPanel() {
   }
 
   if (!single) {
-    const first = selected[0]
+    const modGroupKey = selected.map((m) => m.id).join(',')
+    const selectedIdsList = selected.map((m) => m.id)
     const allLoop = selected.every((m) => m.dmxLoop)
+    const someLoop = selected.some((m) => m.dmxLoop)
+
+    const commonStr = (vals: string[]): string | null =>
+      vals.every((v) => v === vals[0]) ? vals[0] : null
+    const commonNum = (vals: number[], eps = 0.005): number | null =>
+      vals.every((v) => Math.abs(v - vals[0]) <= eps) ? vals[0] : null
+
+    const commonName = commonStr(selected.map((m) => m.name))
+    const commonLayerId = commonStr(selected.map((m) => m.layerId)) ?? ''
+    const commonAddr = commonNum(selected.map((m) => m.startAddress), 0)
+    const commonLength = commonNum(selected.map((m) => m.length))
+    const commonWidth = commonNum(selected.map((m) => m.width))
+    const commonMinH = commonNum(selected.map((m) => m.minHeight))
+    const commonMaxH = commonNum(selected.map((m) => m.maxHeight))
+    const commonMaxSpd = commonNum(selected.map((m) => m.maxSpeedCms), 0.5)
+    const commonDefSpd = commonNum(selected.map((m) => m.defaultSpeed), 0)
+
+    const tfCommon = (field: keyof Transform3D, idx: 0 | 1 | 2): number | null =>
+      commonNum(
+        selected.map((m) => Number(((m.transform ?? defaultModuleTransform())[field][idx]).toFixed(2))),
+      )
+
+    const frame = snapshot?.frame ?? []
+    const posCmVals = selected.map((m) => Math.round((snapshot?.modules[m.id]?.pos ?? 0) * 100))
+    const tgtCmVals = selected.map((m) => Math.round((snapshot?.modules[m.id]?.target ?? 0) * 100))
+    const commonPosCm = commonNum(posCmVals, 0)
+    const commonTgtCm = commonNum(tgtCmVals, 0)
+    const chVals = (offset: number) =>
+      commonNum(
+        selected.map((m) => frame[m.startAddress - 1 + offset] ?? 0),
+        0,
+      )
+
+    const commitModBatch = (key: string, fn: (raw: string) => string | null) => {
+      if (draftModField?.key !== `${modGroupKey}:${key}`) return
+      const raw = draftModField.raw
+      setDraftModField(null)
+      if (!raw.trim()) return
+      const err = fn(raw)
+      setGroupModError(err)
+      if (err) notify(err, 'warn')
+    }
+
+    const renderNumField = (
+      fieldKey: string,
+      label: string,
+      commonVal: number | null,
+      opts: { step?: string; min?: string; max?: string; onCommit: (num: number) => string | null },
+    ) => {
+      const fullKey = `${modGroupKey}:${fieldKey}`
+      const isEditing = draftModField?.key === fullKey
+      return (
+        <label className="space-y-1">
+          <span className="text-[11px] text-[#C2B3A4]">{label}</span>
+          <input
+            type="number"
+            step={opts.step}
+            min={opts.min}
+            max={opts.max}
+            placeholder={commonVal === null ? '—' : undefined}
+            aria-label={label}
+            value={isEditing ? draftModField.raw : commonVal !== null ? String(commonVal) : ''}
+            onFocus={() => setDraftModField({ key: fullKey, raw: commonVal !== null ? String(commonVal) : '' })}
+            onChange={(e) => setDraftModField({ key: fullKey, raw: e.target.value })}
+            onBlur={() =>
+              commitModBatch(fieldKey, (raw) => {
+                const n = Number(raw)
+                return Number.isFinite(n) ? opts.onCommit(n) : null
+              })
+            }
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            }}
+            className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums placeholder:text-muted/60"
+          />
+        </label>
+      )
+    }
+
+    const axes = ['X', 'Y', 'Z'] as const
+
     return (
-      <div className="space-y-3 overflow-y-auto pr-0.5 text-xs">
+      <div className="space-y-3.5 overflow-y-auto pr-0.5 text-xs">
         <div className="flex items-center justify-between gap-2">
           <span className="kiln-chip acc">Đang chọn {selected.length} module</span>
+        </div>
+
+        <div className="space-y-2.5 border-b border-line pb-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">Transform 3D</span>
+            <button
+              type="button"
+              onClick={() => {
+                setGroupModError(null)
+                updateModulesBatch(selectedIdsList, { resetTransform: true })
+              }}
+              title="Đưa Position / Rotation / Scale về mặc định cho tất cả module đang chọn"
+              className="kiln-btn h-6 px-2 text-[10.5px] text-[#C2B3A4]"
+            >
+              <RotateCcw size={11} />
+              Mặc định
+            </button>
+          </div>
+
+          {(
+            [
+              ['position', 'Vị trí World (m)', 0.1],
+              ['rotation', 'Xoay (°)', 5],
+              ['scale', 'Tỉ lệ (Scale)', 0.1],
+            ] as const
+          ).map(([field, label, step]) => (
+            <div key={field} className="space-y-1">
+              <div className="flex items-center justify-between text-[11px] text-[#C2B3A4]">
+                <span>{label}</span>
+                {field === 'position' && <span className="text-[10px] text-[#FFB26B]">Y dính vào Layer</span>}
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {axes.map((ax, idx) => {
+                  const disabled = field === 'position' && idx === 1
+                  const commonAxis = disabled ? 0 : tfCommon(field, idx as 0 | 1 | 2)
+                  const tfKey = `${modGroupKey}:tf:${field}:${idx}`
+                  const isEditing = draftModField?.key === tfKey
+                  return (
+                    <label key={ax} className="kiln-field flex h-7 items-center gap-1 px-2">
+                      <span className="text-[10px] font-semibold text-muted">{ax}</span>
+                      <input
+                        type="number"
+                        step={step}
+                        disabled={disabled}
+                        placeholder={commonAxis === null ? '—' : undefined}
+                        aria-label={`${label} ${ax}`}
+                        value={isEditing ? draftModField.raw : commonAxis !== null ? String(commonAxis) : ''}
+                        onFocus={() =>
+                          setDraftModField({ key: tfKey, raw: commonAxis !== null ? String(commonAxis) : '' })
+                        }
+                        onChange={(e) => setDraftModField({ key: tfKey, raw: e.target.value })}
+                        onBlur={() =>
+                          commitModBatch(`tf:${field}:${idx}`, (raw) => {
+                            const n = Number(raw)
+                            return Number.isFinite(n)
+                              ? updateModulesBatch(selectedIdsList, {
+                                  transformAxis: { field, index: idx as 0 | 1 | 2, value: n },
+                                })
+                              : null
+                          })
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                        }}
+                        className="min-w-0 flex-1 bg-transparent text-right text-[11.5px] text-fg tabular-nums outline-none placeholder:text-muted/60 disabled:opacity-45"
+                      />
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <label className="block space-y-1">
+          <span className="text-[11px] text-[#C2B3A4]">Tên module (thêm số thứ tự tự động)</span>
+          <input
+            placeholder={commonName === null ? '—' : undefined}
+            aria-label="Tên module nhóm"
+            value={
+              draftModField?.key === `${modGroupKey}:name`
+                ? draftModField.raw
+                : commonName ?? ''
+            }
+            onFocus={() => setDraftModField({ key: `${modGroupKey}:name`, raw: commonName ?? '' })}
+            onChange={(e) => setDraftModField({ key: `${modGroupKey}:name`, raw: e.target.value })}
+            onBlur={() =>
+              commitModBatch('name', (raw) => updateModulesBatch(selectedIdsList, { nameBase: raw }))
+            }
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            }}
+            className="kiln-field h-8 w-full px-2.5 text-xs placeholder:text-muted/60"
+          />
+        </label>
+
+        <label className="block space-y-1">
+          <span className="text-[11px] text-[#C2B3A4]">Lớp (Layer)</span>
+          <select
+            aria-label="Lớp (Layer) nhóm"
+            value={commonLayerId}
+            onChange={(e) => {
+              if (!e.target.value) return
+              const err = updateModulesBatch(selectedIdsList, { layerId: e.target.value })
+              setGroupModError(err)
+              if (err) notify(err, 'warn')
+            }}
+            className="kiln-field h-8 w-full px-2 text-xs"
+          >
+            {commonLayerId === '' && (
+              <option value="" disabled>
+                —
+              </option>
+            )}
+            {project.layers.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="space-y-2 border-t border-line pt-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">
+              DMX (UNI {project.settings.output.universe})
+            </span>
+            <button
+              type="button"
+              onClick={() => setAddressMode(isAuto ? 'manual' : 'auto')}
+              className="text-[11px] text-[#FFB26B] hover:underline"
+            >
+              {isAuto ? 'Mở nhập tay' : 'Đặt lại tự động'}
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min="1"
+              max="509"
+              disabled={isAuto}
+              placeholder={commonAddr === null ? '—' : undefined}
+              aria-label="Địa chỉ DMX bắt đầu nhóm"
+              value={
+                draftModField?.key === `${modGroupKey}:addr`
+                  ? draftModField.raw
+                  : commonAddr !== null
+                    ? String(commonAddr)
+                    : ''
+              }
+              onFocus={() =>
+                setDraftModField({ key: `${modGroupKey}:addr`, raw: commonAddr !== null ? String(commonAddr) : '' })
+              }
+              onChange={(e) => {
+                setGroupModError(null)
+                setDraftModField({ key: `${modGroupKey}:addr`, raw: e.target.value })
+              }}
+              onBlur={() =>
+                commitModBatch('addr', (raw) => {
+                  const n = Number(raw)
+                  return Number.isFinite(n) ? updateModulesBatch(selectedIdsList, { startAddressBase: n }) : null
+                })
+              }
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+              }}
+              className="kiln-field h-8 w-24 px-2.5 text-xs tabular-nums placeholder:text-muted/60 disabled:opacity-55"
+            />
+            <span className="text-[11px] text-muted tabular-nums">
+              {commonAddr !== null ? `Kênh ${commonAddr}–${commonAddr + 3}` : 'Kênh —'}
+            </span>
+          </div>
+          {groupModError && <p className="text-[11px] text-danger">{groupModError}</p>}
           <button
             type="button"
-            onClick={() => setModulesDmxLoop(selected.map((m) => m.id), !allLoop)}
+            onClick={() => setModulesDmxLoop(selectedIdsList, !allLoop)}
             title="Dùng chung 4 kênh DMX cho các module trong cùng Layer"
-            className={`kiln-btn h-7 px-2.5 text-[11px] ${allLoop ? 'kiln-btn-primary' : 'text-[#C2B3A4]'}`}
+            className={`kiln-btn h-7 w-full justify-start px-2.5 text-[11px] ${
+              allLoop ? 'kiln-btn-primary' : 'text-[#C2B3A4]'
+            }`}
           >
             <Link2 size={12} />
-            {allLoop ? 'Loop DMX: Bật' : 'Loop DMX (4CH)'}
+            {allLoop ? 'Loop DMX: Bật' : someLoop ? 'Loop DMX: —' : 'Loop DMX (Dùng chung 4 kênh)'}
           </button>
         </div>
 
         <div className="grid grid-cols-2 gap-2 border-t border-line pt-3">
-          <label className="space-y-1">
-            <span className="text-[11px] text-[#C2B3A4]">Min chiều cao (m)</span>
-            <input
-              type="number"
-              step="0.1"
-              min="0"
-              defaultValue={first.minHeight}
-              onBlur={(e) => {
-                const v = Number(e.target.value)
-                if (!Number.isNaN(v)) {
-                  selected.forEach((m) => updateModule(m.id, { minHeight: v }))
-                  notify(`Đã đặt Min = ${v}m cho ${selected.length} module`, 'info')
-                }
-              }}
-              className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
-            />
-          </label>
-
-          <label className="space-y-1">
-            <span className="text-[11px] text-[#C2B3A4]">Max chiều cao (m)</span>
-            <input
-              type="number"
-              step="0.1"
-              min="0.2"
-              defaultValue={first.maxHeight}
-              onBlur={(e) => {
-                const v = Number(e.target.value)
-                if (!Number.isNaN(v)) {
-                  selected.forEach((m) => updateModule(m.id, { maxHeight: v }))
-                  notify(`Đã đặt Max = ${v}m cho ${selected.length} module`, 'info')
-                }
-              }}
-              className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
-            />
-          </label>
+          {renderNumField('length', 'Dài max (m)', commonLength, {
+            step: '0.1',
+            min: '0.2',
+            onCommit: (v) => updateModulesBatch(selectedIdsList, { length: v }),
+          })}
+          {renderNumField('width', 'Rộng 3D (m)', commonWidth, {
+            step: '0.1',
+            min: '0.2',
+            onCommit: (v) => updateModulesBatch(selectedIdsList, { width: v }),
+          })}
+          {renderNumField('minHeight', 'Min chiều cao (m)', commonMinH, {
+            step: '0.1',
+            min: '0',
+            onCommit: (v) => updateModulesBatch(selectedIdsList, { minHeight: v }),
+          })}
+          {renderNumField('maxHeight', 'Max chiều cao (m)', commonMaxH, {
+            step: '0.1',
+            min: '0.2',
+            onCommit: (v) => updateModulesBatch(selectedIdsList, { maxHeight: v }),
+          })}
         </div>
 
         <div className="grid grid-cols-2 gap-2 border-t border-line pt-3">
-          <label className="space-y-1">
-            <span className="text-[11px] text-[#C2B3A4]">Tốc độ tối đa (cm/s)</span>
-            <input
-              type="number"
-              min="10"
-              max="500"
-              defaultValue={first.maxSpeedCms}
-              onBlur={(e) => {
-                const v = Number(e.target.value)
-                if (!Number.isNaN(v)) {
-                  selected.forEach((m) => updateModule(m.id, { maxSpeedCms: v }))
-                  notify(`Đã đặt tốc độ tối đa = ${v} cm/s`, 'info')
-                }
-              }}
-              className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
-            />
-          </label>
-          <label className="space-y-1">
-            <span className="text-[11px] text-[#C2B3A4]">CH3 mặc định</span>
-            <input
-              type="number"
-              min="1"
-              max="255"
-              defaultValue={first.defaultSpeed}
-              onBlur={(e) => {
-                const v = Number(e.target.value)
-                if (!Number.isNaN(v)) {
-                  selected.forEach((m) => updateModule(m.id, { defaultSpeed: v }))
-                  notify(`Đã đặt CH3 mặc định = ${v}`, 'info')
-                }
-              }}
-              className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
-            />
-          </label>
+          {renderNumField('maxSpeedCms', 'Tốc độ max (cm/s)', commonMaxSpd, {
+            min: '10',
+            max: '500',
+            onCommit: (v) => updateModulesBatch(selectedIdsList, { maxSpeedCms: v }),
+          })}
+          {renderNumField('defaultSpeed', 'CH3 mặc định', commonDefSpd, {
+            min: '1',
+            max: '255',
+            onCommit: (v) => updateModulesBatch(selectedIdsList, { defaultSpeed: v }),
+          })}
+        </div>
+
+        <div className="space-y-2 border-t border-line pt-3">
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="font-semibold tracking-wide text-muted uppercase">Giám sát 4 kênh DMX</span>
+            <span className="text-[#C2B3A4] tabular-nums">
+              {commonPosCm !== null ? commonPosCm : '—'} → {commonTgtCm !== null ? commonTgtCm : '—'} cm
+            </span>
+          </div>
+          <div className="grid grid-cols-4 gap-1.5 text-center text-[11px] tabular-nums">
+            {(
+              [
+                ['CH1 Pos', chVals(CH.POSITION)],
+                ['CH2 Fine', chVals(CH.FINE)],
+                ['CH3 Spd', chVals(CH.SPEED)],
+                ['CH4 Lock', chVals(CH.LOCK)],
+              ] as const
+            ).map(([label, v]) => (
+              <div key={label} className="rounded-lg border border-line bg-[#16100C] p-1.5">
+                <div className="text-[10px] text-muted">{label}</div>
+                <div className="font-semibold text-fg">{v !== null ? v : '—'}</div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     )
@@ -951,7 +1582,19 @@ export function PropertiesPanel() {
       </label>
 
       <label className="space-y-1">
-        <span className="text-[11px] text-[#C2B3A4]">Lớp (Layer)</span>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] text-[#C2B3A4]">Lớp (Layer)</span>
+          {project.layers.find((l) => l.id === single.layerId)?.syncLayer && (
+            <button
+              type="button"
+              onClick={() => syncLayerFromModule(single.layerId, single.id)}
+              title="Đồng bộ các module còn lại trong Layer theo module đang chọn"
+              className="cursor-pointer rounded-full bg-brand/20 px-2 py-0.5 text-[10px] font-semibold text-[#FFB26B] hover:bg-brand/30"
+            >
+              Sync theo module này
+            </button>
+          )}
+        </div>
         <select
           value={single.layerId}
           onChange={(e) => updateModule(single.id, { layerId: e.target.value })}

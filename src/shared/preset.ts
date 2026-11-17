@@ -1,7 +1,143 @@
 import { autoAssign } from './addressing'
 import { ARTNET_PORT, DEFAULT_SPEED, DEFAULT_TARGET_IP, H2_MAX_SPEED_CMS, LOCK_VALUE } from './dmx'
-import { syncModuleClipsContinuity } from './timeline'
-import type { Layer, ModuleCfg, Project, Settings, TimelineClip, Transform3D } from './types'
+import type {
+  ClipKeyframe,
+  CueButton,
+  CueStep,
+  DriverId,
+  Fps,
+  Layer,
+  ModuleCfg,
+  OutputSettings,
+  Project,
+  Settings,
+  TimelineClip,
+  TimelineKey,
+  Transform3D,
+} from './types'
+
+const VALID_DRIVERS = new Set<DriverId>(['artnet', 'sacn', 'kinet', 'enttec-pro', 'enttec-mk2', 'serial', 'mock'])
+const VALID_FPS = new Set<Fps>([24, 25, 29.97, 30])
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+function failProject(msg: string): never {
+  throw new Error(`Dự án không hợp lệ: ${msg}`)
+}
+
+function reqString(v: unknown, label: string, allowEmpty = true): string {
+  if (typeof v !== 'string') failProject(`${label} phải là chuỗi`)
+  if (!allowEmpty && v.trim().length === 0) failProject(`${label} không được rỗng`)
+  return v
+}
+
+function reqFinite(v: unknown, label: string, min?: number, max?: number, integer = false): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) failProject(`${label} phải là số hữu hạn`)
+  if (integer && !Number.isInteger(v)) failProject(`${label} phải là số nguyên`)
+  if (min !== undefined && v < min) failProject(`${label} nhỏ hơn ${min}`)
+  if (max !== undefined && v > max) failProject(`${label} lớn hơn ${max}`)
+  return v
+}
+
+function reqOptionalBool(v: unknown, label: string, fallback: boolean): boolean {
+  if (v === undefined) return fallback
+  if (typeof v !== 'boolean') failProject(`${label} phải là boolean`)
+  return v
+}
+
+function validateTransform(v: unknown, label: string, fallback: Transform3D): Transform3D {
+  if (v === undefined) return fallback
+  if (!isRecord(v)) failProject(`${label} phải là object Transform3D`)
+  const readTuple = (arr: unknown, axisLabel: string, minVal?: number): [number, number, number] => {
+    if (!Array.isArray(arr) || arr.length !== 3) failProject(`${axisLabel} phải gồm 3 phần tử`)
+    return [
+      reqFinite(arr[0], `${axisLabel}[0]`, minVal),
+      reqFinite(arr[1], `${axisLabel}[1]`, minVal),
+      reqFinite(arr[2], `${axisLabel}[2]`, minVal),
+    ]
+  }
+  return {
+    position: readTuple(v.position, `${label}.position`),
+    rotation: readTuple(v.rotation, `${label}.rotation`),
+    scale: readTuple(v.scale, `${label}.scale`, 0.01),
+  }
+}
+
+function validateSettings(rawSettings: unknown): Settings {
+  if (!isRecord(rawSettings)) failProject('thiếu hoặc sai settings')
+  if (!isRecord(rawSettings.output)) failProject('thiếu hoặc sai settings.output')
+  const rawOut = rawSettings.output
+  const driver = rawOut.driver as DriverId
+  if (!VALID_DRIVERS.has(driver)) failProject('settings.output.driver không hợp lệ')
+  const output: OutputSettings = {
+    driver,
+    ip: reqString(rawOut.ip, 'settings.output.ip'),
+    port: reqFinite(rawOut.port, 'settings.output.port', 1, 65535, true),
+    net: reqFinite(rawOut.net, 'settings.output.net', 0, 127, true),
+    subnet: reqFinite(rawOut.subnet, 'settings.output.subnet', 0, 15, true),
+    universe: reqFinite(rawOut.universe, 'settings.output.universe', 0, 15, true),
+    sendHz: reqFinite(rawOut.sendHz, 'settings.output.sendHz', 1, 120),
+  }
+  if (rawOut.sacnUniverse !== undefined) {
+    output.sacnUniverse = reqFinite(rawOut.sacnUniverse, 'settings.output.sacnUniverse', 1, 63999, true)
+  }
+  if (rawOut.sacnPriority !== undefined) {
+    output.sacnPriority = reqFinite(rawOut.sacnPriority, 'settings.output.sacnPriority', 0, 200, true)
+  }
+  if (rawOut.sacnMulticast !== undefined) {
+    output.sacnMulticast = reqOptionalBool(rawOut.sacnMulticast, 'settings.output.sacnMulticast', true)
+  }
+  if (rawOut.kinetVersion !== undefined) {
+    if (rawOut.kinetVersion !== 1 && rawOut.kinetVersion !== 2) failProject('settings.output.kinetVersion phải là 1 hoặc 2')
+    output.kinetVersion = rawOut.kinetVersion
+  }
+  if (rawOut.kinetPort !== undefined) {
+    output.kinetPort = reqFinite(rawOut.kinetPort, 'settings.output.kinetPort', 1, 16, true)
+  }
+  if (rawOut.serialPort !== undefined) {
+    output.serialPort = reqString(rawOut.serialPort, 'settings.output.serialPort')
+  }
+  if (rawOut.baudRate !== undefined) {
+    output.baudRate = reqFinite(rawOut.baudRate, 'settings.output.baudRate', 1, 10000000, true)
+  }
+  if (rawOut.enttecMk2Port !== undefined) {
+    if (rawOut.enttecMk2Port !== 1 && rawOut.enttecMk2Port !== 2) failProject('settings.output.enttecMk2Port phải là 1 hoặc 2')
+    output.enttecMk2Port = rawOut.enttecMk2Port
+  }
+  if (rawOut.serialFormat !== undefined) {
+    if (rawOut.serialFormat !== 'raw' && rawOut.serialFormat !== 'enttec' && rawOut.serialFormat !== 'ascii') {
+      failProject('settings.output.serialFormat không hợp lệ')
+    }
+    output.serialFormat = rawOut.serialFormat
+  }
+
+  const addressMode = rawSettings.addressMode
+  if (addressMode !== 'auto' && addressMode !== 'manual') failProject('settings.addressMode không hợp lệ')
+  const lockValue = reqFinite(rawSettings.lockValue, 'settings.lockValue', 0, 255, true)
+
+  if (!isRecord(rawSettings.ltc)) failProject('thiếu hoặc sai settings.ltc')
+  const rawLtc = rawSettings.ltc
+  if (rawLtc.channel !== 'left' && rawLtc.channel !== 'right') failProject('settings.ltc.channel không hợp lệ')
+  const ltc: Settings['ltc'] = {
+    deviceId: reqString(rawLtc.deviceId, 'settings.ltc.deviceId'),
+    channel: rawLtc.channel,
+    freewheelFrames: reqFinite(rawLtc.freewheelFrames, 'settings.ltc.freewheelFrames', 0, 600),
+    offsetFrames: reqFinite(rawLtc.offsetFrames, 'settings.ltc.offsetFrames', -600, 600),
+  }
+
+  if (!isRecord(rawSettings.timeline)) failProject('thiếu hoặc sai settings.timeline')
+  const rawTl = rawSettings.timeline
+  const fps = rawTl.fps as Fps
+  if (!VALID_FPS.has(fps)) failProject('settings.timeline.fps không hợp lệ')
+  const timeline: Settings['timeline'] = {
+    startTime: reqFinite(rawTl.startTime, 'settings.timeline.startTime', 0),
+    fps,
+  }
+
+  return { output, addressMode, lockValue, ltc, timeline }
+}
 
 export function defaultLayerTransform(index: number): Transform3D {
   const z = index === 0 ? 1.2 : index === 1 ? -1.4 : -1.4 - (index - 1) * 2.2
@@ -12,29 +148,134 @@ export function defaultModuleTransform(): Transform3D {
   return { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }
 }
 
-export function normalizeProject(p: Project): Project {
-  const layers: Layer[] = p.layers.map((l, idx) => ({
-    ...l,
-    visible: l.visible ?? true,
-    syncLayer: l.syncLayer ?? false,
-    transform: l.transform ?? defaultLayerTransform(idx),
-  }))
-  const modules: ModuleCfg[] = p.modules.map((m) => ({
-    ...m,
-    visible: m.visible ?? true,
-    dmxLoop: m.dmxLoop ?? false,
-    transform: m.transform ?? defaultModuleTransform(),
-  }))
-  let clips: TimelineClip[] = p.clips ?? []
-  const modIds = new Set(clips.map((c) => c.moduleId))
-  for (const modId of modIds) {
-    clips = syncModuleClipsContinuity(clips, modId)
+export function normalizeProject(raw: unknown): Project {
+  if (!isRecord(raw) || raw.version !== 1) failProject('version phải bằng 1')
+  if (!Array.isArray(raw.layers)) failProject('thiếu mảng layers')
+  if (!Array.isArray(raw.modules)) failProject('thiếu mảng modules')
+
+  const settings = validateSettings(raw.settings)
+
+  const layers: Layer[] = raw.layers.map((item, idx) => {
+    if (!isRecord(item)) failProject(`layers[${idx}] phải là object`)
+    return {
+      id: reqString(item.id, `layers[${idx}].id`, false),
+      name: reqString(item.name, `layers[${idx}].name`),
+      visible: reqOptionalBool(item.visible, `layers[${idx}].visible`, true),
+      syncLayer: reqOptionalBool(item.syncLayer, `layers[${idx}].syncLayer`, false),
+      transform: validateTransform(item.transform, `layers[${idx}].transform`, defaultLayerTransform(idx)),
+    }
+  })
+
+  const modules: ModuleCfg[] = raw.modules.map((item, idx) => {
+    if (!isRecord(item)) failProject(`modules[${idx}] phải là object`)
+    const length = reqFinite(item.length, `modules[${idx}].length`, 0.2, 500)
+    const width = reqFinite(item.width, `modules[${idx}].width`, 0.2, 500)
+    const minHeight = reqFinite(item.minHeight, `modules[${idx}].minHeight`, 0, length)
+    const maxHeight = reqFinite(item.maxHeight, `modules[${idx}].maxHeight`, minHeight, length + 1e-6)
+    return {
+      id: reqString(item.id, `modules[${idx}].id`, false),
+      name: reqString(item.name, `modules[${idx}].name`),
+      layerId: reqString(item.layerId, `modules[${idx}].layerId`, false),
+      visible: reqOptionalBool(item.visible, `modules[${idx}].visible`, true),
+      dmxLoop: reqOptionalBool(item.dmxLoop, `modules[${idx}].dmxLoop`, false),
+      transform: validateTransform(item.transform, `modules[${idx}].transform`, defaultModuleTransform()),
+      length,
+      width,
+      minHeight,
+      maxHeight: Math.min(length, maxHeight),
+      startAddress: reqFinite(item.startAddress, `modules[${idx}].startAddress`, 1, 509, true),
+      maxSpeedCms: reqFinite(item.maxSpeedCms, `modules[${idx}].maxSpeedCms`, 1, 10000),
+      defaultSpeed: reqFinite(item.defaultSpeed, `modules[${idx}].defaultSpeed`, 1, 255, true),
+    }
+  })
+
+  let buttons: CueButton[] = []
+  if (raw.buttons !== undefined) {
+    if (!Array.isArray(raw.buttons)) failProject('buttons phải là mảng')
+    buttons = raw.buttons.map((b, idx) => {
+      if (!isRecord(b)) failProject(`buttons[${idx}] phải là object`)
+      if (b.speedUnit !== 'cms' && b.speedUnit !== 'sec') failProject(`buttons[${idx}].speedUnit không hợp lệ`)
+      if (!Array.isArray(b.steps)) failProject(`buttons[${idx}].steps phải là mảng`)
+      const steps: CueStep[] = b.steps.map((s, sIdx) => {
+        if (!isRecord(s)) failProject(`buttons[${idx}].steps[${sIdx}] phải là object`)
+        return {
+          moduleId: reqString(s.moduleId, `buttons[${idx}].steps[${sIdx}].moduleId`, false),
+          position: reqFinite(s.position, `buttons[${idx}].steps[${sIdx}].position`, 0),
+        }
+      })
+      return {
+        id: reqString(b.id, `buttons[${idx}].id`, false),
+        name: reqString(b.name, `buttons[${idx}].name`),
+        steps,
+        speedUnit: b.speedUnit,
+        speedValue: reqFinite(b.speedValue, `buttons[${idx}].speedValue`, 0.01),
+      }
+    })
   }
+
+  let keys: TimelineKey[] = []
+  if (raw.keys !== undefined) {
+    if (!Array.isArray(raw.keys)) failProject('keys phải là mảng')
+    keys = raw.keys.map((k, idx) => {
+      if (!isRecord(k)) failProject(`keys[${idx}] phải là object`)
+      if (!isRecord(k.targets)) failProject(`keys[${idx}].targets phải là object`)
+      const targets: Record<string, number> = {}
+      for (const [mId, val] of Object.entries(k.targets)) {
+        targets[mId] = reqFinite(val, `keys[${idx}].targets.${mId}`, 0)
+      }
+      return {
+        id: reqString(k.id, `keys[${idx}].id`, false),
+        time: reqFinite(k.time, `keys[${idx}].time`, 0),
+        targets,
+      }
+    })
+  }
+
+  let clips: TimelineClip[] = []
+  if (raw.clips !== undefined) {
+    if (!Array.isArray(raw.clips)) failProject('clips phải là mảng')
+    clips = raw.clips.map((c, idx) => {
+      if (!isRecord(c)) failProject(`clips[${idx}] phải là object`)
+      if (c.curveMode !== undefined && c.curveMode !== 'smooth' && c.curveMode !== 'linear') {
+        failProject(`clips[${idx}].curveMode không hợp lệ`)
+      }
+      if (!Array.isArray(c.keyframes) || c.keyframes.length === 0) {
+        failProject(`clips[${idx}].keyframes phải có ít nhất 1 điểm`)
+      }
+      const duration = reqFinite(c.duration, `clips[${idx}].duration`, 0.05)
+      const keyframes: ClipKeyframe[] = c.keyframes.map((kf, kIdx) => {
+        if (!isRecord(kf)) failProject(`clips[${idx}].keyframes[${kIdx}] phải là object`)
+        return {
+          id: reqString(kf.id, `clips[${idx}].keyframes[${kIdx}].id`, false),
+          offset: Math.min(duration, reqFinite(kf.offset, `clips[${idx}].keyframes[${kIdx}].offset`, 0, duration + 0.05)),
+          height: reqFinite(kf.height, `clips[${idx}].keyframes[${kIdx}].height`, 0),
+        }
+      })
+      return {
+        id: reqString(c.id, `clips[${idx}].id`, false),
+        layerId: reqString(c.layerId, `clips[${idx}].layerId`, false),
+        moduleId: reqString(c.moduleId, `clips[${idx}].moduleId`, false),
+        startTime: reqFinite(c.startTime, `clips[${idx}].startTime`, 0),
+        duration,
+        curveMode: c.curveMode,
+        keyframes,
+      }
+    })
+  }
+
+  clips = clips.map((c) => ({
+    ...c,
+    keyframes: [...c.keyframes].sort((a, b) => a.offset - b.offset),
+  }))
+
   return {
-    ...p,
+    version: 1,
     layers,
     modules,
+    buttons,
+    keys,
     clips,
+    settings,
   }
 }
 
@@ -64,7 +305,7 @@ export function createBlankProject(baseSettings?: Settings): Project {
           net: 0,
           subnet: 0,
           universe: 0,
-          sendHz: 40,
+          sendHz: 25,
         },
         addressMode: 'auto',
         lockValue: LOCK_VALUE,
@@ -196,7 +437,7 @@ export function createDefaultProject(): Project {
         net: 0,
         subnet: 0,
         universe: 0,
-        sendHz: 40,
+        sendHz: 25,
       },
       addressMode: 'auto',
       lockValue: LOCK_VALUE,

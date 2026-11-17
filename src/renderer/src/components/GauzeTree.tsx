@@ -15,6 +15,7 @@ import {
   Link2,
   Plus,
   RefreshCw,
+  Square,
   Trash2,
 } from 'lucide-react'
 import { conflictMap } from '@shared/addressing'
@@ -27,7 +28,10 @@ type ContextMenuState =
   | { kind: 'module'; x: number; y: number; mod: ModuleCfg }
   | null
 
-export function GauzeTree() {
+export function GauzeTree(props: {
+  overrideState?: Partial<ReturnType<typeof useAppStore.getState>>
+}) {
+  const storeState = useAppStore()
   const {
     project,
     selectedIds,
@@ -44,6 +48,7 @@ export function GauzeTree() {
     selectModule,
     selectLayer,
     selectAll,
+    deselectAll,
     addModule,
     removeModule,
     duplicateModule,
@@ -53,7 +58,7 @@ export function GauzeTree() {
     setAddressMode,
     reAutoAssign,
     notify,
-  } = useAppStore()
+  } = props.overrideState ? { ...storeState, ...props.overrideState } : storeState
 
   const [renamingLayerId, setRenamingLayerId] = useState<string | null>(null)
   const [renamingModId, setRenamingModId] = useState<string | null>(null)
@@ -79,6 +84,7 @@ export function GauzeTree() {
 
   const conflicts = conflictMap(project.modules)
   const isAuto = project.settings.addressMode === 'auto'
+  const allSelected = project.modules.length > 0 && project.modules.every((m) => selectedIds.includes(m.id))
 
   const quickAddLayer = () => {
     const newId = `layer-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`
@@ -125,12 +131,12 @@ export function GauzeTree() {
       <div className="flex items-center justify-between gap-1 pb-1">
         <button
           type="button"
-          onClick={selectAll}
-          title="Chọn tất cả module màn"
-          className="kiln-btn kiln-btn-cue h-6 px-2.5 text-[11px]"
+          onClick={allSelected ? deselectAll : selectAll}
+          title={allSelected ? 'Bỏ chọn tất cả module màn' : 'Chọn tất cả module màn'}
+          className={`kiln-btn h-6 px-2.5 text-[11px] ${allSelected ? 'text-[#FFB26B]' : 'kiln-btn-cue'}`}
         >
-          <CheckSquare size={12} aria-hidden />
-          Chọn hết ({project.modules.length})
+          {allSelected ? <Square size={12} aria-hidden /> : <CheckSquare size={12} aria-hidden />}
+          {allSelected ? 'Bỏ chọn hết' : `Chọn hết (${project.modules.length})`}
         </button>
 
         <div className="flex items-center gap-1">

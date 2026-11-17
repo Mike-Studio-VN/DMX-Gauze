@@ -2,6 +2,7 @@ import dgram from 'node:dgram'
 import { buildArtDmx, buildArtPoll, parseArtPollReply } from '@shared/artnet'
 import type { DriverEvents, OutputDriver } from '@shared/drivers'
 import type { OutputSettings } from '@shared/types'
+import { UdpSocketLifecycle } from './udpSocketLifecycle'
 
 /**
  * Driver Art-Net qua UDP (cổng 6454 mặc định).
@@ -9,8 +10,7 @@ import type { OutputSettings } from '@shared/types'
  */
 export class ArtNetDriver implements OutputDriver {
   readonly id = 'artnet' as const
-  private sock: dgram.Socket | null = null
-  private ready = false
+  private readonly life = new UdpSocketLifecycle()
   private seq = 0
 
   constructor(
@@ -20,10 +20,10 @@ export class ArtNetDriver implements OutputDriver {
 
   start(): void {
     const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true })
-    this.sock = sock
+    this.life.attach(sock)
 
     sock.on('error', (err) => {
-      this.ev.onError(`Lỗi UDP Art-Net: ${err.message}`)
+      if (!this.life.closing) this.ev.onError(`Lỗi UDP Art-Net: ${err.message}`)
     })
 
     sock.on('message', (msg, rinfo) => {
@@ -40,44 +40,51 @@ export class ArtNetDriver implements OutputDriver {
     sock.bind(this.cfg.port, () => {
       try {
         sock.setBroadcast(true)
-        this.ready = true
+        if (!this.life.markReady()) return
         this.ev.onError(null)
         this.ev.onWarn(null)
       } catch (err) {
-        this.ev.onError(`Không bật được broadcast: ${(err as Error).message}`)
+        if (!this.life.closing) {
+          this.ev.onError(`Không bật được broadcast: ${(err as Error).message}`)
+        }
       }
     })
   }
 
   send(net: number, subUni: number, data: Uint8Array): void {
-    if (!this.sock || !this.ready) return
-    this.seq = (this.seq % 255) + 1
-    const subnet = (subUni >> 4) & 0x0f
-    const universe = subUni & 0x0f
-    const pkt = buildArtDmx(this.seq, net, subnet, universe, data)
-    this.sock.send(pkt, this.cfg.port, this.cfg.ip, (err) => {
-      if (err) this.ev.onError(`Gửi ArtDmx thất bại: ${err.message}`)
-      else this.ev.onError(null)
-    })
+    this.life.trackSend(
+      (sock, done) => {
+        this.seq = (this.seq % 255) + 1
+        const subnet = (subUni >> 4) & 0x0f
+        const universe = subUni & 0x0f
+        const pkt = buildArtDmx(this.seq, net, subnet, universe, data)
+        sock.send(pkt, this.cfg.port, this.cfg.ip, (err) => {
+          const closing = this.life.closing
+          done()
+          if (closing) return
+          if (err) this.ev.onError(`Gửi ArtDmx thất bại: ${err.message}`)
+          else this.ev.onError(null)
+        })
+      },
+      (err) => {
+        if (!this.life.closing) this.ev.onError(`Gửi ArtDmx thất bại: ${(err as Error).message}`)
+      },
+    )
   }
 
   poll(): void {
-    if (!this.sock || !this.ready) return
-    const pkt = buildArtPoll()
-    this.sock.send(pkt, this.cfg.port, this.cfg.ip, (err) => {
-      if (err) this.ev.onWarn(`ArtPoll lỗi: ${err.message}`)
+    this.life.trackSend((sock, done) => {
+      const pkt = buildArtPoll()
+      sock.send(pkt, this.cfg.port, this.cfg.ip, (err) => {
+        const closing = this.life.closing
+        done()
+        if (closing) return
+        if (err) this.ev.onWarn(`ArtPoll lỗi: ${err.message}`)
+      })
     })
   }
 
   stop(): void {
-    this.ready = false
-    if (this.sock) {
-      try {
-        this.sock.close()
-      } catch {
-        /* ignore */
-      }
-      this.sock = null
-    }
+    this.life.stop()
   }
 }

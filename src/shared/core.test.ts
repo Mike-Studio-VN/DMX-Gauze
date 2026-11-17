@@ -51,4 +51,95 @@ describe('GauzeCore', () => {
     expect(lastDriver!.sent).toBeGreaterThan(0)
     core.stop()
   })
+
+  it('xoá sạch byte DMX cũ khi xoá module, đổi địa chỉ, đổi output/route hoặc dừng (P1 safety)', () => {
+    let now = 2000
+    const sentFrames: Array<{ net: number; subUni: number; data: Uint8Array }> = []
+    const drivers: Array<{ stopped: boolean }> = []
+    const core = new GauzeCore((_cfg, ev) => {
+      const state = { stopped: false }
+      drivers.push(state)
+      const inner = new MockDriver(ev)
+      return {
+        id: 'mock',
+        start: () => inner.start(),
+        send: (net, subUni, data) => {
+          inner.send(net, subUni, data)
+          sentFrames.push({ net, subUni, data: data.slice() })
+        },
+        poll: () => inner.poll(),
+        stop: () => {
+          state.stopped = true
+          inner.stop()
+        },
+      }
+    }, () => now)
+
+    const p = createDefaultProject()
+    const modA = { ...p.modules[0], id: 'mA', startAddress: 1 } // CH 1-4 (idx 0..3)
+    const modB = { ...p.modules[1], id: 'mB', startAddress: 5 } // CH 5-8 (idx 4..7)
+    core.configure({ modules: [modA, modB], output: p.settings.output, lockValue: LOCK_VALUE })
+    core.start()
+    core.command({ type: 'lock', locked: false })
+    core.command({ type: 'move', ids: ['mA', 'mB'], target: 0.5, speed: { unit: 'cms', value: 120 } })
+    now += 50
+    core.tick()
+
+    expect(core.snapshot().frame[0 + CH.LOCK]).toBe(77)
+    expect(core.snapshot().frame[4 + CH.LOCK]).toBe(77)
+
+    // Repro chính: xoá A trong khi B ở địa chỉ cao hơn vẫn tồn tại, rồi E-Stop -> CH4 của A phải về 0 ngay
+    core.configure({ modules: [modB], output: p.settings.output, lockValue: LOCK_VALUE })
+    expect(core.snapshot().frame[0 + CH.LOCK]).toBe(0)
+    expect(core.snapshot().frame[0 + CH.POSITION]).toBe(0)
+    core.command({ type: 'estop' })
+    now += 50
+    core.tick()
+    const afterRemoveA = sentFrames[sentFrames.length - 1]
+    expect(afterRemoveA.data[0 + CH.LOCK]).toBe(0)
+    expect(afterRemoveA.data[4 + CH.LOCK]).toBe(0)
+
+    // Mở khoá lại với A+B rồi xoá B (địa chỉ cao nhất) -> frame kế tiếp vẫn phải ghi 0 xoá vùng cũ CH5-8
+    core.configure({ modules: [modA, modB], output: p.settings.output, lockValue: LOCK_VALUE })
+    core.command({ type: 'lock', locked: false })
+    core.command({ type: 'move', ids: ['mB'], target: 0.8, speed: { unit: 'cms', value: 120 } })
+    now += 50
+    core.tick()
+    expect(sentFrames[sentFrames.length - 1].data[4 + CH.LOCK]).toBe(77)
+
+    core.configure({ modules: [modA], output: p.settings.output, lockValue: LOCK_VALUE })
+    now += 50
+    core.tick()
+    const clearedHigh = sentFrames[sentFrames.length - 1]
+    expect(clearedHigh.data.length).toBeGreaterThanOrEqual(8)
+    expect(clearedHigh.data[4 + CH.LOCK]).toBe(0)
+    expect(clearedHigh.data[4 + CH.POSITION]).toBe(0)
+
+    // Repatch A từ CH 1-4 sang CH 9-12 -> byte cũ 0..3 về 0
+    core.configure({ modules: [{ ...modA, startAddress: 9 }], output: p.settings.output, lockValue: LOCK_VALUE })
+    expect(core.snapshot().frame[0 + CH.LOCK]).toBe(0)
+    expect(core.snapshot().frame[8 + CH.LOCK]).toBe(77)
+
+    // Đổi output route (universe 0 -> 1): route cũ (0) phải nhận frame xoá an toàn trước khi đóng driver
+    const beforeSwitchCount = sentFrames.length
+    core.configure({
+      modules: [{ ...modA, startAddress: 9 }],
+      output: { ...p.settings.output, universe: 1 },
+      lockValue: LOCK_VALUE,
+    })
+    const flushOnOldRoute = sentFrames[beforeSwitchCount]
+    expect(flushOnOldRoute.subUni).toBe(0)
+    expect(flushOnOldRoute.data.every((b) => b === 0)).toBe(true)
+    expect(drivers[0].stopped).toBe(true)
+
+    // Stop gửi frame khoá an toàn, xoá frame snapshot và khoá lại
+    now += 50
+    core.tick()
+    core.stop()
+    const lastStopSent = sentFrames[sentFrames.length - 1]
+    expect(lastStopSent.subUni).toBe(1)
+    expect(lastStopSent.data.every((b) => b === 0)).toBe(true)
+    expect(core.snapshot().locked).toBe(true)
+    expect(core.snapshot().frame.every((b) => b === 0)).toBe(true)
+  })
 })

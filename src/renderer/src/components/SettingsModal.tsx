@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Download, FolderOpen, Network, RefreshCw, RotateCcw, Shield, Sliders, Volume2, X } from 'lucide-react'
+import { Bell, Network, RefreshCw, Shield, Sliders, Volume2, X } from 'lucide-react'
 import { isValidIPv4 } from '@shared/dmx'
 import { KINET_PORT, SACN_PORT, sacnMulticastIp } from '@shared/protocols'
 import { FPS_OPTIONS, formatTc, parseTc } from '@shared/timecode'
@@ -7,7 +7,10 @@ import type { DriverId, Fps } from '@shared/types'
 import { getBridge } from '../services/bridge'
 import { type SettingsTab, useAppStore } from '../store/useAppStore'
 
-export function SettingsModal() {
+export function SettingsModal(props: {
+  overrideState?: Partial<ReturnType<typeof useAppStore.getState>>
+}) {
+  const storeState = useAppStore()
   const {
     info,
     project,
@@ -21,11 +24,11 @@ export function SettingsModal() {
     setLockValue,
     setAddressMode,
     pollNow,
-    exportProject,
-    openProject,
     resetPreset,
+    notificationSettings,
+    updateNotificationSettings,
     notify,
-  } = useAppStore()
+  } = props.overrideState ? { ...storeState, ...props.overrideState } : storeState
 
   const out = project.settings.output
   const tl = project.settings.timeline
@@ -89,7 +92,7 @@ export function SettingsModal() {
     { id: 'network', label: 'Mạng & DMX Out', icon: Network },
     { id: 'safety', label: 'An toàn & Địa chỉ', icon: Shield },
     { id: 'ltc', label: 'Timecode LTC', icon: Volume2 },
-    { id: 'project', label: 'Dự án & Preset', icon: FolderOpen },
+    { id: 'notifications', label: 'Thông báo', icon: Bell },
   ]
 
   const tab = navItems.some((i) => i.id === settingsTab) ? settingsTab : 'network'
@@ -181,7 +184,7 @@ export function SettingsModal() {
 
             <div className="mt-auto px-3 pb-1 text-[9.5px] leading-relaxed font-medium tracking-wider text-muted uppercase">
               DMX GAUZE ENGINE
-              <br />v{info?.version ?? '0.1.0'} · {info?.runtime ?? 'web'}
+              <br />v{info?.version ?? '1.0.0'} · {info?.runtime ?? 'web'}
             </div>
           </nav>
 
@@ -257,19 +260,24 @@ export function SettingsModal() {
                     </select>
                   </label>
 
-                  <label className="space-y-1.5">
-                    <span className="text-[11px] text-[#C2B3A4]">Tần số gửi (Hz)</span>
-                    <input
-                      type="number"
-                      min="5"
-                      max="44"
-                      value={out.sendHz}
-                      onChange={(e) =>
-                        updateOutputSettings({ sendHz: Math.min(44, Math.max(5, Number(e.target.value) || 40)) })
-                      }
-                      className="kiln-field h-9 w-full px-3 text-xs tabular-nums"
-                    />
-                  </label>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-[#C2B3A4]">Tần số phát frame DMX</span>
+                      {out.sendHz !== 25 && (
+                        <button
+                          type="button"
+                          onClick={() => updateOutputSettings({ sendHz: 25 })}
+                          className="cursor-pointer rounded-full bg-brand/20 px-2 py-0.5 text-[10px] font-semibold text-[#FFB26B] hover:bg-brand/30"
+                        >
+                          Đồng bộ file 25 Hz
+                        </button>
+                      )}
+                    </div>
+                    <div className="kiln-field flex h-9 items-center justify-between px-3 text-xs tabular-nums">
+                      <span className="font-semibold text-fg">25 Hz</span>
+                      <span className="text-[11px] text-muted">Cố định · 40 ms/frame</span>
+                    </div>
+                  </div>
                 </div>
 
                 {isNetworkDriver && (
@@ -733,39 +741,100 @@ export function SettingsModal() {
               </div>
             )}
 
-            {tab === 'project' && (
-              <div className="space-y-3">
-                <div className="text-[11px] font-semibold tracking-wide text-muted uppercase">Quản lý Dự án & Preset</div>
+            {tab === 'notifications' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between rounded-xl bg-white/[0.03] px-3.5 py-2.5 shadow-[inset_0_0_0_1px_var(--line)]">
+                  <div>
+                    <div className="font-medium text-fg">Hiển thị thông báo pop-up</div>
+                    <div className="text-[11px] text-muted">
+                      Báo trạng thái kết nối DMX/Serial, E-Stop, lưu/mở dự án và giới hạn an toàn
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={notificationSettings.enabled}
+                    onClick={() => updateNotificationSettings({ enabled: !notificationSettings.enabled })}
+                    className={`kiln-btn h-7 px-3 text-[11px] ${
+                      notificationSettings.enabled ? 'kiln-btn-primary' : 'text-[#C2B3A4]'
+                    }`}
+                  >
+                    {notificationSettings.enabled ? 'Đang bật' : 'Đang tắt'}
+                  </button>
+                </div>
 
-                <button
-                  type="button"
-                  onClick={() => void openProject()}
-                  className="flex h-11 w-full cursor-pointer items-center gap-3 rounded-xl bg-white/[0.045] px-4 text-left text-fg shadow-[inset_0_0_0_1px_var(--line)] hover:bg-white/[0.08]"
-                >
-                  <FolderOpen size={16} className="text-info" />
-                  <span className="font-medium">Mở / Nhập file dự án (.json)</span>
-                </button>
+                <div className="space-y-2 rounded-xl bg-white/[0.03] px-3.5 py-3 shadow-[inset_0_0_0_1px_var(--line)]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-medium text-[#C2B3A4]">Thời gian tự ẩn</span>
+                    <span className="text-[11px] text-muted tabular-nums">
+                      {(notificationSettings.durationMs / 1000).toFixed(1)}s
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[2000, 3500, 5000, 8000].map((ms) => (
+                      <button
+                        key={ms}
+                        type="button"
+                        onClick={() => updateNotificationSettings({ durationMs: ms })}
+                        className={`kiln-btn h-7 px-3 text-[11px] tabular-nums ${
+                          notificationSettings.durationMs === ms ? 'kiln-btn-primary' : 'text-[#C2B3A4]'
+                        }`}
+                      >
+                        {(ms / 1000).toFixed(ms === 3500 ? 1 : 0)}s
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-                <button
-                  type="button"
-                  onClick={() => void exportProject()}
-                  className="flex h-11 w-full cursor-pointer items-center gap-3 rounded-xl bg-white/[0.045] px-4 text-left text-fg shadow-[inset_0_0_0_1px_var(--line)] hover:bg-white/[0.08]"
-                >
-                  <Download size={16} className="text-[#FFB26B]" />
-                  <span className="font-medium">Xuất bản sao dự án (.json)</span>
-                </button>
+                <div className="space-y-2 rounded-xl bg-white/[0.03] px-3.5 py-3 shadow-[inset_0_0_0_1px_var(--line)]">
+                  <div className="text-[11px] font-medium text-[#C2B3A4]">Loại thông báo hiển thị</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(
+                      [
+                        ['info', 'Thông tin / Trạng thái'],
+                        ['success', 'Thành công / Kết nối'],
+                        ['warn', 'Cảnh báo giới hạn'],
+                        ['error', 'Lỗi / E-Stop'],
+                      ] as const
+                    ).map(([kind, label]) => {
+                      const active = notificationSettings.kinds[kind]
+                      return (
+                        <button
+                          key={kind}
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() =>
+                            updateNotificationSettings({
+                              kinds: { ...notificationSettings.kinds, [kind]: !active },
+                            })
+                          }
+                          className={`kiln-btn h-8 justify-between px-3 text-[11px] ${
+                            active ? 'kiln-btn-primary' : 'text-[#C2B3A4]'
+                          }`}
+                        >
+                          <span className="truncate">{label}</span>
+                          <span>{active ? 'Bật' : 'Tắt'}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    resetPreset()
-                    setSettingsOpen(false)
-                  }}
-                  className="flex h-11 w-full cursor-pointer items-center gap-3 rounded-xl bg-brand/15 px-4 text-left text-[#FFB26B] shadow-[inset_0_0_0_1px_rgba(247,132,46,.38)] hover:bg-brand/25"
-                >
-                  <RotateCcw size={16} />
-                  <span className="font-medium">Khôi phục Preset mẫu (12×1m + 1×3m)</span>
-                </button>
+                <div className="flex items-center justify-end">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      notify('Thông báo thử nghiệm đã được kích hoạt — tự ẩn theo cấu hình.', 'info', {
+                        title: 'Xem trước thông báo',
+                        icon: 'running',
+                      })
+                    }
+                    className="kiln-btn h-8 px-3.5 text-[11.5px] text-[#FFB26B]"
+                  >
+                    <Bell size={13} />
+                    Thử thông báo
+                  </button>
+                </div>
               </div>
             )}
           </div>

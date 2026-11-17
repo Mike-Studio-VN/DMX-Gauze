@@ -57,6 +57,90 @@ describe('convert', () => {
     expect(upDone.progress).toBe(1)
     expect(upDone.etaSec).toBe(0)
     expect(upDone.reached).toBe(true)
+
+    // Nhiều module có quãng đường khác nhau: m1 đã ở đích (span=0), m2 đi 2m đang ở 1m -> đúng 50%
+    const m2 = { ...m, id: 'm2' }
+    const mixedSpan = computeManualMotionProgress(
+      { m1: { start: 0, goal: 0 }, m2: { start: 0, goal: 2 } },
+      [m, m2],
+      {
+        modules: {
+          m1: { pos: 0, target: 0, ch3: 255, moving: false },
+          m2: { pos: 1, target: 2, ch3: 255, moving: true },
+        },
+      },
+    )
+    expect(mixedSpan.progress).toBeCloseTo(0.5, 3)
+  })
+
+  it('tính vị trí sóng Lên/Xuống đúng tỉ lệ % (0%, 25%, 50%, 75%, 100%)', async () => {
+    const { computeManualWaveLayout } = await import('./convert')
+
+    expect(computeManualWaveLayout('up', 'run', 0)).toEqual({
+      ratio: 0,
+      percent: 0,
+      transform: 'translate3d(0, calc(100.000%), 0)',
+    })
+    expect(computeManualWaveLayout('up', 'run', 0.25).transform).toBe('translate3d(0, calc(75.000%), 0)')
+    expect(computeManualWaveLayout('up', 'run', 0.5).transform).toBe('translate3d(0, calc(50.000%), 0)')
+    expect(computeManualWaveLayout('up', 'run', 1)).toEqual({
+      ratio: 1,
+      percent: 100,
+      transform: 'translate3d(0, calc(0.000%), 0)',
+    })
+
+    expect(computeManualWaveLayout('down', 'run', 0)).toEqual({
+      ratio: 0,
+      percent: 0,
+      transform: 'translate3d(0, calc(-100.000%), 0)',
+    })
+    expect(computeManualWaveLayout('down', 'run', 0.25).transform).toBe('translate3d(0, calc(-75.000%), 0)')
+    expect(computeManualWaveLayout('down', 'run', 0.75).transform).toBe('translate3d(0, calc(-25.000%), 0)')
+    expect(computeManualWaveLayout('down', 'run', 1)).toEqual({
+      ratio: 1,
+      percent: 100,
+      transform: 'translate3d(0, calc(-0.000%), 0)',
+    })
+  })
+
+  it('tính mức sóng chung cho cả 3 nút Manual và giữ nguyên % khi dừng giữa chừng', async () => {
+    const { computeSharedManualWaveLevel } = await import('./convert')
+    const p = createDefaultProject()
+    const m1 = { ...p.modules[0], id: 'm1', minHeight: 0, maxHeight: 2, length: 2 }
+
+    // Ở đỉnh (0m -> 100%)
+    expect(
+      computeSharedManualWaveLevel(['m1'], [m1], { modules: { m1: { pos: 0, target: 0, ch3: 100, moving: false } } }),
+    ).toEqual({
+      ratio: 1,
+      percent: 100,
+      moving: false,
+    })
+
+    // Đang hạ xuống giữa chừng 0.76m/2m -> còn 62%, sau đó Dừng (moving=false) vẫn giữ đúng 62%
+    expect(
+      computeSharedManualWaveLevel(['m1'], [m1], { modules: { m1: { pos: 0.76, target: 2, ch3: 100, moving: true } } }),
+    ).toEqual({
+      ratio: 0.62,
+      percent: 62,
+      moving: true,
+    })
+    expect(
+      computeSharedManualWaveLevel(['m1'], [m1], { modules: { m1: { pos: 0.76, target: 0.76, ch3: 100, moving: false } } }),
+    ).toEqual({
+      ratio: 0.62,
+      percent: 62,
+      moving: false,
+    })
+
+    // Hạ hết (2m -> 0%)
+    expect(
+      computeSharedManualWaveLevel(['m1'], [m1], { modules: { m1: { pos: 2, target: 2, ch3: 100, moving: false } } }),
+    ).toEqual({
+      ratio: 0,
+      percent: 0,
+      moving: false,
+    })
   })
 })
 
@@ -562,5 +646,220 @@ describe('timeline -> GauzeCore end-to-end execution', () => {
     }
     expect(evaluateModuleTimelineHeight([holdClip], [], { id: 'm1', minHeight: 0, maxHeight: 1, length: 1 }, 2.5)).toBe(0.5)
     core.stop()
+  })
+})
+
+describe('regression tests: project validation, curve agreement & LTC freewheel', () => {
+  it('normalizeProject từ chối dự án thiếu settings hoặc có thông số không hợp lệ (P1)', async () => {
+    const { normalizeProject } = await import('./preset')
+    expect(() => normalizeProject({ version: 1, layers: [], modules: [] })).toThrow()
+    expect(() => normalizeProject(null)).toThrow()
+
+    const base = createDefaultProject()
+    expect(() => normalizeProject({ ...base, settings: undefined })).toThrow()
+    expect(() => normalizeProject({ ...base, settings: { ...base.settings, output: undefined } })).toThrow()
+    expect(() =>
+      normalizeProject({
+        ...base,
+        settings: { ...base.settings, output: { ...base.settings.output, port: Number.NaN } },
+      }),
+    ).toThrow()
+    expect(() =>
+      normalizeProject({
+        ...base,
+        modules: [{ ...base.modules[0], length: -1 }],
+      }),
+    ).toThrow()
+
+    // Dự án hợp lệ thiếu field tuỳ chọn vẫn được chuẩn hoá tốt
+    const minimalValid = {
+      ...base,
+      clips: undefined,
+      layers: base.layers.map(({ id, name }) => ({ id, name })),
+      modules: base.modules.map((m) => {
+        const clone = { ...m }
+        delete clone.visible
+        delete clone.dmxLoop
+        delete clone.transform
+        return clone
+      }),
+    }
+    const normalized = normalizeProject(minimalValid)
+    expect(normalized.settings.output.driver).toBe('mock')
+    expect(normalized.layers[0].visible).toBe(true)
+    expect(normalized.modules[0].dmxLoop).toBe(false)
+    expect(normalized.clips).toEqual([])
+  })
+
+  it('đồ thị SVG smooth 2 điểm và nhiều điểm (cách đều / không đều) khớp chính xác với evaluator (P2)', async () => {
+    const { evaluateModuleTimelineHeight, mapKeyframesToPts, segmentPath } = await import('./timeline')
+    const mod = { id: 'm1', minHeight: 0, maxHeight: 3, length: 3 }
+    const W = 280
+    const H = 138
+    const pad = { left: 30, right: 12, top: 14, bottom: 20 }
+    const usableH = H - pad.top - pad.bottom
+
+    const parseSvgYAtX = (d: string, targetX: number): number => {
+      const m = d.match(/^M ([\d.-]+) ([\d.-]+) (L|C) (.+)$/)
+      if (!m) throw new Error(`Invalid SVG path: ${d}`)
+      const x1 = Number(m[1])
+      const y1 = Number(m[2])
+      if (m[3] === 'L') {
+        const [x2, y2] = m[4].split(' ').map(Number)
+        const t = (targetX - x1) / Math.max(1e-6, x2 - x1)
+        return y1 + (y2 - y1) * t
+      }
+      const nums = m[4].replaceAll(',', '').split(/\s+/).map(Number)
+      const [c1x, c1y, c2x, c2y, x2, y2] = nums
+      // Giải tìm t từ B_x(t) = targetX bằng bisection (B_x đơn điệu tăng)
+      let lo = 0
+      let hi = 1
+      for (let iter = 0; iter < 30; iter += 1) {
+        const mid = (lo + hi) / 2
+        const inv = 1 - mid
+        const bx = inv ** 3 * x1 + 3 * inv ** 2 * mid * c1x + 3 * inv * mid ** 2 * c2x + mid ** 3 * x2
+        if (bx < targetX) lo = mid
+        else hi = mid
+      }
+      const t = (lo + hi) / 2
+      const inv = 1 - t
+      return inv ** 3 * y1 + 3 * inv ** 2 * t * c1y + 3 * inv * t ** 2 * c2y + t ** 3 * y2
+    }
+
+    const twoPtClip = {
+      id: 'c2',
+      layerId: 'l1',
+      moduleId: 'm1',
+      startTime: 1,
+      duration: 4,
+      curveMode: 'smooth' as const,
+      keyframes: [
+        { id: 'k1', offset: 0, height: 0 },
+        { id: 'k2', offset: 4, height: 3 },
+      ],
+    }
+    const twoPts = mapKeyframesToPts(twoPtClip.keyframes, twoPtClip.duration, 0, 3, W, H, pad)
+    const twoPath = segmentPath(twoPts, 0, 'smooth', pad.top, H - pad.bottom)
+    for (let u = 0.05; u <= 0.95; u += 0.1) {
+      const tAbs = twoPtClip.startTime + u * twoPtClip.duration
+      const x = twoPts[0].x + u * (twoPts[1].x - twoPts[0].x)
+      const renderedH = ((H - pad.bottom - parseSvgYAtX(twoPath, x)) / usableH) * 3
+      const evalH = evaluateModuleTimelineHeight([twoPtClip], [], mod, tAbs)!
+      expect(Math.abs(renderedH - evalH)).toBeLessThan(0.01)
+    }
+
+    const multiUnevenClip = {
+      id: 'cm',
+      layerId: 'l1',
+      moduleId: 'm1',
+      startTime: 2,
+      duration: 5,
+      curveMode: 'smooth' as const,
+      keyframes: [
+        { id: 'k1', offset: 0, height: 0 },
+        { id: 'k2', offset: 0.5, height: 0.8 },
+        { id: 'k3', offset: 2.2, height: 2.7 },
+        { id: 'k4', offset: 3.9, height: 1.1 },
+        { id: 'k5', offset: 5, height: 0 },
+      ],
+    }
+    const mPts = mapKeyframesToPts(multiUnevenClip.keyframes, multiUnevenClip.duration, 0, 3, W, H, pad)
+    for (let seg = 0; seg < multiUnevenClip.keyframes.length - 1; seg += 1) {
+      const d = segmentPath(mPts, seg, 'smooth', pad.top, H - pad.bottom)
+      const k1 = multiUnevenClip.keyframes[seg]
+      const k2 = multiUnevenClip.keyframes[seg + 1]
+      for (let step = 1; step <= 8; step += 1) {
+        const u = step / 9
+        const tAbs = multiUnevenClip.startTime + k1.offset + u * (k2.offset - k1.offset)
+        const x = mPts[seg].x + u * (mPts[seg + 1].x - mPts[seg].x)
+        const renderedH = ((H - pad.bottom - parseSvgYAtX(d, x)) / usableH) * 3
+        const evalH = evaluateModuleTimelineHeight([multiUnevenClip], [], mod, tAbs)!
+        expect(Math.abs(renderedH - evalH)).toBeLessThan(0.01)
+      }
+    }
+  })
+
+  it('LtcClockTracker ngoại suy trớn giới hạn trong freewheelFrames và dừng dứt khoát khi lost (P2)', async () => {
+    const { LtcClockTracker } = await import('./ltc')
+    const tracker = new LtcClockTracker()
+    const fps = 25
+    const freewheelFrames = 10 // 400ms @ 25fps
+
+    expect(tracker.onDecodedFrame(12, 1000)).toBe(12)
+    expect(tracker.poll(1050, fps, freewheelFrames)).toEqual({
+      status: 'lock',
+      timeSec: 12,
+      shouldFollow: false,
+      shouldStop: false,
+    })
+
+    // Mất tín hiệu 240ms (< 400ms): trạng thái freewheel và timeline chạy trớn tới 12.24s
+    const fw = tracker.poll(1240, fps, freewheelFrames)
+    expect(fw.status).toBe('freewheel')
+    expect(fw.shouldFollow).toBe(true)
+    expect(fw.shouldStop).toBe(false)
+    expect(fw.timeSec).toBeCloseTo(12.24, 3)
+
+    // Vượt quá 400ms (+550ms -> gap 550ms > 400ms): chạm ngưỡng tối đa 12.40s rồi chuyển lost và stop đúng 1 lần
+    const lost1 = tracker.poll(1550, fps, freewheelFrames)
+    expect(lost1.status).toBe('lost')
+    expect(lost1.timeSec).toBeCloseTo(12.4, 3)
+    expect(lost1.shouldFollow).toBe(false)
+    expect(lost1.shouldStop).toBe(true)
+
+    // Các lần poll tiếp theo khi lost không đẩy thời gian trôi thêm và không spam stop
+    const lost2 = tracker.poll(2000, fps, freewheelFrames)
+    expect(lost2).toEqual({
+      status: 'lost',
+      timeSec: null,
+      shouldFollow: false,
+      shouldStop: false,
+    })
+
+    // Có tín hiệu lại -> lock trở lại
+    expect(tracker.onDecodedFrame(15, 2100)).toBe(15)
+    expect(tracker.poll(2120, fps, freewheelFrames).status).toBe('lock')
+  })
+
+  it('updateClipEndTime và updateClipStartTime giữ đúng tỉ lệ keyframe, min duration, bounds và từ chối NaN', async () => {
+    const { updateClipEndTime, updateClipStartTime } = await import('./timeline')
+    const clip = {
+      id: 'c1',
+      layerId: 'l1',
+      moduleId: 'm1',
+      startTime: 2,
+      duration: 4,
+      curveMode: 'linear' as const,
+      keyframes: [
+        { id: 'k1', offset: 0, height: 0 },
+        { id: 'k2', offset: 2, height: 2 },
+        { id: 'k3', offset: 4, height: 0 },
+      ],
+    }
+
+    expect(updateClipEndTime(clip, Number.NaN)).toBeNull()
+    expect(updateClipStartTime(clip, Number.POSITIVE_INFINITY)).toBeNull()
+
+    // Kéo kết thúc từ 6s -> 8s: duration thành 6s, keyframe co giãn tỉ lệ 1.5x (0, 3, 6)
+    const expanded = updateClipEndTime(clip, 8, { minStart: 0, maxEnd: 10 })!
+    expect(expanded.duration).toBe(6)
+    expect(expanded.keyframes?.map((k) => k.offset)).toEqual([0, 3, 6])
+
+    // Chặn min duration 0.4s khi nhập kết thúc <= startTime
+    const minClamped = updateClipEndTime(clip, 1.5, { minStart: 0, maxEnd: 10 })!
+    expect(minClamped.duration).toBe(0.4)
+    expect(minClamped.keyframes?.map((k) => k.offset)).toEqual([0, 0.2, 0.4])
+
+    // Chặn không vượt quá clip kế tiếp (maxEnd = 7.25)
+    const maxClamped = updateClipEndTime(clip, 9, { minStart: 0, maxEnd: 7.25 })!
+    expect(maxClamped.duration).toBe(5.25)
+
+    // Từ chối nếu khe trống tới clip kế tiếp nhỏ hơn minDuration (vd: [0..0.2], clip kế tiếp bắt đầu ở 0.3)
+    const shortClip = { ...clip, startTime: 0, duration: 0.2 }
+    expect(updateClipEndTime(shortClip, 0.25, { minStart: 0, maxEnd: 0.3 })).toBeNull()
+
+    // Chỉnh startTime tôn trọng biên trái/phải
+    expect(updateClipStartTime(clip, 0.5, { minStart: 1.2, maxEnd: 7.5 })).toEqual({ startTime: 1.2 })
+    expect(updateClipStartTime(clip, 5, { minStart: 1.2, maxEnd: 7.5 })).toEqual({ startTime: 3.5 })
   })
 })

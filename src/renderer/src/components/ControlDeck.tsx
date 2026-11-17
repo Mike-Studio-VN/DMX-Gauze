@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'motion/react'
 import {
   ArrowDown,
@@ -9,13 +9,14 @@ import {
   Play,
   Plus,
   SlidersHorizontal,
-  Square,
   Trash2,
 } from 'lucide-react'
 import {
   type ManualMotionBaseline,
   clamp,
   computeManualMotionProgress,
+  computeManualWaveLayout,
+  computeSharedManualWaveLevel,
 } from '@shared/convert'
 import type { CueButton, ModuleCfg, SpeedUnit } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
@@ -33,94 +34,236 @@ interface ManualRunState {
   etaSec: number
 }
 
+function WaveCrestSvg({
+  edge,
+  color,
+  rimColor,
+  variant,
+  className = '',
+}: {
+  edge: 'top' | 'bottom'
+  color: string
+  rimColor?: string
+  variant: 'front' | 'back'
+  className?: string
+}) {
+  // Chu kỳ 400 (0..800 = 2 chu kỳ) khớp điểm đầu/cuối tại y=18 để trượt -50% mượt không bị giật nối.
+  const wavePath =
+    edge === 'top'
+      ? variant === 'front'
+        ? 'M 0 18 Q 100 1, 200 18 T 400 18 Q 500 1, 600 18 T 800 18'
+        : 'M 0 18 Q 100 34, 200 18 T 400 18 Q 500 34, 600 18 T 800 18'
+      : variant === 'front'
+        ? 'M 0 18 Q 100 35, 200 18 T 400 18 Q 500 35, 600 18 T 800 18'
+        : 'M 0 18 Q 100 2, 200 18 T 400 18 Q 500 2, 600 18 T 800 18'
+  const fillD = edge === 'top' ? `${wavePath} L 800 36 L 0 36 Z` : `${wavePath} L 800 0 L 0 0 Z`
+
+  return (
+    <svg
+      viewBox="0 0 800 36"
+      preserveAspectRatio="none"
+      aria-hidden="true"
+      className={`manual-wave-crest ${edge === 'top' ? 'manual-wave-crest-top' : 'manual-wave-crest-bottom'} ${
+        variant === 'front' ? 'manual-wave-drift-a' : 'manual-wave-drift-b'
+      } ${className}`}
+    >
+      <path d={fillD} fill={color} />
+      {rimColor && <path d={wavePath} fill="none" stroke={rimColor} strokeWidth="2.2" />}
+    </svg>
+  )
+}
+
+function SharedWaveBackdrop({
+  ratio,
+  moving,
+  backColor,
+  frontColor,
+  rimColor,
+}: {
+  ratio: number
+  moving: boolean
+  backColor: string
+  frontColor: string
+  rimColor: string
+}) {
+  // Lớp sóng sau bám sát phần trăm và phủ tràn đáy (-48px); khi ở 100% lớp trước hơi lộ ngọn sóng để thấy rõ hiệu ứng sóng.
+  const frontRatio = ratio >= 0.995 ? 0.92 : ratio
+  const backLayout = computeManualWaveLayout('up', 'run', clamp(ratio * (moving ? 0.97 : 1), 0, 1))
+  const backTransform = ratio >= 0.995 ? 'translate3d(0, -18px, 0)' : backLayout.transform
+  const frontLayout = computeManualWaveLayout('up', 'run', frontRatio)
+
+  return (
+    <div className="manual-wave-layer" aria-hidden="true">
+      <div className="manual-wave-sheet" style={{ transform: backTransform }}>
+        <WaveCrestSvg edge="top" variant="back" color={backColor} />
+        <div className="manual-wave-fill-body" style={{ background: backColor }} />
+      </div>
+      <div className="manual-wave-sheet" style={{ transform: frontLayout.transform }}>
+        <WaveCrestSvg edge="top" variant="front" color={frontColor} rimColor={rimColor} />
+        <div className="manual-wave-fill-body" style={{ background: frontColor }} />
+      </div>
+    </div>
+  )
+}
+
 function ManualProgressButton({
   dir,
   label,
   hint,
   phase,
+  waveRatio,
+  waveMoving,
   progress,
   etaSec,
+  speedText,
+  unitLabel,
   onClick,
 }: {
   dir: 'up' | 'down'
   label: string
   hint: string
   phase: ManualBtnPhase
+  waveRatio: number
+  waveMoving: boolean
   progress: number
   etaSec: number
+  speedText: string
+  unitLabel: string
   onClick: () => void
 }) {
   const Icon = dir === 'up' ? ArrowUp : ArrowDown
-  const pct = Math.round(clamp(progress, 0, 1) * 100)
-  const etaText = pct >= 100 ? '0s' : `${Math.max(1, Math.ceil(etaSec))}s`
+  const wavePct = Math.round(clamp(waveRatio, 0, 1) * 100)
+  const movePct = Math.round(clamp(progress, 0, 1) * 100)
+  const etaText = movePct >= 100 ? '0s' : `${Math.max(1, Math.ceil(etaSec))}s`
+  const isUp = dir === 'up'
+  const isRunning = phase === 'run'
+
+  const backColor = isUp ? 'rgba(42, 92, 168, 0.56)' : 'rgba(164, 60, 8, 0.42)'
+  const frontColor = isUp ? 'rgba(68, 138, 244, 0.70)' : 'rgba(202, 82, 12, 0.56)'
+  const rimColor = isUp ? 'rgba(174, 214, 255, 0.52)' : 'rgba(255, 224, 180, 0.35)'
 
   return (
-    <div className="manual-vslot">
-      <button
-        type="button"
-        title={hint}
-        onClick={onClick}
-        data-state={phase}
-        style={{ '--p': clamp(progress, 0, 1).toFixed(4) } as CSSProperties}
-        className={`manual-vbtn ${dir}`}
-      >
-        <span className="manual-vbtn-track" aria-hidden>
-          <span className="manual-vbtn-bar" />
-        </span>
+    <button
+      type="button"
+      title={hint}
+      aria-label={`${label} (${speedText} ${unitLabel})`}
+      onClick={onClick}
+      data-state={isRunning || waveMoving ? 'run' : 'idle'}
+      data-wave-pct={wavePct}
+      className={`manual-card ${isUp ? 'manual-card-up' : 'manual-card-down'}`}
+    >
+      <SharedWaveBackdrop
+        ratio={waveRatio}
+        moving={isRunning || waveMoving}
+        backColor={backColor}
+        frontColor={frontColor}
+        rimColor={rimColor}
+      />
 
-        <span className="manual-vbtn-idle" aria-hidden>
-          <span className="manual-vbtn-arw">
-            <span className="manual-vbtn-arw-inner">
-              <Icon size={15} strokeWidth={2.4} />
-            </span>
+      <div className="relative z-10 flex items-start justify-between gap-2">
+        <div>
+          <div className={`text-[15px] leading-tight font-bold ${isUp ? 'text-[#EFF5FF]' : 'text-[#1B0F05]'}`}>
+            {label}
+          </div>
+          <div className={`mt-0.5 text-[11px] ${isUp ? 'text-[#92AED0]' : 'text-[#1B0F05]/75'}`}>
+            {isRunning
+              ? `${isUp ? 'Đang chạy lên' : 'Đang chạy xuống'} · ${wavePct}% · ${etaText}`
+              : isUp
+                ? 'Chạm để chạy lên'
+                : 'Chạm để chạy xuống'}
+          </div>
+        </div>
+        <span
+          className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold tabular-nums ${
+            isUp ? 'bg-white/14 text-[#DCE9FF]' : 'bg-[#1B0F05]/12 text-[#1B0F05]'
+          }`}
+        >
+          {wavePct}%
+        </span>
+      </div>
+
+      <div className="relative z-10 flex items-center justify-center py-0.5">
+        <span
+          className={`manual-card-icon-ring ${
+            isUp ? 'bg-[#8EB8FF]/16 text-[#8DBBFF]' : 'bg-[#1B0F05]/10 text-[#1B0F05]'
+          }`}
+        >
+          <Icon size={20} strokeWidth={2.2} className="manual-card-arrow" aria-hidden="true" />
+        </span>
+      </div>
+
+      <div className="relative z-10 flex items-baseline justify-between gap-2">
+        <div className="flex items-baseline gap-1 tabular-nums">
+          <span className={`text-[20px] leading-none font-bold ${isUp ? 'text-[#DCE9FF]' : 'text-[#1B0F05]'}`}>
+            {speedText}
           </span>
-          <b>{label}</b>
-        </span>
-
-        <span className="manual-vbtn-run" aria-hidden>
-          <b>{pct}%</b>
-          <small>{etaText}</small>
-        </span>
-      </button>
-    </div>
+          <span className={`text-[11px] font-medium ${isUp ? 'text-[#9BB5D6]' : 'text-[#1B0F05]/78'}`}>
+            {unitLabel}
+          </span>
+        </div>
+      </div>
+    </button>
   )
 }
 
-function ActionBtn({
-  icon: Icon,
-  label,
+function ManualStopButton({
   hint,
+  unitLabel,
+  waveRatio,
+  waveMoving,
   onClick,
-  variant = 'ghost',
 }: {
-  icon: typeof ArrowUp
-  label: string
   hint: string
+  unitLabel: string
+  waveRatio: number
+  waveMoving: boolean
   onClick: () => void
-  variant?: 'brand' | 'info' | 'danger' | 'ghost'
 }) {
-  const cls =
-    variant === 'brand'
-      ? 'kiln-btn kiln-btn-primary'
-      : variant === 'info'
-        ? 'kiln-btn kiln-btn-cue'
-        : variant === 'danger'
-          ? 'kiln-btn kiln-btn-danger'
-          : 'kiln-btn'
-
+  const wavePct = Math.round(clamp(waveRatio, 0, 1) * 100)
   return (
-    <motion.button
+    <button
       type="button"
       title={hint}
+      aria-label="Dừng module đang chọn (Space)"
       onClick={onClick}
-      whileHover={{ y: -2 }}
-      whileTap={{ scale: 0.96 }}
-      transition={{ type: 'spring', stiffness: 520, damping: 28 }}
-      className={`h-14 px-4 text-sm font-semibold ${cls}`}
+      data-state={waveMoving ? 'run' : 'idle'}
+      data-wave-pct={wavePct}
+      className="manual-card manual-card-stop"
     >
-      <Icon size={16} aria-hidden />
-      <span>{label}</span>
-    </motion.button>
+      <SharedWaveBackdrop
+        ratio={waveRatio}
+        moving={waveMoving}
+        backColor="rgba(116, 44, 40, 0.56)"
+        frontColor="rgba(164, 66, 60, 0.62)"
+        rimColor="rgba(255, 168, 158, 0.42)"
+      />
+
+      <div className="relative z-10 flex items-start justify-between gap-2">
+        <div>
+          <div className="text-[15px] leading-tight font-bold text-[#F5B0A8]">Dừng</div>
+          <div className="mt-0.5 text-[11px] whitespace-nowrap text-[#C8827B]">Dừng module chọn</div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span className="rounded-full bg-[#F08C82]/14 px-2 py-0.5 text-[10.5px] font-bold text-[#F5B0A8] tabular-nums">
+            {wavePct}%
+          </span>
+          <span className="rounded-full border border-[#F08C82]/28 bg-[#F08C82]/10 px-2.5 py-0.5 text-[10px] font-semibold text-[#F4ADA5]">
+            Space
+          </span>
+        </div>
+      </div>
+
+      <div className="relative z-10 flex items-center justify-center py-0.5">
+        <span className="manual-card-icon-ring bg-[#FF7A6E]/14">
+          <span className="h-3.5 w-3.5 rounded-[3.5px] bg-[#FF7A6E]" aria-hidden="true" />
+        </span>
+      </div>
+
+      <div className="relative z-10 flex items-baseline gap-1 tabular-nums">
+        <span className="text-[20px] leading-none font-bold text-[#EA887E]">0</span>
+        <span className="text-[11px] font-medium text-[#C8827B]">{unitLabel}</span>
+      </div>
+    </button>
   )
 }
 
@@ -494,13 +637,21 @@ function ModeButtons() {
   )
 }
 
-function ModeManual() {
-  const { project, snapshot, selectedIds, sendCommand, notify } = useAppStore()
+export function ModeManual(props: {
+  overrideState?: Partial<ReturnType<typeof useAppStore.getState>>
+}) {
+  const storeState = useAppStore()
+  const { project, snapshot, selectedIds, sendCommand, notify } = props.overrideState
+    ? { ...storeState, ...props.overrideState }
+    : storeState
   const [unit, setUnit] = useState<SpeedUnit>('cms')
   const [val, setVal] = useState(47)
   const [runState, setRunState] = useState<ManualRunState | null>(null)
 
   const speedSpec = { unit, value: Math.max(0.1, val) }
+  const speedText = Number.isInteger(val) ? String(val) : String(Number(val.toFixed(1)))
+  const unitLabel = unit === 'cms' ? 'cm/s' : 'giây'
+  const sharedWave = computeSharedManualWaveLevel(selectedIds, project.modules, snapshot)
 
   const runManual = async (cmd: { type: 'move'; target: 'min' | 'max' } | { type: 'stop' }) => {
     if (selectedIds.length === 0) {
@@ -640,27 +791,31 @@ function ModeManual() {
             value={val}
             onChange={(e) => setVal(Number(e.target.value) || 1)}
             aria-label="Giá trị tốc độ hoặc số giây"
-            className="kiln-field h-7 w-20 px-2.5 text-xs tabular-nums"
+            className="kiln-field h-8 w-16 rounded-full px-2.5 text-center text-xs font-semibold tabular-nums"
           />
         </div>
       </div>
 
-      <div className="flex flex-1 items-center">
-        <div className="grid w-full grid-cols-3 gap-3">
+      <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-2">
+        <div className="mx-auto grid w-[84%] min-w-[520px] max-w-[930px] grid-cols-3 gap-4">
           <ManualProgressButton
             dir="up"
             label="Lên"
             hint="Di chuyển lên giới hạn Min đã cài"
             phase={runState?.dir === 'up' ? runState.phase : 'idle'}
+            waveRatio={sharedWave.ratio}
+            waveMoving={sharedWave.moving}
             progress={runState?.dir === 'up' ? runState.progress : 0}
             etaSec={runState?.dir === 'up' ? runState.etaSec : 0}
+            speedText={speedText}
+            unitLabel={unitLabel}
             onClick={() => void runManual({ type: 'move', target: 'min' })}
           />
-          <ActionBtn
-            icon={Square}
-            label="Dừng"
+          <ManualStopButton
             hint="Dừng ngay và giữ nguyên vị trí hiện tại (Space)"
-            variant="danger"
+            unitLabel={unitLabel}
+            waveRatio={sharedWave.ratio}
+            waveMoving={sharedWave.moving}
             onClick={() => void runManual({ type: 'stop' })}
           />
           <ManualProgressButton
@@ -668,8 +823,12 @@ function ModeManual() {
             label="Xuống"
             hint="Di chuyển xuống giới hạn Max đã cài"
             phase={runState?.dir === 'down' ? runState.phase : 'idle'}
+            waveRatio={sharedWave.ratio}
+            waveMoving={sharedWave.moving}
             progress={runState?.dir === 'down' ? runState.progress : 0}
             etaSec={runState?.dir === 'down' ? runState.etaSec : 0}
+            speedText={speedText}
+            unitLabel={unitLabel}
             onClick={() => void runManual({ type: 'move', target: 'max' })}
           />
         </div>

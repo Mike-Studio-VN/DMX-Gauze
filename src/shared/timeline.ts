@@ -105,6 +105,146 @@ export function buildCurveKeyframes(
   }))
 }
 
+export type LayerMotionPresetId = 'all-up' | 'all-down' | 'wave' | 'wave-reverse'
+
+export interface LayerMotionPresetMeta {
+  id: LayerMotionPresetId
+  label: string
+}
+
+export const LAYER_MOTION_PRESETS: LayerMotionPresetMeta[] = [
+  { id: 'all-up', label: 'Tất cả lên' },
+  { id: 'all-down', label: 'Tất cả xuống' },
+  { id: 'wave', label: 'Sóng' },
+  { id: 'wave-reverse', label: 'Sóng ngược' },
+]
+
+/** Tìm thời điểm gốc chung >= startTime sao cho toàn bộ cửa sổ [base + offset_i, base + offset_i + dur] không đụng clip cũ. */
+function findCommonForwardBaseStart(
+  ordered: ModuleCfg[],
+  existingClips: TimelineClip[],
+  baseStart: number,
+  duration: number,
+  staggerSec: number,
+  isWave: boolean,
+): number {
+  let candidate = baseStart
+  const byMod = new Map<string, TimelineClip[]>()
+  for (const mod of ordered) {
+    byMod.set(
+      mod.id,
+      existingClips
+        .filter((c) => c.moduleId === mod.id)
+        .sort((a, b) => a.startTime - b.startTime),
+    )
+  }
+
+  for (let guard = 0; guard <= existingClips.length + 2; guard += 1) {
+    let advanced = false
+    for (let idx = 0; idx < ordered.length; idx += 1) {
+      const mod = ordered[idx]
+      const offset = isWave ? idx * staggerSec : 0
+      const winStart = Number((candidate + offset).toFixed(2))
+      const winEnd = Number((winStart + duration).toFixed(2))
+      for (const c of byMod.get(mod.id) ?? []) {
+        const cStart = Math.max(0, c.startTime)
+        const cEnd = cStart + Math.max(MIN_DURATION, c.duration)
+        if (winStart < cEnd - 1e-6 && winEnd > cStart + 1e-6) {
+          const nextBase = Number(Math.max(candidate, cEnd - offset).toFixed(2))
+          if (nextBase > candidate + 1e-6) {
+            candidate = nextBase
+            advanced = true
+          }
+        }
+      }
+    }
+    if (!advanced) break
+  }
+
+  return Number(Math.max(baseStart, candidate).toFixed(2))
+}
+
+/** Tạo danh sách moment chuyển động trên Timeline cho các module thuộc 1 layer (không ghi đè hoặc sửa moment cũ). */
+export function buildLayerMotionClips(opts: {
+  layerId: string
+  modules: ModuleCfg[]
+  existingClips: TimelineClip[]
+  presetId: LayerMotionPresetId
+  startTime: number
+  duration: number
+  staggerSec?: number
+}): TimelineClip[] {
+  const { layerId, modules, existingClips, presetId, startTime, duration, staggerSec = 0.35 } = opts
+  if (!Number.isFinite(startTime) || !Number.isFinite(duration) || duration <= 0) return []
+  if (!Number.isFinite(staggerSec) || staggerSec < 0) return []
+
+  const layerMods = modules.filter((m) => m.layerId === layerId)
+  if (layerMods.length === 0) return []
+
+  const safeStart = Math.max(0, Number(startTime.toFixed(2)))
+  const safeDuration = Math.max(0.4, Number(duration.toFixed(2)))
+  const safeStagger = Math.max(0, Number(staggerSec.toFixed(2)))
+  const ordered = presetId === 'wave-reverse' ? [...layerMods].reverse() : layerMods
+  const isWave = presetId === 'wave' || presetId === 'wave-reverse'
+
+  const commonBase = findCommonForwardBaseStart(
+    ordered,
+    existingClips,
+    safeStart,
+    safeDuration,
+    safeStagger,
+    isWave,
+  )
+
+  const usedIds = new Set(existingClips.map((c) => c.id))
+  const created: TimelineClip[] = []
+  const now = Date.now()
+
+  ordered.forEach((mod, idx) => {
+    const hi = Math.min(Math.max(0, mod.maxHeight), mod.length)
+    const lo = Math.min(Math.max(0, mod.minHeight), hi)
+    const placedStart = isWave ? Number((commonBase + idx * safeStagger).toFixed(2)) : commonBase
+
+    let clipId = `clip-lp-${now}-${idx}-${Math.random().toString(36).slice(2, 6)}`
+    while (usedIds.has(clipId)) {
+      clipId = `clip-lp-${now}-${idx}-${Math.random().toString(36).slice(2, 7)}`
+    }
+    usedIds.add(clipId)
+
+    let keyframes: ClipKeyframe[]
+    let curveMode: 'smooth' | 'linear' = 'linear'
+    if (presetId === 'all-up') {
+      keyframes = [
+        { id: `kf-lp-${now}-${idx}-0-${Math.random().toString(36).slice(2, 5)}`, offset: 0, height: Number(hi.toFixed(2)) },
+        { id: `kf-lp-${now}-${idx}-1-${Math.random().toString(36).slice(2, 5)}`, offset: safeDuration, height: Number(lo.toFixed(2)) },
+      ]
+    } else if (presetId === 'all-down') {
+      keyframes = [
+        { id: `kf-lp-${now}-${idx}-0-${Math.random().toString(36).slice(2, 5)}`, offset: 0, height: Number(lo.toFixed(2)) },
+        { id: `kf-lp-${now}-${idx}-1-${Math.random().toString(36).slice(2, 5)}`, offset: safeDuration, height: Number(hi.toFixed(2)) },
+      ]
+    } else {
+      curveMode = 'smooth'
+      keyframes = buildCurveKeyframes('sine', safeDuration, lo, hi).map((k, kIdx) => ({
+        ...k,
+        id: `kf-lp-${now}-${idx}-${kIdx}-${Math.random().toString(36).slice(2, 5)}`,
+      }))
+    }
+
+    created.push({
+      id: clipId,
+      layerId,
+      moduleId: mod.id,
+      startTime: placedStart,
+      duration: safeDuration,
+      curveMode,
+      keyframes,
+    })
+  })
+
+  return created
+}
+
 export interface SegmentIssue {
   clipId: string
   moduleId: string
@@ -392,6 +532,54 @@ export function updateClipKeyframeTimelineTime(
   return { startTime, duration, keyframes }
 }
 
+/** Cập nhật `startTime` của moment theo toạ độ Timeline (giây), chặn chồng chéo lân cận. */
+export function updateClipStartTime(
+  clip: TimelineClip,
+  rawStart: number,
+  bounds?: { minStart: number; maxEnd: number },
+): Partial<TimelineClip> | null {
+  if (!Number.isFinite(rawStart)) return null
+  const minStart = Math.max(0, Number((bounds?.minStart ?? 0).toFixed(2)))
+  if (bounds && Number.isFinite(bounds.maxEnd)) {
+    const boundMax = Number(bounds.maxEnd.toFixed(2))
+    if (boundMax - minStart < clip.duration - 1e-6) return null
+  }
+  const maxStart =
+    bounds && Number.isFinite(bounds.maxEnd)
+      ? Math.max(minStart, Number((bounds.maxEnd - clip.duration).toFixed(2)))
+      : Number.POSITIVE_INFINITY
+  const startTime = Number(clamp(rawStart, minStart, maxStart).toFixed(2))
+  return { startTime }
+}
+
+/** Cập nhật điểm kết thúc (giây tuyệt đối trên Timeline) -> co giãn duration & offset keyframe tỉ lệ thuận. */
+export function updateClipEndTime(
+  clip: TimelineClip,
+  rawEnd: number,
+  bounds?: { minStart: number; maxEnd: number },
+  minDur = 0.4,
+): Partial<TimelineClip> | null {
+  if (!Number.isFinite(rawEnd)) return null
+  const safeMinDur = Math.max(MIN_DURATION, minDur)
+  const minEnd = Number((clip.startTime + safeMinDur).toFixed(2))
+  if (bounds && Number.isFinite(bounds.maxEnd)) {
+    const boundMax = Number(bounds.maxEnd.toFixed(2))
+    if (boundMax < minEnd - 1e-6) return null
+  }
+  const maxEnd =
+    bounds && Number.isFinite(bounds.maxEnd)
+      ? Number(bounds.maxEnd.toFixed(2))
+      : Number.POSITIVE_INFINITY
+  const clampedEnd = clamp(Number(rawEnd.toFixed(2)), minEnd, maxEnd)
+  const duration = Math.max(safeMinDur, Number((clampedEnd - clip.startTime).toFixed(2)))
+  const ratio = duration / Math.max(0.01, clip.duration)
+  const keyframes = clip.keyframes.map((k) => ({
+    ...k,
+    offset: Number((k.offset * ratio).toFixed(2)),
+  }))
+  return { duration, keyframes }
+}
+
 /** Cập nhật độ cao của 1 điểm và trả về biên đồng bộ nếu là điểm đầu/cuối. */
 export function updateClipKeyframeHeight(
   clip: TimelineClip,
@@ -447,6 +635,31 @@ export function removeClipKeyframe(clip: TimelineClip, keyframeId: string): Clip
   return clip.keyframes.filter((k) => k.id !== keyframeId)
 }
 
+/** Điểm điều khiển cubic Bezier dùng chung cho nội suy evaluator và đường cong SVG. */
+function computeSegmentControlValues(
+  v0: number,
+  v1: number,
+  v2: number,
+  v3: number,
+  count: number,
+  mode: 'smooth' | 'linear',
+  minBound: number,
+  maxBound: number,
+): { c1: number; c2: number } {
+  if (mode === 'linear' || count < 3) {
+    return {
+      c1: v1 + (v2 - v1) / 3,
+      c2: v1 + (2 * (v2 - v1)) / 3,
+    }
+  }
+  const segLo = Math.max(minBound, Math.min(v1, v2))
+  const segHi = Math.min(maxBound, Math.max(v1, v2))
+  return {
+    c1: clamp(v1 + (v2 - v0) / 6, segLo, segHi),
+    c2: clamp(v2 - (v3 - v1) / 6, segLo, segHi),
+  }
+}
+
 /** Đánh giá độ cao mục tiêu (m) của một module tại thời điểm `time` trên timeline. */
 export function evaluateModuleTimelineHeight(
   clips: TimelineClip[],
@@ -483,16 +696,22 @@ export function evaluateModuleTimelineHeight(
         const p2 = sorted[seg + 1]
         const span = Math.max(0.0001, p2.offset - p1.offset)
         const u = Math.max(0, Math.min(1, (rel - p1.offset) / span))
-        if (c.curveMode === 'linear') {
+        const mode = c.curveMode ?? 'smooth'
+        if (mode === 'linear' || sorted.length < 3) {
           return Math.max(minH, Math.min(maxH, Number((p1.height + (p2.height - p1.height) * u).toFixed(3))))
         }
-        // Nội suy Catmull-Rom khớp với đồ thị mượt trên Timeline, giữ phẳng đoạn đồng độ cao
         const p0 = sorted[seg - 1] ?? p1
         const p3 = sorted[seg + 2] ?? p2
-        const segLo = Math.min(p1.height, p2.height)
-        const segHi = Math.max(p1.height, p2.height)
-        const c1 = clamp(p1.height + (p2.height - p0.height) / 6, segLo, segHi)
-        const c2 = clamp(p2.height - (p3.height - p1.height) / 6, segLo, segHi)
+        const { c1, c2 } = computeSegmentControlValues(
+          p0.height,
+          p1.height,
+          p2.height,
+          p3.height,
+          sorted.length,
+          mode,
+          minH,
+          maxH,
+        )
         const inv = 1 - u
         const h =
           inv * inv * inv * p1.height +
@@ -523,9 +742,225 @@ export function evaluateModuleTimelineHeight(
   return Math.max(minH, Math.min(maxH, modKeys[modKeys.length - 1].targets[mod.id]))
 }
 
+/** Bộ giữ trạng thái đoạn tuyến tính (Thẳng) đang chạy cho từng module để chỉ gửi 1 lệnh mỗi đoạn P. */
+export class LinearFollowPlanner {
+  private readonly active = new Map<string, string>()
+
+  reset(): void {
+    this.active.clear()
+  }
+
+  invalidateModule(moduleId: string): void {
+    this.active.delete(moduleId)
+  }
+
+  getActiveKey(moduleId: string): string | undefined {
+    return this.active.get(moduleId)
+  }
+
+  setActiveKey(moduleId: string, key: string): void {
+    this.active.set(moduleId, key)
+  }
+}
+
+export interface TimelineFollowPlan {
+  commands: Command[]
+  warnings: string[]
+}
+
+function buildSmoothMoveCommand(
+  mod: ModuleCfg,
+  clips: TimelineClip[],
+  keys: TimelineKey[],
+  time: number,
+  lookaheadSec: number,
+  snap?: Pick<Snapshot, 'modules'> | null,
+): Command | null {
+  const hNow = evaluateModuleTimelineHeight(clips, keys, mod, time)
+  if (hNow === null) return null
+  const hAhead =
+    lookaheadSec > 0 ? (evaluateModuleTimelineHeight(clips, keys, mod, time + lookaheadSec) ?? hNow) : hNow
+
+  const st = snap?.modules[mod.id]
+  const curPos = st?.pos ?? hNow
+  const curTarget = st?.target ?? curPos
+  if (st && Math.abs(hAhead - curTarget) < 0.0015 && Math.abs(hAhead - curPos) < 0.0015) {
+    return null
+  }
+
+  let speedCms: number
+  if (lookaheadSec <= 0) {
+    speedCms = mod.maxSpeedCms
+  } else {
+    const velCurveCms = (Math.abs(hAhead - hNow) * 100) / Math.max(0.02, lookaheadSec)
+    const lagError = Math.abs(hNow - curPos)
+    speedCms =
+      lagError > 0.08
+        ? mod.maxSpeedCms
+        : clamp(velCurveCms + (lagError * 100) / 0.25, 1, mod.maxSpeedCms)
+  }
+
+  return {
+    type: 'move',
+    ids: [mod.id],
+    target: hAhead,
+    speed: { unit: 'cms', value: Number(speedCms.toFixed(2)) },
+  }
+}
+
 /**
- * Tạo tập lệnh DMX theo dõi liên tục đường cong timeline (hỗ trợ cả Mượt Catmull-Rom và Thẳng).
- * Dùng cả cho Play (lookaheadSec > 0) và scrub/nhảy playhead (lookaheadSec = 0).
+ * Lập kế hoạch lệnh DMX cho Timeline:
+ * - Chế độ Mượt (`smooth`): bám liên tục theo lookahead.
+ * - Chế độ Thẳng (`linear`): gửi đúng 1 lệnh target + speed hiệu chuẩn ở đầu mỗi đoạn P (hoặc sau seek/unlock),
+ *   giữ ổn định trong suốt đoạn, không gửi lại mỗi khung hình, và cảnh báo 1 lần nếu đoạn vượt quá tốc độ tối đa.
+ */
+export function planTimelineFollow(
+  modules: ModuleCfg[],
+  clips: TimelineClip[],
+  keys: TimelineKey[],
+  time: number,
+  lookaheadSec = 0.06,
+  snap?: Pick<Snapshot, 'modules'> | null,
+  planner?: LinearFollowPlanner,
+): TimelineFollowPlan {
+  const commands: Command[] = []
+  const warnings: string[] = []
+
+  for (const mod of modules) {
+    if (lookaheadSec <= 0) {
+      planner?.invalidateModule(mod.id)
+      const cmd = buildSmoothMoveCommand(mod, clips, keys, time, 0, snap)
+      if (cmd) commands.push(cmd)
+      continue
+    }
+
+    const modClips = clips
+      .filter((c) => c.moduleId === mod.id && c.keyframes.length > 0)
+      .sort((a, b) => a.startTime - b.startTime)
+
+    if (modClips.length === 0) {
+      planner?.invalidateModule(mod.id)
+      const cmd = buildSmoothMoveCommand(mod, clips, keys, time, lookaheadSec, snap)
+      if (cmd) commands.push(cmd)
+      continue
+    }
+
+    const activeIdx = modClips.findIndex((c) => time >= c.startTime && time < c.startTime + c.duration)
+    const activeClip = activeIdx >= 0 ? modClips[activeIdx] : null
+
+    if (activeClip && (activeClip.curveMode ?? 'smooth') !== 'linear') {
+      planner?.invalidateModule(mod.id)
+      const cmd = buildSmoothMoveCommand(mod, clips, keys, time, lookaheadSec, snap)
+      if (cmd) commands.push(cmd)
+      continue
+    }
+
+    const minH = mod.minHeight
+    const maxH = Math.min(mod.length, Math.max(minH, mod.maxHeight))
+    const clampH = (h: number) => Math.max(minH, Math.min(maxH, Number(h.toFixed(3))))
+
+    let targetH: number
+    let segKey: string
+    let remainingSec: number | null = null
+    let segLabel = ''
+    let defaultFromH: number
+
+    if (activeClip) {
+      const sorted = [...activeClip.keyframes].sort((a, b) => a.offset - b.offset)
+      const rel = time - activeClip.startTime
+      if (sorted.length === 1 || rel < sorted[0].offset) {
+        targetH = clampH(sorted[0].height)
+        defaultFromH = targetH
+        const rem = sorted[0].offset - rel
+        remainingSec = rem > 0.02 ? rem : null
+        segKey = `pre:${activeClip.id}:${sorted[0].id}:${activeClip.startTime}:${sorted[0].offset}:${targetH}:${minH}:${maxH}:${mod.maxSpeedCms}`
+      } else if (rel >= sorted[sorted.length - 1].offset) {
+        targetH = clampH(sorted[sorted.length - 1].height)
+        defaultFromH = targetH
+        segKey = `tail:${activeClip.id}:${sorted[sorted.length - 1].id}:${activeClip.startTime}:${activeClip.duration}:${targetH}:${minH}:${maxH}`
+      } else {
+        let seg = 0
+        while (seg + 1 < sorted.length && sorted[seg + 1].offset <= rel) seg += 1
+        const p1 = sorted[seg]
+        const p2 = sorted[seg + 1]
+        targetH = clampH(p2.height)
+        defaultFromH = clampH(p1.height)
+        remainingSec = Math.max(0.02, activeClip.startTime + p2.offset - time)
+        segLabel = `P${seg + 1}→P${seg + 2}`
+        segKey = `seg:${activeClip.id}:${p1.id}:${p2.id}:${activeClip.startTime}:${activeClip.duration}:${p1.offset}:${p2.offset}:${targetH}:${minH}:${maxH}:${mod.maxSpeedCms}`
+      }
+    } else if (time < modClips[0].startTime) {
+      if ((modClips[0].curveMode ?? 'smooth') !== 'linear') {
+        planner?.invalidateModule(mod.id)
+        const cmd = buildSmoothMoveCommand(mod, clips, keys, time, lookaheadSec, snap)
+        if (cmd) commands.push(cmd)
+        continue
+      }
+      const firstSorted = [...modClips[0].keyframes].sort((a, b) => a.offset - b.offset)
+      targetH = clampH(firstSorted[0].height)
+      defaultFromH = targetH
+      segKey = `preroll:${modClips[0].id}:${firstSorted[0].id}:${modClips[0].startTime}:${targetH}:${minH}:${maxH}`
+    } else {
+      let prevIdx = 0
+      for (let i = 0; i < modClips.length; i += 1) {
+        if (modClips[i].startTime + modClips[i].duration <= time) prevIdx = i
+      }
+      const prevClip = modClips[prevIdx]
+      if ((prevClip.curveMode ?? 'smooth') !== 'linear') {
+        planner?.invalidateModule(mod.id)
+        const cmd = buildSmoothMoveCommand(mod, clips, keys, time, lookaheadSec, snap)
+        if (cmd) commands.push(cmd)
+        continue
+      }
+      const prevSorted = [...prevClip.keyframes].sort((a, b) => a.offset - b.offset)
+      const lastKf = prevSorted[prevSorted.length - 1]
+      targetH = clampH(lastKf.height)
+      defaultFromH = targetH
+      segKey = `hold:${prevClip.id}:${lastKf.id}:${prevClip.startTime}:${prevClip.duration}:${targetH}:${minH}:${maxH}`
+    }
+
+    if (planner && planner.getActiveKey(mod.id) === segKey) {
+      continue
+    }
+    planner?.setActiveKey(mod.id, segKey)
+
+    const st = snap?.modules[mod.id]
+    const curPos = st?.pos ?? defaultFromH
+    const curTarget = st?.target ?? curPos
+    if (st && Math.abs(targetH - curPos) < 0.0015 && Math.abs(targetH - curTarget) < 0.0015) {
+      continue
+    }
+
+    const distM = Math.abs(targetH - curPos)
+    let speedCms: number
+    if (remainingSec === null || distM < 0.0015) {
+      speedCms = mod.maxSpeedCms
+    } else {
+      const requiredCms = (distM * 100) / remainingSec
+      if (requiredCms > mod.maxSpeedCms + 1e-3) {
+        const achievableSec = (distM * 100) / Math.max(1, mod.maxSpeedCms)
+        warnings.push(
+          `${mod.name} (${segLabel || 'đoạn thẳng'}): cần ${requiredCms.toFixed(0)} cm/s (> ${mod.maxSpeedCms} cm/s, cần ${achievableSec.toFixed(2)}s thay vì ${remainingSec.toFixed(2)}s)`,
+        )
+        speedCms = mod.maxSpeedCms
+      } else {
+        speedCms = clamp(requiredCms, 1, mod.maxSpeedCms)
+      }
+    }
+
+    commands.push({
+      type: 'move',
+      ids: [mod.id],
+      target: targetH,
+      speed: { unit: 'cms', value: Number(speedCms.toFixed(2)) },
+    })
+  }
+
+  return { commands, warnings }
+}
+
+/**
+ * Tạo tập lệnh DMX theo dõi đường cong timeline (Mượt dùng lookahead liên tục, Thẳng dùng từng đoạn P).
  */
 export function buildTimelineFollowCommands(
   modules: ModuleCfg[],
@@ -534,41 +969,184 @@ export function buildTimelineFollowCommands(
   time: number,
   lookaheadSec = 0.06,
   snap?: Pick<Snapshot, 'modules'> | null,
+  planner?: LinearFollowPlanner,
 ): Command[] {
-  const cmds: Command[] = []
-  for (const mod of modules) {
-    const hNow = evaluateModuleTimelineHeight(clips, keys, mod, time)
-    if (hNow === null) continue
-    const hAhead =
-      lookaheadSec > 0 ? (evaluateModuleTimelineHeight(clips, keys, mod, time + lookaheadSec) ?? hNow) : hNow
+  return planTimelineFollow(modules, clips, keys, time, lookaheadSec, snap, planner).commands
+}
 
-    const st = snap?.modules[mod.id]
-    const curPos = st?.pos ?? hNow
-    const curTarget = st?.target ?? curPos
-    if (st && Math.abs(hAhead - curTarget) < 0.0015 && Math.abs(hAhead - curPos) < 0.0015) {
-      continue
-    }
+export interface MarqueeClipRect {
+  id: string
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
 
-    let speedCms: number
-    if (lookaheadSec <= 0) {
-      speedCms = mod.maxSpeedCms
-    } else {
-      const velCurveCms = (Math.abs(hAhead - hNow) * 100) / Math.max(0.02, lookaheadSec)
-      const lagError = Math.abs(hNow - curPos)
-      speedCms =
-        lagError > 0.08
-          ? mod.maxSpeedCms
-          : clamp(velCurveCms + (lagError * 100) / 0.25, 1, mod.maxSpeedCms)
-    }
+export interface MarqueeBox {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+}
 
-    cmds.push({
-      type: 'move',
-      ids: [mod.id],
-      target: hAhead,
-      speed: { unit: 'cms', value: Number(speedCms.toFixed(2)) },
-    })
+/** Trả về danh sách ID clip giao với vùng kéo chọn (hỗ trợ kéo theo mọi hướng). */
+export function computeMarqueeSelectedClipIds(rects: readonly MarqueeClipRect[], box: MarqueeBox): string[] {
+  const minX = Math.min(box.x1, box.x2)
+  const maxX = Math.max(box.x1, box.x2)
+  const minY = Math.min(box.y1, box.y2)
+  const maxY = Math.max(box.y1, box.y2)
+  return rects
+    .filter((r) => r.right >= minX && r.left <= maxX && r.bottom >= minY && r.top <= maxY)
+    .map((r) => r.id)
+}
+
+/** Áp dụng mẫu sóng / chế độ đường cho nhóm clip đang chọn, giữ nguyên thời gian và biên hành trình từng module. */
+export function buildPresetPatchForClips(
+  clips: TimelineClip[],
+  modules: ModuleCfg[],
+  targetClipIds: readonly string[],
+  opts: { presetId?: CurvePresetId; curveMode?: 'smooth' | 'linear' },
+): TimelineClip[] | null {
+  if (targetClipIds.length === 0 || (!opts.presetId && !opts.curveMode)) return null
+  const targetSet = new Set(targetClipIds)
+  const modMap = new Map(modules.map((m) => [m.id, m]))
+  let matched = 0
+
+  for (const c of clips) {
+    if (!targetSet.has(c.id)) continue
+    if (!modMap.has(c.moduleId)) return null
+    matched += 1
   }
-  return cmds
+  if (matched === 0) return null
+
+  return clips.map((c, idx) => {
+    if (!targetSet.has(c.id)) return c
+    const mod = modMap.get(c.moduleId)!
+    const hi = Math.min(mod.length, Math.max(mod.minHeight, mod.maxHeight))
+    const lo = Math.min(Math.max(0, mod.minHeight), hi)
+    const nextCurveMode: 'smooth' | 'linear' =
+      opts.curveMode ??
+      (opts.presetId === 'triangle' || opts.presetId === 'steps' || opts.presetId === 'hold' ? 'linear' : 'smooth')
+    const keyframes = opts.presetId
+      ? buildCurveKeyframes(opts.presetId, c.duration, lo, hi).map((kf, kIdx) => ({
+          ...kf,
+          id: `kf-grp-${Date.now()}-${idx}-${kIdx}-${Math.random().toString(36).slice(2, 5)}`,
+        }))
+      : c.keyframes
+    return {
+      ...c,
+      curveMode: nextCurveMode,
+      keyframes,
+    }
+  })
+}
+
+/** Cập nhật đồng loạt `startTime` hoặc `endTime` cho nhóm clip đang chọn, từ chối nguyên tử nếu vượt biên/chồng lấn. */
+export function buildTimingPatchForSelectedClips(
+  clips: TimelineClip[],
+  targetClipIds: readonly string[],
+  opts: { startTime?: number; endTime?: number },
+  minDur = 0.4,
+): TimelineClip[] | null {
+  if (targetClipIds.length === 0) return null
+  if (opts.startTime === undefined && opts.endTime === undefined) return null
+  if (opts.startTime !== undefined && (!Number.isFinite(opts.startTime) || opts.startTime < 0)) return null
+  if (opts.endTime !== undefined && (!Number.isFinite(opts.endTime) || opts.endTime < minDur)) return null
+
+  const targetSet = new Set(targetClipIds)
+  const unselected = clips.filter((c) => !targetSet.has(c.id))
+  let matched = 0
+
+  const nextClips = clips.map((c) => {
+    if (!targetSet.has(c.id)) return c
+    matched += 1
+    const othersSameMod = unselected.filter((u) => u.moduleId === c.moduleId)
+
+    if (opts.startTime !== undefined) {
+      const nextStart = Number(Math.max(0, opts.startTime).toFixed(2))
+      const nextEnd = nextStart + c.duration
+      const collides = othersSameMod.some((u) => {
+        const uEnd = u.startTime + Math.max(MIN_DURATION, u.duration)
+        return nextStart < uEnd - 1e-6 && nextEnd > u.startTime + 1e-6
+      })
+      if (collides) return null
+      return { ...c, startTime: nextStart }
+    }
+
+    const rawEnd = Number(opts.endTime!.toFixed(2))
+    if (rawEnd < Number((c.startTime + minDur).toFixed(2)) - 1e-6) return null
+    const nextClipAfter = othersSameMod
+      .filter((u) => u.startTime >= c.startTime + c.duration - 1e-6)
+      .sort((a, b) => a.startTime - b.startTime)[0]
+    const maxEnd = nextClipAfter ? Number(nextClipAfter.startTime.toFixed(2)) : Number.POSITIVE_INFINITY
+    if (rawEnd > maxEnd + 1e-6) return null
+
+    const patch = updateClipEndTime(c, rawEnd, { minStart: 0, maxEnd }, minDur)
+    if (!patch) return null
+    return { ...c, ...patch }
+  })
+
+  if (matched === 0 || nextClips.some((c) => c === null)) return null
+  const resolved = nextClips as TimelineClip[]
+
+  // Kiểm tra hai clip cùng module không tự chồng lấn nhau sau khi cập nhật nhóm.
+  const byMod = new Map<string, TimelineClip[]>()
+  for (const c of resolved) {
+    const arr = byMod.get(c.moduleId) ?? []
+    arr.push(c)
+    byMod.set(c.moduleId, arr)
+  }
+  for (const modClips of byMod.values()) {
+    const sorted = [...modClips].sort((a, b) => a.startTime - b.startTime)
+    for (let i = 0; i < sorted.length - 1; i += 1) {
+      const endA = sorted[i].startTime + Math.max(MIN_DURATION, sorted[i].duration)
+      if (endA > sorted[i + 1].startTime + 1e-6) return null
+    }
+  }
+
+  return resolved
+}
+
+/** Tính delta tịnh tiến hợp lệ (giữ nguyên khoảng cách tương đối, chặn biên 0 và clip không được chọn) rồi tạo mảng clip mới. */
+export function buildMultiClipShiftPatch(
+  clips: TimelineClip[],
+  selectedIds: readonly string[],
+  rawDeltaSec: number,
+  origStarts?: ReadonlyMap<string, number>,
+): { clips: TimelineClip[]; delta: number } | null {
+  if (!Number.isFinite(rawDeltaSec) || selectedIds.length === 0) return null
+  const selSet = new Set(selectedIds)
+  const selected = clips.filter((c) => selSet.has(c.id))
+  if (selected.length === 0) return null
+  const unselected = clips.filter((c) => !selSet.has(c.id))
+
+  let minDelta = Number.NEGATIVE_INFINITY
+  let maxDelta = Number.POSITIVE_INFINITY
+
+  for (const s of selected) {
+    const baseStart = origStarts?.get(s.id) ?? s.startTime
+    minDelta = Math.max(minDelta, -baseStart)
+    const baseEnd = baseStart + Math.max(MIN_DURATION, s.duration)
+
+    for (const u of unselected) {
+      if (u.moduleId !== s.moduleId) continue
+      const uEnd = u.startTime + Math.max(MIN_DURATION, u.duration)
+      if (uEnd <= baseStart + 1e-6) {
+        minDelta = Math.max(minDelta, uEnd - baseStart)
+      } else if (u.startTime >= baseEnd - 1e-6) {
+        maxDelta = Math.min(maxDelta, u.startTime - baseEnd)
+      }
+    }
+  }
+
+  if (minDelta > maxDelta + 1e-6) return null
+  const delta = Number(clamp(rawDeltaSec, minDelta, maxDelta).toFixed(2))
+  const nextClips = clips.map((c) => {
+    if (!selSet.has(c.id)) return c
+    const baseStart = origStarts?.get(c.id) ?? c.startTime
+    return { ...c, startTime: Number(Math.max(0, baseStart + delta).toFixed(2)) }
+  })
+  return { clips: nextClips, delta }
 }
 
 /** Phân tích chuỗi người dùng nhập khi double-click nhãn playhead (số giây như "3.5", "3,5", "12s" hoặc timecode "hh:mm:ss:ff"). */
@@ -628,7 +1206,7 @@ export function mapKeyframesToPts(
   })
 }
 
-/** Sinh path cubic Bezier mượt (Catmull-Rom có giới hạn dọc) cho từng đoạn i -> i+1. */
+/** Sinh path cubic Bezier mượt khớp hoàn toàn với hàm nội suy evaluateModuleTimelineHeight cho đoạn i -> i+1. */
 export function segmentPath(
   pts: CurvePt[],
   i: number,
@@ -644,13 +1222,10 @@ export function segmentPath(
   }
   const p0 = pts[i - 1] ?? p1
   const p3 = pts[i + 2] ?? p2
-  const segMinY = Math.max(minY, Math.min(p1.y, p2.y) - 3)
-  const segMaxY = Math.min(maxY, Math.max(p1.y, p2.y) + 3)
-
-  const c1x = clamp(p1.x + (p2.x - p0.x) / 6, p1.x, p2.x)
-  const c1y = clamp(p1.y + (p2.y - p0.y) / 6, segMinY, segMaxY)
-  const c2x = clamp(p2.x - (p3.x - p1.x) / 6, p1.x, p2.x)
-  const c2y = clamp(p2.y - (p3.y - p1.y) / 6, segMinY, segMaxY)
+  const dx = p2.x - p1.x
+  const c1x = p1.x + dx / 3
+  const c2x = p1.x + (2 * dx) / 3
+  const { c1: c1y, c2: c2y } = computeSegmentControlValues(p0.y, p1.y, p2.y, p3.y, pts.length, mode, minY, maxY)
 
   return `M ${p1.x.toFixed(1)} ${p1.y.toFixed(1)} C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`
 }

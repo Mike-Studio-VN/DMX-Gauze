@@ -6,7 +6,7 @@ import { Box, Eye, Grid, Maximize2, RotateCcw, SlidersHorizontal, Video } from '
 import type { SnapshotDto } from '@shared/api'
 import { CH, addressRange } from '@shared/dmx'
 import { defaultLayerTransform, defaultModuleTransform } from '@shared/preset'
-import { DEG2RAD, computeModuleBasePositions } from '@shared/stage3d'
+import { DEG2RAD, computeModuleBasePositions, pickFirstVisibleHit } from '@shared/stage3d'
 import type { Layer, ModuleCfg } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 
@@ -499,9 +499,9 @@ export function Stage3D() {
       pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
 
       raycaster.setFromCamera(pointer, camera)
-      const intersects = raycaster.intersectObjects(raycastTargets, false)
-      if (intersects.length > 0) {
-        const hitModuleId = intersects[0].object.userData?.moduleId as string | undefined
+      const hit = pickFirstVisibleHit(raycaster.intersectObjects(raycastTargets, false))
+      if (hit) {
+        const hitModuleId = hit.object.userData?.moduleId as string | undefined
         if (hitModuleId) {
           onSelectRef.current(hitModuleId, { multi: e.ctrlKey || e.metaKey, range: e.shiftKey })
         }
@@ -519,9 +519,9 @@ export function Stage3D() {
       pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
 
       raycaster.setFromCamera(pointer, camera)
-      const intersects = raycaster.intersectObjects(raycastTargets, false)
-      if (intersects.length > 0) {
-        const hitId = intersects[0].object.userData?.moduleId as string | undefined
+      const hit = pickFirstVisibleHit(raycaster.intersectObjects(raycastTargets, false))
+      if (hit) {
+        const hitId = hit.object.userData?.moduleId as string | undefined
         const found = positionedRef.current.find((p) => p.mod.id === hitId)?.mod
         if (found) {
           renderer.domElement.style.cursor = 'pointer'

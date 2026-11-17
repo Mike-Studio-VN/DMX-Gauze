@@ -19,17 +19,19 @@ import {
 } from 'lucide-react'
 import { clamp } from '@shared/convert'
 import { addressRange } from '@shared/dmx'
-import { LtcDecoder } from '@shared/ltc'
+import { LtcClockTracker, LtcDecoder } from '@shared/ltc'
 import { FPS_OPTIONS, formatTc, tcToSeconds } from '@shared/timecode'
 import {
+  LinearFollowPlanner,
   analyzeClipSpeeds,
   analyzeTimeline,
   buildCurveKeyframes,
-  buildTimelineFollowCommands,
+  computeMarqueeSelectedClipIds,
   fullCurvePath,
   heightToPercent,
   mapKeyframesToPts,
   parseTimelineSecondsInput,
+  planTimelineFollow,
   resolveClipBoundsNoOverlap,
   resolveClipStartNoOverlap,
   segmentPath,
@@ -39,7 +41,7 @@ import { useAppStore } from '../store/useAppStore'
 
 const MIN_CLIP_DUR = 0.4
 const CLIP_MIN_W = 24
-const CURVE_COLORS = ['#F7842E', '#FFCB72', '#7FDDA8', '#8DB8FF', '#FF9A4D']
+const CURVE_COLORS = ['#F7842E', '#C58A5B', '#A86A3E', '#DE9D68', '#8F5B38']
 const BODY_H = 28
 const DOT_PAD_X = 6
 const DOT_PAD_Y = 5
@@ -94,17 +96,21 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     snapshot,
     selectedIds,
     selectedClipId,
+    selectedClipIds,
     selectedKeyId,
     selectedTimelineLayerId,
     selectModule,
     selectTimelineClip,
+    selectTimelineClips,
     selectTimelineKey: setSelectedKeyId,
     selectTimelineLayer,
     toggleLayerSync,
     addClip,
     updateClip,
+    moveSelectedClipsByDelta,
     updateTimelineSettings,
     setSettingsOpen,
+    setPlayheadTime,
     sendCommand,
     notify,
   } = useAppStore()
@@ -112,16 +118,28 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   const fps = project.settings.timeline.fps
   const clips = useMemo(() => project.clips ?? [], [project.clips])
   const [time, setTime] = useState(project.settings.timeline.startTime)
+
+  useEffect(() => {
+    setPlayheadTime(time)
+  }, [time, setPlayheadTime])
   const [playing, setPlaying] = useState(false)
   const [ltcActive, setLtcActive] = useState(false)
   const [ltcStatus, setLtcStatus] = useState<'off' | 'lock' | 'freewheel' | 'lost'>('off')
   const [pxPerSec, setPxPerSec] = useState(64)
   const [editingHead, setEditingHead] = useState(false)
   const [headInput, setHeadInput] = useState('')
+  const headCanceledRef = useRef(false)
   const [collapsedLayers, setCollapsedLayers] = useState<Record<string, boolean>>({})
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null)
+  const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const [dragTimeTip, setDragTimeTip] = useState<{ x: number; y: number; text: string } | null>(null)
 
   const rulerRef = useRef<HTMLDivElement>(null)
+  const tracksScrollRef = useRef<HTMLDivElement>(null)
+  const tracksContainerRef = useRef<HTMLDivElement>(null)
+  const marqueeDraggedRef = useRef(false)
+  const clipDraggedRef = useRef(false)
+  const marqueeCleanupRef = useRef<(() => void) | null>(null)
   const timeRef = useRef(time)
   timeRef.current = time
   const clipsRef = useRef(clips)
@@ -136,6 +154,8 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   sendCommandRef.current = sendCommand
   const lastScrubSendRef = useRef(0)
   const lastFollowSendRef = useRef(0)
+  const linearPlannerRef = useRef(new LinearFollowPlanner())
+  const prevLtcSecRef = useRef<number | null>(null)
 
   const maxTime = useMemo(
     () => Math.max(20, ...clips.map((c) => c.startTime + c.duration + 4), ...project.keys.map((k) => k.time + 4)),
@@ -147,42 +167,68 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
 
   const dispatchTimelineFollow = (t: number, lookaheadSec: number) => {
     const snap = snapshotRef.current
-    if (snap?.locked) return
-    const cmds = buildTimelineFollowCommands(
+    if (snap?.locked) {
+      linearPlannerRef.current.reset()
+      return
+    }
+    const { commands, warnings } = planTimelineFollow(
       modulesRef.current,
       clipsRef.current,
       keysRef.current,
       t,
       lookaheadSec,
       snap,
+      linearPlannerRef.current,
     )
-    for (const c of cmds) void sendCommandRef.current(c, { quietWarnings: true })
+    if (warnings.length > 0) notify(warnings[0], 'warn')
+    for (const c of commands) void sendCommandRef.current(c, { quietWarnings: true })
   }
+  const dispatchFollowRef = useRef(dispatchTimelineFollow)
+  dispatchFollowRef.current = dispatchTimelineFollow
+
+  useEffect(() => () => marqueeCleanupRef.current?.(), [])
+
+  useEffect(() => {
+    if (snapshot?.locked) {
+      linearPlannerRef.current.reset()
+      if (playing) setPlaying(false)
+    }
+  }, [snapshot?.locked, playing])
 
   useEffect(() => {
     if (!playing || ltcActive) return
+    const planner = linearPlannerRef.current
+    let cancelled = false
     let raf = 0
     let last = performance.now()
     lastFollowSendRef.current = 0
+    planner.reset()
     const step = (now: number) => {
+      if (cancelled) return
       const dt = (now - last) / 1000
       last = now
       const next = Math.min(maxTime, timeRef.current + dt)
+      timeRef.current = next
       setTime(next)
       if (now - lastFollowSendRef.current >= 38) {
         lastFollowSendRef.current = now
-        dispatchTimelineFollow(next, 0.06)
+        dispatchFollowRef.current(next, 0.06)
       }
       if (next >= maxTime) {
-        dispatchTimelineFollow(maxTime, 0)
+        planner.reset()
+        dispatchFollowRef.current(maxTime, 0)
         setPlaying(false)
-      } else {
+      } else if (!cancelled) {
         raf = requestAnimationFrame(step)
       }
     }
-    dispatchTimelineFollow(timeRef.current, 0.06)
+    dispatchFollowRef.current(timeRef.current, 0.06)
     raf = requestAnimationFrame(step)
-    return () => cancelAnimationFrame(raf)
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(raf)
+      planner.reset()
+    }
   }, [playing, ltcActive, maxTime])
 
   useEffect(() => {
@@ -190,10 +236,15 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       setLtcStatus('off')
       return
     }
+    const planner = linearPlannerRef.current
     let stopped = false
     let ctx: AudioContext | null = null
     let stream: MediaStream | null = null
-    let lastFrameAt = 0
+    let hasDecoded = false
+    const clock = new LtcClockTracker()
+    lastFollowSendRef.current = 0
+    prevLtcSecRef.current = null
+    planner.reset()
 
     const startLtc = async () => {
       try {
@@ -207,13 +258,21 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
         const dec = new LtcDecoder(
           ctx.sampleRate,
           (f) => {
-            lastFrameAt = performance.now()
+            if (stopped) return
+            hasDecoded = true
+            const nowMs = performance.now()
+            const rawSec = tcToSeconds(f, fps) + project.settings.ltc.offsetFrames / fps
+            const sec = clamp(clock.onDecodedFrame(rawSec, nowMs), 0, maxTime)
+            if (prevLtcSecRef.current !== null && Math.abs(sec - prevLtcSecRef.current) > 0.25) {
+              planner.reset()
+            }
+            prevLtcSecRef.current = sec
             setLtcStatus('lock')
-            const sec = tcToSeconds(f, fps) + project.settings.ltc.offsetFrames / fps
+            timeRef.current = sec
             setTime(sec)
-            if (lastFrameAt - lastFollowSendRef.current >= 35) {
-              lastFollowSendRef.current = lastFrameAt
-              dispatchTimelineFollow(sec, 0.06)
+            if (nowMs - lastFollowSendRef.current >= 35) {
+              lastFollowSendRef.current = nowMs
+              dispatchFollowRef.current(sec, 0.06)
             }
           },
           fps === 29.97 ? 30 : fps,
@@ -233,27 +292,47 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     void startLtc()
 
     const watch = setInterval(() => {
-      if (!lastFrameAt) return
-      const gapMs = performance.now() - lastFrameAt
-      const fwMs = (project.settings.ltc.freewheelFrames / fps) * 1000
-      if (gapMs > fwMs) setLtcStatus('lost')
-      else if (gapMs > 80) setLtcStatus('freewheel')
-    }, 80)
+      if (stopped || !hasDecoded) return
+      const res = clock.poll(performance.now(), fps, project.settings.ltc.freewheelFrames)
+      setLtcStatus(res.status)
+      if (res.timeSec !== null) {
+        const clampedSec = clamp(res.timeSec, 0, maxTime)
+        timeRef.current = clampedSec
+        setTime(clampedSec)
+        if (res.shouldFollow) {
+          const nowMs = performance.now()
+          if (nowMs - lastFollowSendRef.current >= 35) {
+            lastFollowSendRef.current = nowMs
+            dispatchFollowRef.current(clampedSec, 0.06)
+          }
+        }
+      }
+      if (res.shouldStop) {
+        planner.reset()
+        void sendCommandRef.current({ type: 'stop', ids: 'all' })
+      }
+    }, 35)
 
     return () => {
       stopped = true
+      clock.reset()
+      planner.reset()
+      prevLtcSecRef.current = null
       clearInterval(watch)
       stream?.getTracks().forEach((t) => t.stop())
       void ctx?.close()
     }
-  }, [ltcActive, fps, project.settings.ltc, notify])
+  }, [ltcActive, fps, maxTime, project.settings.ltc, notify])
 
   const previewTimelineAt = (t: number) => {
+    linearPlannerRef.current.reset()
     dispatchTimelineFollow(t, 0)
   }
 
   const seekTo = (t: number, forcePreview = true) => {
     const clampedT = clamp(t, 0, maxTime)
+    linearPlannerRef.current.reset()
+    timeRef.current = clampedT
     setTime(clampedT)
     if (!forcePreview) return
     const now = performance.now()
@@ -264,6 +343,11 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   }
 
   const commitHeadInput = () => {
+    if (headCanceledRef.current) {
+      headCanceledRef.current = false
+      setEditingHead(false)
+      return
+    }
     const parsed = parseTimelineSecondsInput(headInput, fps)
     if (parsed !== null) {
       const clampedT = clamp(Number(parsed.toFixed(2)), 0, maxTime)
@@ -322,19 +406,51 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     clip: TimelineClip,
     mode: 'move' | 'trim-left' | 'trim-right',
   ) => {
+    if (e.button !== 0) return
     e.stopPropagation()
-    selectTimelineClip(clip.id)
+    const isMultiMove = mode === 'move' && selectedClipIds.length > 1 && selectedClipIds.includes(clip.id)
+    if (!isMultiMove) {
+      selectTimelineClip(clip.id)
+    }
+    clipDraggedRef.current = false
     const startX = e.clientX
     const origStart = clip.startTime
     const origDur = clip.duration
     const origKfs = clip.keyframes
+    const origStarts = isMultiMove
+      ? new Map(clipsRef.current.filter((c) => selectedClipIds.includes(c.id)).map((c) => [c.id, c.startTime]))
+      : null
+    const multiDragKey = isMultiMove ? `clip-multi-move-${Date.now()}` : ''
+
+    const updateTooltip = (ev: PointerEvent, text: string) => {
+      const container = tracksContainerRef.current
+      if (!container) return
+      const rect = container.getBoundingClientRect()
+      setDragTimeTip({
+        x: Math.max(174, ev.clientX - rect.left + 10),
+        y: Math.max(28, ev.clientY - rect.top - 26),
+        text,
+      })
+    }
 
     const onMove = (ev: PointerEvent) => {
+      if (!clipDraggedRef.current && Math.abs(ev.clientX - startX) < 3) return
+      clipDraggedRef.current = true
       const dxSec = (ev.clientX - startX) / pxPerSec
+      if (isMultiMove && origStarts) {
+        const appliedDelta = moveSelectedClipsByDelta(origStarts, dxSec, multiDragKey)
+        if (appliedDelta !== null) {
+          const nextS = Math.max(0, origStart + appliedDelta)
+          const sign = appliedDelta >= 0 ? '+' : ''
+          updateTooltip(ev, `${nextS.toFixed(2)}s → ${(nextS + origDur).toFixed(2)}s (${sign}${appliedDelta.toFixed(2)}s)`)
+        }
+        return
+      }
       const sameModClips = clipsRef.current.filter((c) => c.moduleId === clip.moduleId)
       if (mode === 'move') {
         const nextStart = resolveClipStartNoOverlap(sameModClips, origDur, origStart + dxSec, clip.id)
         updateClip(clip.id, { startTime: nextStart }, `clip-move-${clip.id}`)
+        updateTooltip(ev, `${nextStart.toFixed(2)}s → ${(nextStart + origDur).toFixed(2)}s`)
       } else if (mode === 'trim-right') {
         const bounds = resolveClipBoundsNoOverlap(sameModClips, clip)
         const maxDur = Number.isFinite(bounds.maxEnd)
@@ -344,6 +460,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
         const ratio = nextDur / Math.max(0.01, origDur)
         const nextKfs = origKfs.map((k) => ({ ...k, offset: Number((k.offset * ratio).toFixed(2)) }))
         updateClip(clip.id, { duration: nextDur, keyframes: nextKfs }, `clip-trim-${clip.id}`)
+        updateTooltip(ev, `${origStart.toFixed(2)}s → ${(origStart + nextDur).toFixed(2)}s (${nextDur.toFixed(2)}s)`)
       } else {
         const bounds = resolveClipBoundsNoOverlap(sameModClips, clip)
         const minShift = bounds.minStart - origStart
@@ -354,15 +471,19 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
         const ratio = nextDur / Math.max(0.01, origDur)
         const nextKfs = origKfs.map((k) => ({ ...k, offset: Number((k.offset * ratio).toFixed(2)) }))
         updateClip(clip.id, { startTime: nextStart, duration: nextDur, keyframes: nextKfs }, `clip-trim-${clip.id}`)
+        updateTooltip(ev, `${nextStart.toFixed(2)}s → ${(nextStart + nextDur).toFixed(2)}s (${nextDur.toFixed(2)}s)`)
       }
     }
 
     const onUp = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      setDragTimeTip(null)
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
   }
 
   const startKeyframeDrag = (
@@ -506,6 +627,126 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     setSelectedKeyId(kfId)
   }
 
+  const startMarqueeSelect = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 2) return
+    const container = tracksContainerRef.current
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    const startX = e.clientX - rect.left
+    const startY = e.clientY - rect.top
+    if (startX < 168) return
+
+    e.preventDefault()
+    marqueeCleanupRef.current?.()
+    marqueeDraggedRef.current = false
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey
+    let lastClientX = e.clientX
+    let lastClientY = e.clientY
+    let autoScrollRaf = 0
+    let active = true
+
+    const computeHits = (curX: number, curY: number) => {
+      const cRect = container.getBoundingClientRect()
+      const els = container.querySelectorAll<HTMLElement>('[data-clip-id]')
+      const clipRects = Array.from(els).map((el) => {
+        const r = el.getBoundingClientRect()
+        return {
+          id: el.dataset.clipId!,
+          left: r.left - cRect.left,
+          top: r.top - cRect.top,
+          right: r.right - cRect.left,
+          bottom: r.bottom - cRect.top,
+        }
+      })
+      return computeMarqueeSelectedClipIds(clipRects, { x1: startX, y1: startY, x2: curX, y2: curY })
+    }
+
+    const updateFromClient = (clientX: number, clientY: number) => {
+      const cRect = container.getBoundingClientRect()
+      const curX = Math.max(168, clientX - cRect.left)
+      const curY = Math.max(0, clientY - cRect.top)
+      if (!marqueeDraggedRef.current && Math.hypot(curX - startX, curY - startY) < 4) return
+      marqueeDraggedRef.current = true
+      setMarquee({
+        x: Math.min(startX, curX),
+        y: Math.min(startY, curY),
+        w: Math.abs(curX - startX),
+        h: Math.abs(curY - startY),
+      })
+      selectTimelineClips(computeHits(curX, curY), { additive })
+    }
+
+    const stepAutoScroll = () => {
+      if (!active) return
+      const scrollEl = tracksScrollRef.current
+      if (scrollEl && marqueeDraggedRef.current) {
+        const sRect = scrollEl.getBoundingClientRect()
+        const edge = 28
+        const topZone = sRect.top + 24 + edge
+        const bottomZone = sRect.bottom - edge
+        let dy = 0
+        if (lastClientY > bottomZone) {
+          dy = Math.min(14, Math.max(3, Math.round((lastClientY - bottomZone) * 0.4)))
+        } else if (lastClientY < topZone) {
+          dy = -Math.min(14, Math.max(3, Math.round((topZone - lastClientY) * 0.4)))
+        }
+        if (dy !== 0) {
+          const prevTop = scrollEl.scrollTop
+          scrollEl.scrollTop = Math.max(0, Math.min(scrollEl.scrollHeight - scrollEl.clientHeight, prevTop + dy))
+          if (scrollEl.scrollTop !== prevTop) {
+            updateFromClient(lastClientX, lastClientY)
+          }
+        }
+      }
+      autoScrollRaf = requestAnimationFrame(stepAutoScroll)
+    }
+
+    const onMove = (ev: PointerEvent) => {
+      lastClientX = ev.clientX
+      lastClientY = ev.clientY
+      updateFromClient(ev.clientX, ev.clientY)
+      if (!autoScrollRaf && marqueeDraggedRef.current) {
+        autoScrollRaf = requestAnimationFrame(stepAutoScroll)
+      }
+    }
+
+    const stopLoop = () => {
+      active = false
+      if (autoScrollRaf) {
+        cancelAnimationFrame(autoScrollRaf)
+        autoScrollRaf = 0
+      }
+    }
+
+    const finish = (ev?: PointerEvent) => {
+      stopLoop()
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+      marqueeCleanupRef.current = null
+      if (ev && marqueeDraggedRef.current) {
+        updateFromClient(ev.clientX, ev.clientY)
+      }
+      setMarquee(null)
+    }
+    const onUp = (ev: PointerEvent) => finish(ev)
+    const onCancel = () => {
+      marqueeDraggedRef.current = false
+      finish()
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+    marqueeCleanupRef.current = () => {
+      stopLoop()
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+      setMarquee(null)
+    }
+  }
+
   const timelineWidth = Math.ceil(maxTime * pxPerSec)
   const ticks = Array.from({ length: Math.ceil(maxTime) + 1 }, (_, i) => i)
 
@@ -524,6 +765,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     setLtcActive(false)
     if (playing) {
       setPlaying(false)
+      linearPlannerRef.current.reset()
       void sendCommand({ type: 'stop', ids: 'all' })
       return
     }
@@ -531,9 +773,11 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       notify('Đang khoá an toàn — bấm "Đang khoá" để mở khoá và chạy mô phỏng rèm', 'warn')
     }
     if (time >= maxTime - 0.05) {
+      timeRef.current = project.settings.timeline.startTime
       setTime(project.settings.timeline.startTime)
     }
     lastFollowSendRef.current = 0
+    linearPlannerRef.current.reset()
     setPlaying(true)
   }
 
@@ -726,8 +970,22 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       </div>
 
       {/* Khung NLE Waveform đồng bộ cuộn dọc & ngang */}
-      <div className="timeline-tracks min-h-0 min-w-0 flex-1 overflow-auto rounded-xl bg-[#0A0706] shadow-[inset_0_0_0_1px_var(--line)]">
-        <div style={{ width: 168 + timelineWidth }} className="relative min-h-full">
+      <div
+        ref={tracksScrollRef}
+        className="timeline-tracks min-h-0 min-w-0 flex-1 overflow-auto rounded-xl bg-[#0A0706] shadow-[inset_0_0_0_1px_var(--line)]"
+      >
+        <div
+          ref={tracksContainerRef}
+          onPointerDown={startMarqueeSelect}
+          onContextMenu={(e) => {
+            if (marqueeDraggedRef.current) {
+              e.preventDefault()
+              marqueeDraggedRef.current = false
+            }
+          }}
+          style={{ width: 168 + timelineWidth }}
+          className="relative min-h-full select-none"
+        >
           {/* Header Top Sticky: Corner + Time Ruler */}
           <div className="sticky top-0 z-30 flex h-6 border-b border-line bg-[#130D0A]">
             <div className="sticky left-0 z-30 flex w-[168px] shrink-0 items-center justify-between border-r border-line bg-[#130D0A] px-2.5 text-[10px] font-semibold tracking-wider text-muted uppercase">
@@ -747,12 +1005,14 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
                 onPointerDown={startHeadOrScrub}
                 onDoubleClick={(e) => {
                   e.stopPropagation()
+                  headCanceledRef.current = false
                   setHeadInput(time.toFixed(2))
                   setEditingHead(true)
                 }}
                 onKeyDown={(e) => {
                   if (!editingHead && (e.key === 'Enter' || e.key === 'F2')) {
                     e.preventDefault()
+                    headCanceledRef.current = false
                     setHeadInput(time.toFixed(2))
                     setEditingHead(true)
                   }
@@ -776,10 +1036,11 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
                         commitHeadInput()
                       } else if (e.key === 'Escape') {
                         e.preventDefault()
+                        headCanceledRef.current = true
                         setEditingHead(false)
                       }
                     }}
-                    className="w-12 bg-transparent text-center text-[10px] font-semibold text-[#172438] tabular-nums outline-none"
+                    className="w-12 bg-transparent text-center text-[10px] leading-none font-semibold text-[#172438] tabular-nums outline-none"
                   />
                 ) : (
                   `${time.toFixed(2)}s`
@@ -1124,17 +1385,11 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
                             )
                           })()}
 
-                          {modClips.length === 0 && (
-                            <div className="pointer-events-none relative z-[2] flex h-full items-center pl-3 text-[10.5px] text-muted/55">
-                              Double-click hoặc bấm + bên trái để tạo moment sóng (0 → 0)...
-                            </div>
-                          )}
-
                           {modClips.map((clip) => {
                             const issues = analyzeClipSpeeds(clip, mod)
                             const badSeg = issues.find((i) => !i.feasible)
                             const maxReq = issues.reduce((mx, i) => Math.max(mx, i.requiredCms), 0)
-                            const isSelected = selectedClipId === clip.id
+                            const isSelected = selectedClipId === clip.id || selectedClipIds.includes(clip.id)
                             const leftPx = clip.startTime * pxPerSec
                             const widthPx = Math.max(CLIP_MIN_W, clip.duration * pxPerSec)
 
@@ -1153,8 +1408,13 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
                             return (
                               <div
                                 key={clip.id}
+                                data-clip-id={clip.id}
                                 onClick={(e) => {
                                   e.stopPropagation()
+                                  if (clipDraggedRef.current) {
+                                    clipDraggedRef.current = false
+                                    return
+                                  }
                                   selectTimelineClip(clip.id)
                                 }}
                                 style={{ left: leftPx, width: widthPx }}
@@ -1370,6 +1630,20 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
           >
             <div className="timeline-playhead-tip" />
           </div>
+          {marquee && (
+            <div
+              style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
+              className="pointer-events-none absolute z-30 rounded-sm border border-[#F7842E] bg-[#F7842E]/15"
+            />
+          )}
+          {dragTimeTip && (
+            <div
+              style={{ left: dragTimeTip.x, top: dragTimeTip.y }}
+              className="pointer-events-none absolute z-40 rounded-md bg-[#1C0E04]/95 px-2 py-0.5 text-[10.5px] font-semibold text-[#FFD08A] tabular-nums shadow-[0_0_0_1px_var(--acc)]"
+            >
+              {dragTimeTip.text}
+            </div>
+          )}
         </div>
       </div>
     </div>
