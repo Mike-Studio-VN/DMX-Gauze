@@ -28,10 +28,13 @@ import {
   analyzeTimeline,
   buildCurveKeyframes,
   evaluateModuleTimelineHeight,
+  fullCurvePath,
   heightToPercent,
+  mapKeyframesToPts,
   parseTimelineSecondsInput,
   resolveClipBoundsNoOverlap,
   resolveClipStartNoOverlap,
+  segmentPath,
 } from '@shared/timeline'
 import type { ClipKeyframe, Fps, ModuleCfg, TimelineClip } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
@@ -42,11 +45,6 @@ const CURVE_COLORS = ['#F7842E', '#FFCB72', '#7FDDA8', '#8DB8FF', '#FF9A4D']
 const BODY_H = 28
 const DOT_PAD_X = 6
 const DOT_PAD_Y = 5
-
-interface Pt {
-  x: number
-  y: number
-}
 
 function heightToY(h: number, minH: number, maxH: number, height: number, padY = DOT_PAD_Y): number {
   const usableH = Math.max(4, height - padY * 2)
@@ -90,62 +88,6 @@ function buildTrackConnectorSegments(
   const last = clipMeta[clipMeta.length - 1]
   segs.push([last.left + last.width - padX, last.endY, timelineWidth, last.endY])
   return segs
-}
-
-function mapKeyframesToPts(
-  kfs: ClipKeyframe[],
-  duration: number,
-  minH: number,
-  maxH: number,
-  width: number,
-  height: number,
-  padX = DOT_PAD_X,
-  padY = DOT_PAD_Y,
-): Pt[] {
-  const usableW = Math.max(4, width - padX * 2)
-  const usableH = Math.max(4, height - padY * 2)
-  const span = Math.max(0.1, maxH - minH)
-  const dur = Math.max(0.01, duration)
-  return kfs.map((k) => {
-    const tNorm = clamp(k.offset / dur, 0, 1)
-    const hNorm = clamp((k.height - minH) / span, 0, 1)
-    return {
-      x: padX + tNorm * usableW,
-      y: padY + (1 - hNorm) * usableH,
-    }
-  })
-}
-
-/** Sinh path cubic Bezier mượt (Catmull-Rom có giới hạn dọc) cho từng đoạn i -> i+1 */
-function segmentPath(pts: Pt[], i: number, mode: 'smooth' | 'linear', minY: number, maxY: number): string {
-  const p1 = pts[i]
-  const p2 = pts[i + 1]
-  if (!p1 || !p2) return ''
-  if (mode === 'linear' || pts.length < 3) {
-    return `M ${p1.x.toFixed(1)} ${p1.y.toFixed(1)} L ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`
-  }
-  const p0 = pts[i - 1] ?? p1
-  const p3 = pts[i + 2] ?? p2
-  const segMinY = Math.max(minY, Math.min(p1.y, p2.y) - 3)
-  const segMaxY = Math.min(maxY, Math.max(p1.y, p2.y) + 3)
-
-  const c1x = clamp(p1.x + (p2.x - p0.x) / 6, p1.x, p2.x)
-  const c1y = clamp(p1.y + (p2.y - p0.y) / 6, segMinY, segMaxY)
-  const c2x = clamp(p2.x - (p3.x - p1.x) / 6, p1.x, p2.x)
-  const c2y = clamp(p2.y - (p3.y - p1.y) / 6, segMinY, segMaxY)
-
-  return `M ${p1.x.toFixed(1)} ${p1.y.toFixed(1)} C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`
-}
-
-function fullCurvePath(pts: Pt[], mode: 'smooth' | 'linear', minY: number, maxY: number): string {
-  if (pts.length < 2) return ''
-  let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`
-  for (let i = 0; i < pts.length - 1; i++) {
-    const seg = segmentPath(pts, i, mode, minY, maxY)
-    const cmdStart = seg.indexOf(' L ') >= 0 ? seg.indexOf(' L ') : seg.indexOf(' C ')
-    if (cmdStart >= 0) d += seg.slice(cmdStart)
-  }
-  return d
 }
 
 export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {

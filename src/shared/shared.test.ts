@@ -413,6 +413,31 @@ describe('ltc decoder', () => {
     expect(parseTimelineSecondsInput('12', 25)).toBe(12)
     expect(parseTimelineSecondsInput('00:00:05:00', 25)).toBeCloseTo(5, 3)
     expect(parseTimelineSecondsInput('abc', 25)).toBeNull()
+
+    const { insertClipKeyframe, mapKeyframesToPts, segmentPath } = await import('./timeline')
+    const baseClip = {
+      id: 'c-graph',
+      layerId: 'l1',
+      moduleId: 'm1',
+      startTime: 1,
+      duration: 4,
+      keyframes: [
+        { id: 'k1', offset: 0, height: 0 },
+        { id: 'k2', offset: 4, height: 3 },
+      ],
+    }
+    const customInsert = insertClipKeyframe(baseClip, 0, 3, { offset: 1.5, height: 2.25 })
+    expect(customInsert.keyframes[1]).toMatchObject({ id: customInsert.newKeyId, offset: 1.5, height: 2.25 })
+    const pts = mapKeyframesToPts(customInsert.keyframes, baseClip.duration, 0, 3, 280, 138, {
+      left: 30,
+      right: 12,
+      top: 14,
+      bottom: 20,
+    })
+    expect(pts).toHaveLength(3)
+    expect(pts[0]).toEqual({ x: 30, y: 118 })
+    expect(pts[2]).toEqual({ x: 268, y: 14 })
+    expect(segmentPath(pts, 0, 'smooth', 14, 118)).toContain('C ')
   })
 })
 

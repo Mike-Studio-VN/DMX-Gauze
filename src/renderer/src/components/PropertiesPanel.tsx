@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AlertCircle, AlertTriangle, ArrowLeft, Eye, EyeOff, HelpCircle, Layers, Link2, Lock, Plus, RotateCcw, Trash2, Unlock } from 'lucide-react'
 import { layerLoopAddress } from '@shared/addressing'
-import { ch3ToCms } from '@shared/convert'
+import { ch3ToCms, clamp } from '@shared/convert'
 import { CH, addressRange } from '@shared/dmx'
 import { defaultLayerTransform, defaultModuleTransform } from '@shared/preset'
 import {
@@ -14,11 +14,14 @@ import {
   type CurvePresetId,
   analyzeClipSpeeds,
   buildCurveKeyframes,
+  fullCurvePath,
   heightToPercent,
   insertClipKeyframe,
+  mapKeyframesToPts,
   percentToHeight,
   removeClipKeyframe,
   resolveClipBoundsNoOverlap,
+  segmentPath,
   updateClipKeyframeHeight,
   updateClipKeyframeTimelineTime,
 } from '@shared/timeline'
@@ -92,6 +95,264 @@ function TransformEditor({
           </div>
         </div>
       ))}
+    </div>
+  )
+}
+
+const CURVE_W = 280
+const CURVE_H = 138
+const CURVE_PAD = { left: 30, right: 12, top: 14, bottom: 20 }
+
+function MomentCurveGraph({
+  clip,
+  mod,
+  selectedKeyId,
+  onSelectKey,
+  onUpdate,
+}: {
+  clip: TimelineClip
+  mod: ModuleCfg
+  selectedKeyId: string | null
+  onSelectKey: (id: string | null) => void
+  onUpdate: (patch: Partial<TimelineClip>, coalesceKey?: string, syncEdge?: 'start' | 'end') => void
+}) {
+  const svgRef = useRef<SVGSVGElement>(null)
+  const sorted = [...clip.keyframes].sort((a, b) => a.offset - b.offset)
+  const minH = mod.minHeight
+  const maxH = Math.max(minH + 0.1, Math.min(mod.length, mod.maxHeight))
+  const mode = clip.curveMode ?? 'smooth'
+  const issues = analyzeClipSpeeds(clip, mod)
+  const pts = mapKeyframesToPts(sorted, clip.duration, minH, maxH, CURVE_W, CURVE_H, CURVE_PAD)
+
+  const usableW = CURVE_W - CURVE_PAD.left - CURVE_PAD.right
+  const usableH = CURVE_H - CURVE_PAD.top - CURVE_PAD.bottom
+  const areaLine = fullCurvePath(pts, mode, CURVE_PAD.top, CURVE_H - CURVE_PAD.bottom)
+  const areaFill =
+    areaLine && pts.length >= 2
+      ? `${areaLine} L ${pts[pts.length - 1].x.toFixed(1)} ${(CURVE_H - CURVE_PAD.bottom).toFixed(1)} L ${pts[0].x.toFixed(1)} ${(CURVE_H - CURVE_PAD.bottom).toFixed(1)} Z`
+      : ''
+
+  const pointerToTarget = (clientX: number, clientY: number) => {
+    const svg = svgRef.current
+    if (!svg) return null
+    const rect = svg.getBoundingClientRect()
+    const svgX = clamp((clientX - rect.left) * (CURVE_W / Math.max(1, rect.width)), CURVE_PAD.left, CURVE_W - CURVE_PAD.right)
+    const svgY = clamp((clientY - rect.top) * (CURVE_H / Math.max(1, rect.height)), CURVE_PAD.top, CURVE_H - CURVE_PAD.bottom)
+    const tNorm = clamp((svgX - CURVE_PAD.left) / Math.max(1, usableW), 0, 1)
+    const hNorm = clamp(1 - (svgY - CURVE_PAD.top) / Math.max(1, usableH), 0, 1)
+    return {
+      offset: Number((tNorm * clip.duration).toFixed(2)),
+      height: Number((minH + hNorm * (maxH - minH)).toFixed(2)),
+    }
+  }
+
+  const startDotDrag = (e: React.PointerEvent, kfId: string) => {
+    e.stopPropagation()
+    e.preventDefault()
+    onSelectKey(kfId)
+    const baseKfs = [...clip.keyframes].sort((a, b) => a.offset - b.offset)
+    const idx = baseKfs.findIndex((k) => k.id === kfId)
+    if (idx < 0) return
+    const isFirst = idx === 0
+    const isLast = idx === baseKfs.length - 1
+    const syncEdge = isFirst ? 'start' : isLast ? 'end' : undefined
+    const minOff = idx > 0 ? Math.min(clip.duration, baseKfs[idx - 1].offset + 0.05) : 0
+    const maxOff = idx < baseKfs.length - 1 ? Math.max(minOff, baseKfs[idx + 1].offset - 0.05) : clip.duration
+
+    const apply = (clientX: number, clientY: number) => {
+      const target = pointerToTarget(clientX, clientY)
+      if (!target) return
+      const nextOffset = isFirst ? 0 : isLast ? clip.duration : clamp(target.offset, minOff, maxOff)
+      const nextHeight = clamp(target.height, minH, maxH)
+      const nextKfs = baseKfs.map((k) => (k.id === kfId ? { ...k, offset: nextOffset, height: nextHeight } : k))
+      onUpdate({ keyframes: nextKfs }, `curve-drag-${kfId}`, syncEdge)
+    }
+
+    const onMove = (ev: PointerEvent) => apply(ev.clientX, ev.clientY)
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  const activeIdx = sorted.findIndex((k) => k.id === selectedKeyId)
+  const activeKf = activeIdx >= 0 ? sorted[activeIdx] : null
+
+  return (
+    <div className="space-y-1.5 border-b border-line pb-3">
+      <div className="flex items-center justify-between gap-1.5">
+        <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">Đồ thị Curve</span>
+        {activeKf && activeIdx >= 0 ? (
+          <span className="text-[10px] font-semibold text-[#FFCB72] tabular-nums">
+            K{activeIdx + 1}: {(clip.startTime + activeKf.offset).toFixed(2)}s · {heightToPercent(activeKf.height, mod)}%
+          </span>
+        ) : (
+          <span className="text-[10px] text-muted">Kéo điểm · 2× click thêm</span>
+        )}
+      </div>
+
+      <div className="overflow-hidden rounded-xl bg-[#0D0907] shadow-[inset_0_0_0_1px_var(--line2)]">
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${CURVE_W} ${CURVE_H}`}
+          onDoubleClick={(e) => {
+            const target = pointerToTarget(e.clientX, e.clientY)
+            if (!target) return
+            const { keyframes, newKeyId } = insertClipKeyframe(clip, minH, maxH, target)
+            onUpdate({ keyframes })
+            onSelectKey(newKeyId)
+          }}
+          className="block h-[138px] w-full cursor-crosshair select-none"
+        >
+          <defs>
+            <linearGradient id="moment-prop-area" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#F7842E" stopOpacity="0.32" />
+              <stop offset="100%" stopColor="#F7842E" stopOpacity="0.02" />
+            </linearGradient>
+          </defs>
+
+          {/* Lưới ngang (%) */}
+          {[
+            { pct: 100, label: '100%' },
+            { pct: 50, label: '50%' },
+            { pct: 0, label: '0%' },
+          ].map(({ pct, label }) => {
+            const y = CURVE_PAD.top + (1 - pct / 100) * usableH
+            return (
+              <g key={pct}>
+                <line
+                  x1={CURVE_PAD.left}
+                  y1={y}
+                  x2={CURVE_W - CURVE_PAD.right}
+                  y2={y}
+                  stroke="rgba(255,206,160,0.12)"
+                  strokeDasharray={pct === 50 ? '2 3' : undefined}
+                />
+                <text x={CURVE_PAD.left - 4} y={y + 3} textAnchor="end" fill="#9A8B7D" fontSize={8}>
+                  {label}
+                </text>
+              </g>
+            )
+          })}
+
+          {/* Lưới dọc (thời gian timeline) */}
+          {[0, 0.5, 1].map((frac) => {
+            const x = CURVE_PAD.left + frac * usableW
+            const sec = (clip.startTime + frac * clip.duration).toFixed(1)
+            const anchor = frac === 0 ? 'start' : frac === 1 ? 'end' : 'middle'
+            return (
+              <g key={frac}>
+                <line
+                  x1={x}
+                  y1={CURVE_PAD.top}
+                  x2={x}
+                  y2={CURVE_H - CURVE_PAD.bottom}
+                  stroke="rgba(255,206,160,0.1)"
+                  strokeDasharray={frac === 0.5 ? '2 3' : undefined}
+                />
+                <text x={x} y={CURVE_H - 6} textAnchor={anchor} fill="#9A8B7D" fontSize={8}>
+                  {sec}s
+                </text>
+              </g>
+            )
+          })}
+
+          {areaFill && <path d={areaFill} fill="url(#moment-prop-area)" />}
+
+          {/* Các đoạn đường cong (tô đỏ đoạn vượt tốc độ) */}
+          {pts.length >= 2 &&
+            pts.slice(0, -1).map((_, idx) => {
+              const segBad = issues[idx] && !issues[idx].feasible
+              const d = segmentPath(pts, idx, mode, CURVE_PAD.top, CURVE_H - CURVE_PAD.bottom)
+              return (
+                <path
+                  key={idx}
+                  d={d}
+                  fill="none"
+                  stroke={segBad ? '#FF7D6E' : '#F7842E'}
+                  strokeWidth={segBad ? 2.8 : 2.3}
+                  strokeLinecap="round"
+                />
+              )
+            })}
+
+          {/* Điểm K kéo thả trực tiếp */}
+          {[...sorted]
+            .map((kf, idx) => ({ kf, idx, active: kf.id === selectedKeyId }))
+            .sort((a, b) => Number(a.active) - Number(b.active))
+            .map(({ kf, idx, active }) => {
+              const pt = pts[idx]
+              if (!pt) return null
+              const prevBad = idx > 0 && issues[idx - 1] && !issues[idx - 1].feasible
+              const nextBad = idx < issues.length && issues[idx] && !issues[idx].feasible
+              const dotColor = prevBad || nextBad ? '#FF7D6E' : '#F7842E'
+              const tagX = pt.x > CURVE_W - CURVE_PAD.right - 26 ? pt.x - 24 : pt.x + 8
+              const tagY = pt.y < CURVE_PAD.top + 16 ? pt.y + 4 : pt.y - 14
+
+              return (
+                <g
+                  key={kf.id}
+                  onPointerDown={(e) => startDotDrag(e, kf.id)}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    const nextKfs = removeClipKeyframe(clip, kf.id)
+                    if (nextKfs) onUpdate({ keyframes: nextKfs })
+                  }}
+                  className="cursor-grab active:cursor-grabbing"
+                >
+                  <title>{`K${idx + 1}: ${(clip.startTime + kf.offset).toFixed(2)}s · ${heightToPercent(kf.height, mod)}%`}</title>
+                  {active && (
+                    <>
+                      <line
+                        x1={pt.x}
+                        y1={CURVE_PAD.top}
+                        x2={pt.x}
+                        y2={CURVE_H - CURVE_PAD.bottom}
+                        stroke="#FFCB72"
+                        strokeWidth={1}
+                        strokeDasharray="2 2"
+                        strokeOpacity={0.65}
+                      />
+                      <line
+                        x1={CURVE_PAD.left}
+                        y1={pt.y}
+                        x2={CURVE_W - CURVE_PAD.right}
+                        y2={pt.y}
+                        stroke="#FFCB72"
+                        strokeWidth={1}
+                        strokeDasharray="2 2"
+                        strokeOpacity={0.45}
+                      />
+                      <circle cx={pt.x} cy={pt.y} r={9.5} fill="#F7842E" fillOpacity={0.28} />
+                      <circle cx={pt.x} cy={pt.y} r={7} fill="none" stroke="#FFCB72" strokeWidth={1.3} />
+                    </>
+                  )}
+                  <circle cx={pt.x} cy={pt.y} r={10} fill="transparent" />
+                  <circle
+                    cx={pt.x}
+                    cy={pt.y}
+                    r={active ? 5 : 3.8}
+                    fill={active ? '#FBF3EA' : dotColor}
+                    stroke={active ? '#F7842E' : '#FBF3EA'}
+                    strokeWidth={active ? 2 : 1.3}
+                  />
+                  {active && (
+                    <g transform={`translate(${tagX}, ${tagY})`} className="pointer-events-none">
+                      <rect width={20} height={12} rx={3} fill="#1C0E04" stroke="#FFCB72" strokeWidth={0.9} />
+                      <text x={10} y={8.5} textAnchor="middle" fill="#FFCB72" fontSize={8} fontWeight={700}>
+                        K{idx + 1}
+                      </text>
+                    </g>
+                  )}
+                </g>
+              )
+            })}
+        </svg>
+      </div>
     </div>
   )
 }
@@ -226,6 +487,14 @@ function MomentEditor({
           )}
         </div>
       </div>
+
+      <MomentCurveGraph
+        clip={clip}
+        mod={mod}
+        selectedKeyId={selectedKeyId}
+        onSelectKey={onSelectKey}
+        onUpdate={onUpdate}
+      />
 
       <div className="space-y-1.5 border-b border-line pb-3">
         <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">Mẫu sóng</span>

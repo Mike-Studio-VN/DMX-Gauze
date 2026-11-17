@@ -1,3 +1,4 @@
+import { clamp } from './convert'
 import { parseTc } from './timecode'
 import type { ClipKeyframe, Command, Fps, ModuleCfg, TimelineClip, TimelineKey } from './types'
 
@@ -396,17 +397,23 @@ export function updateClipKeyframeHeight(
   return { keyframes, syncEdge }
 }
 
-/** Chèn thêm 1 điểm mới vào khoảng thời gian rộng nhất trong moment. */
+/** Chèn thêm 1 điểm mới vào khoảng thời gian rộng nhất trong moment (hoặc tại toạ độ chỉ định). */
 export function insertClipKeyframe(
   clip: TimelineClip,
   minHeight: number,
   maxHeight: number,
+  target?: { offset: number; height: number },
 ): { keyframes: ClipKeyframe[]; newKeyId: string } {
   const sorted = [...clip.keyframes].sort((a, b) => a.offset - b.offset)
   let bestOffset = Number((clip.duration / 2).toFixed(2))
   let bestHeight = Number(((minHeight + maxHeight) / 2).toFixed(2))
 
-  if (sorted.length >= 2) {
+  if (target) {
+    const safeMinOff = Math.min(clip.duration / 2, 0.02)
+    const safeMaxOff = Math.max(safeMinOff, clip.duration - 0.02)
+    bestOffset = clamp(Number(target.offset.toFixed(2)), safeMinOff, safeMaxOff)
+    bestHeight = Number(target.height.toFixed(2))
+  } else if (sorted.length >= 2) {
     let bestGap = -1
     for (let i = 0; i < sorted.length - 1; i += 1) {
       const gap = sorted[i + 1].offset - sorted[i].offset
@@ -517,4 +524,87 @@ export function parseTimelineSecondsInput(raw: string, fps: Fps): number | null 
   if (!/^-?\d+(\.\d+)?$/.test(normalized)) return null
   const num = Number(normalized)
   return Number.isFinite(num) ? num : null
+}
+
+export interface CurvePt {
+  x: number
+  y: number
+}
+
+export interface CurvePad {
+  left: number
+  right: number
+  top: number
+  bottom: number
+}
+
+function normalizeCurvePad(padX: number | CurvePad, padY?: number): CurvePad {
+  if (typeof padX === 'object') return padX
+  const y = padY ?? padX
+  return { left: padX, right: padX, top: y, bottom: y }
+}
+
+/** Quy đổi danh sách keyframe sang toạ độ SVG (dùng chung cho Timeline và Thuộc tính Moment). */
+export function mapKeyframesToPts(
+  kfs: ClipKeyframe[],
+  duration: number,
+  minH: number,
+  maxH: number,
+  width: number,
+  height: number,
+  padX: number | CurvePad = 6,
+  padY = 5,
+): CurvePt[] {
+  const pad = normalizeCurvePad(padX, padY)
+  const usableW = Math.max(4, width - pad.left - pad.right)
+  const usableH = Math.max(4, height - pad.top - pad.bottom)
+  const span = Math.max(0.1, maxH - minH)
+  const dur = Math.max(0.01, duration)
+  return kfs.map((k) => {
+    const tNorm = clamp(k.offset / dur, 0, 1)
+    const hNorm = clamp((k.height - minH) / span, 0, 1)
+    return {
+      x: pad.left + tNorm * usableW,
+      y: pad.top + (1 - hNorm) * usableH,
+    }
+  })
+}
+
+/** Sinh path cubic Bezier mượt (Catmull-Rom có giới hạn dọc) cho từng đoạn i -> i+1. */
+export function segmentPath(
+  pts: CurvePt[],
+  i: number,
+  mode: 'smooth' | 'linear',
+  minY: number,
+  maxY: number,
+): string {
+  const p1 = pts[i]
+  const p2 = pts[i + 1]
+  if (!p1 || !p2) return ''
+  if (mode === 'linear' || pts.length < 3) {
+    return `M ${p1.x.toFixed(1)} ${p1.y.toFixed(1)} L ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`
+  }
+  const p0 = pts[i - 1] ?? p1
+  const p3 = pts[i + 2] ?? p2
+  const segMinY = Math.max(minY, Math.min(p1.y, p2.y) - 3)
+  const segMaxY = Math.min(maxY, Math.max(p1.y, p2.y) + 3)
+
+  const c1x = clamp(p1.x + (p2.x - p0.x) / 6, p1.x, p2.x)
+  const c1y = clamp(p1.y + (p2.y - p0.y) / 6, segMinY, segMaxY)
+  const c2x = clamp(p2.x - (p3.x - p1.x) / 6, p1.x, p2.x)
+  const c2y = clamp(p2.y - (p3.y - p1.y) / 6, segMinY, segMaxY)
+
+  return `M ${p1.x.toFixed(1)} ${p1.y.toFixed(1)} C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`
+}
+
+/** Nối toàn bộ các đoạn thành 1 SVG path khép mở liên tục. */
+export function fullCurvePath(pts: CurvePt[], mode: 'smooth' | 'linear', minY: number, maxY: number): string {
+  if (pts.length < 2) return ''
+  let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`
+  for (let i = 0; i < pts.length - 1; i++) {
+    const seg = segmentPath(pts, i, mode, minY, maxY)
+    const cmdStart = seg.indexOf(' L ') >= 0 ? seg.indexOf(' L ') : seg.indexOf(' C ')
+    if (cmdStart >= 0) d += seg.slice(cmdStart)
+  }
+  return d
 }
