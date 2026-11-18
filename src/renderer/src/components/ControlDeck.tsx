@@ -284,16 +284,21 @@ export function ModeButtons(props: {
   } = props.overrideState ? { ...storeState, ...props.overrideState } : storeState
   const [draggedButtonId, setDraggedButtonId] = useState<string | null>(null)
   const [dragOverSlot, setDragOverSlot] = useState<number | null>(null)
+  const cueRun = useRef(0)
+
+  useEffect(() => () => { cueRun.current += 1 }, [])
 
   const buildCueBaselines = (b: CueButton, previous?: Record<string, ManualMotionBaseline> | null) =>
     resolveCueButtonBaselines(b.steps, project.modules, snapshot, previous)
 
   const fire = async (b: CueButton) => {
+    const run = ++cueRun.current
     selectButton(b.id)
     const isResumingSameCue = lastFiredButtonId === b.id
     const baselines = buildCueBaselines(b, isResumingSameCue ? lastFiredButtonBaselines : null)
     setLastFiredButton(b.id, baselines)
     for (const s of b.steps) {
+      if (cueRun.current !== run) break
       let speedVal = b.speedValue
       if (b.speedUnit === 'sec' && isResumingSameCue) {
         const base = baselines[s.moduleId]
@@ -311,14 +316,15 @@ export function ModeButtons(props: {
         ids: [s.moduleId],
         target: s.position,
         speed: { unit: b.speedUnit, value: speedVal },
-      })
+      }, { source: 'buttons' })
       if (!res.ok) break
     }
   }
 
   const pauseCue = async (b: CueButton) => {
+    cueRun.current += 1
     const ids = b.steps.map((s) => s.moduleId)
-    if (ids.length > 0) await sendCommand({ type: 'stop', ids })
+    if (ids.length > 0) await sendCommand({ type: 'stop', ids }, { source: 'buttons' })
   }
 
   const totalSlots = Math.max(8, Math.ceil((Math.max(project.buttons.length, ...project.buttons.map((b, i) => (b.slotIndex ?? i) + 1)) + 1) / 4) * 4)
@@ -600,7 +606,7 @@ export function ModeManual(props: {
     }
     if (cmd.type === 'stop') {
       setRunState(null)
-      await sendCommand({ type: 'stop', ids: selectedIds })
+      await sendCommand({ type: 'stop', ids: selectedIds }, { source: 'manual' })
       return
     }
     const dir: 'up' | 'down' = cmd.target === 'min' ? 'up' : 'down'
@@ -612,7 +618,7 @@ export function ModeManual(props: {
       const goal = cmd.target === 'min' ? mod.minHeight : Math.min(mod.length, mod.maxHeight)
       baselines[id] = { start, goal }
     }
-    const res = await sendCommand({ type: 'move', ids: selectedIds, target: cmd.target, speed: speedSpec })
+    const res = await sendCommand({ type: 'move', ids: selectedIds, target: cmd.target, speed: speedSpec }, { source: 'manual' })
     if (!res.ok) {
       setRunState(null)
       return
@@ -690,7 +696,7 @@ export function ModeManual(props: {
     if (e.repeat) return
     if (isMoving) {
       setRunState(null)
-      void sendCommand({ type: 'stop', ids: 'all' })
+      void sendCommand({ type: 'stop', ids: 'all' }, { source: 'manual' })
     } else if (lastMove.current?.ids === selectedIds) {
       void runManual({ type: 'move', target: lastMove.current.target })
     } else {

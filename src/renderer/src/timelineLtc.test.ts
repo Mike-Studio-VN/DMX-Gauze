@@ -151,6 +151,7 @@ vi.mock('lucide-react', () => {
 });
 
 import { TimelineEditor } from './components/TimelineEditor';
+import { getBridge } from './services/bridge';
 import { useAppStore } from './store/useAppStore';
 
 function writeBcdBits(bits: number[], start: number, val: number, count: number): void {
@@ -223,6 +224,7 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-11-17T00:00:00.000Z'));
     hookRuntime.reset();
+    useAppStore.setState(useAppStore.getInitialState());
 
     const storage = new Map<string, string>();
     vi.stubGlobal('localStorage', {
@@ -241,7 +243,7 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     vi.restoreAllMocks();
   });
 
-  it('decodes LTC audio, advances playhead & move commands through bounded freewheel, and sends exactly one stop(all) on lost', async () => {
+  it('follows LTC through freewheel, ignores local seeks, and holds only Timeline targets on loss or stop', async () => {
     const project = createDefaultProject();
     project.settings.timeline.fps = 25;
     project.settings.ltc.freewheelFrames = 10; // 400 ms at 25 fps
@@ -261,9 +263,10 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
       ],
     };
     project.clips = [clip];
+    project.keys = [];
 
     const dispatched: Command[] = [];
-    const sendCommandSpy = vi.fn(async (cmd: Command) => {
+    vi.spyOn(getBridge(), 'command').mockImplementation(async (cmd: Command) => {
       dispatched.push(cmd);
       return { ok: true };
     });
@@ -290,8 +293,17 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
         },
         frame: [],
       },
-      sendCommand: sendCommandSpy,
     });
+
+    const store = useAppStore.getState();
+    const directMove: Command = { type: 'move', ids: [project.modules[1].id], target: 'max', speed: { unit: 'default' } };
+    store.setActiveTab('manual');
+    expect((await store.sendCommand(directMove, { source: 'manual' })).ok).toBe(true);
+    store.setActiveTab('timeline');
+    expect((await store.sendCommand(directMove, { source: 'manual' })).ok).toBe(false);
+    expect((await store.sendCommand(directMove, { source: 'buttons' })).ok).toBe(false);
+    expect(dispatched).toEqual([directMove]);
+    dispatched.length = 0;
 
     let capturedProc: { onaudioprocess?: (ev: { inputBuffer: { numberOfChannels: number; getChannelData: (ch: number) => Float32Array } }) => void } | null = null;
     const trackStopSpy = vi.fn();
@@ -362,6 +374,11 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     expect(extractText(hookRuntime.lastTree)).toContain('Live');
     const lockMoveCount = dispatched.filter((c) => c.type === 'move').length;
     expect(lockMoveCount).toBeGreaterThanOrEqual(1);
+    const seek = lockNodes.find((n) => n.props['aria-label'] === 'Về cuối sóng');
+    expect(seek?.props.disabled).toBe(true);
+    (seek!.props.onClick as () => void)();
+    expect(dispatched).toHaveLength(lockMoveCount);
+    expect(extractText(collectNodes(hookRuntime.lastTree).find((n) => n.type === 'output'))).toBe('00:00:03:02');
 
     // Halt LTC audio and step through the 400ms (10 frames) freewheel window.
     const freewheelTimecodes: string[] = [];
@@ -377,7 +394,7 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     expect(afterFreewheelMoves).toBeGreaterThan(lockMoveCount);
     expect(dispatched.filter((c) => c.type === 'stop')).toHaveLength(0);
 
-    // Cross past freewheelFrames -> must transition to lost/disconnected and fire stop(all) ONCE.
+    // Cross past freewheelFrames and hold only the module that LTC commanded.
     for (let i = 0; i < 6; i += 1) {
       vi.advanceTimersByTime(35);
     }
@@ -389,7 +406,26 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     expect(lostOutputTc).toBe('00:00:03:12');
 
     const stops = dispatched.filter((c) => c.type === 'stop');
-    expect(stops).toEqual([{ type: 'stop', ids: 'all' }]);
+    expect(stops).toEqual([{ type: 'stop', ids: [mod.id] }]);
+
+    // A fresh incoming frame reacquires lock. The transport button now stops LTC without starting local playback.
+    capturedProc!.onaudioprocess!({ inputBuffer: { numberOfChannels: 1, getChannelData: () => new Float32Array(2048) } });
+    for (const frameNum of [13, 14, 15, 16]) {
+      vi.advanceTimersByTime(40);
+      const enc = encodeSmpteBiphaseFrame(0, 0, 3, frameNum, 48000, 25, phase);
+      phase = enc.endPhase;
+      capturedProc!.onaudioprocess!({ inputBuffer: { numberOfChannels: 1, getChannelData: () => enc.samples } });
+    }
+    vi.advanceTimersByTime(40);
+    expect(extractText(hookRuntime.lastTree)).toContain('Live');
+    const stopLtc = collectNodes(hookRuntime.lastTree).find((n) => n.props['aria-label'] === 'Dừng LTC');
+    expect(stopLtc).toBeDefined();
+    (stopLtc!.props.onClick as () => void)();
+    expect(dispatched.at(-1)).toEqual({ type: 'stop', ids: [mod.id] });
+    const countAfterStop = dispatched.length;
+    vi.advanceTimersByTime(500);
+    expect(dispatched).toHaveLength(countAfterStop);
+    expect(collectNodes(hookRuntime.lastTree).some((n) => n.props['aria-label'] === 'Phát')).toBe(true);
 
     // Clean unmount/cleanup verification.
     hookRuntime.reset();

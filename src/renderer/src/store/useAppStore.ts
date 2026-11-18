@@ -260,7 +260,8 @@ interface AppState {
   updateKey: (id: string, patch: Partial<TimelineKey>) => void
   deleteKey: (id: string) => void
 
-  sendCommand: (cmd: Command, opts?: { quietWarnings?: boolean; source?: 'timeline' }) => Promise<CommandResult>
+  sendCommand: (cmd: Command, opts?: { quietWarnings?: boolean; source?: ControlTab }) => Promise<CommandResult>
+  holdTimelineTargets: () => void
   pollNow: () => void
 
   newProject: () => Promise<void>
@@ -492,11 +493,7 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     setActiveTab: (activeTab) => {
-      if (get().activeTab === 'timeline' && activeTab !== 'timeline' && timelineCommandedIds.size > 0) {
-        const ids = [...timelineCommandedIds]
-        timelineCommandedIds.clear()
-        void getBridge().command({ type: 'stop', ids })
-      }
+      if (get().activeTab === 'timeline' && activeTab !== 'timeline') get().holdTimelineTargets()
       set((s) => ({
         activeTab,
         focusScope: activeTab === 'buttons' ? 'buttons' : activeTab === 'timeline' ? 'timeline' : 'tree',
@@ -1654,8 +1651,16 @@ export const useAppStore = create<AppState>((set, get) => {
       applyProject({ ...project, keys: project.keys.filter((k) => k.id !== id) })
     },
 
+    holdTimelineTargets() {
+      if (timelineCommandedIds.size === 0) return
+      const ids = [...timelineCommandedIds]
+      timelineCommandedIds.clear()
+      // The IDs already include any peers expanded when the move was sent.
+      void getBridge().command({ type: 'stop', ids })
+    },
+
     async sendCommand(cmd, opts) {
-      if (opts?.source === 'timeline' && get().activeTab !== 'timeline') return { ok: false }
+      if (opts?.source && get().activeTab !== opts.source) return { ok: false }
       let effectiveCmd = cmd
       if ((cmd.type === 'move' || cmd.type === 'stop') && Array.isArray(cmd.ids)) {
         const { project } = get()

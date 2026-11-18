@@ -123,6 +123,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     setSettingsOpen,
     setPlayheadTime,
     sendCommand,
+    holdTimelineTargets,
     notify,
   } = useAppStore()
 
@@ -138,6 +139,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   }, [time, setPlayheadTime])
   const [playing, setPlaying] = useState(false)
   const [ltcActive, setLtcActive] = useState(false)
+  const transportRef = useRef<'idle' | 'local' | 'ltc'>('idle')
   const [ltcStatus, setLtcStatus] = useState<'off' | 'lock' | 'freewheel' | 'lost'>('off')
   const [snapToFrame, setSnapToFrame] = useState(true)
   const [pxPerSec, setPxPerSec] = useState(64)
@@ -211,13 +213,17 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   useEffect(() => {
     if (snapshot?.locked) {
       linearPlannerRef.current.reset()
-      if (playing) setPlaying(false)
+      if (playing) {
+        transportRef.current = 'idle'
+        setPlaying(false)
+      }
     }
   }, [snapshot?.locked, playing])
 
   useEffect(() => {
     if (!playing || ltcActive) return
     const stopPlayback = startDmxFrameLoop(dmxHz, (now) => {
+      if (transportRef.current !== 'local') return
       const dt = (now - playbackLastTickRef.current) / 1000
       playbackLastTickRef.current = now
       const next = Math.min(maxTime, timeRef.current + dt)
@@ -226,6 +232,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       if (next >= maxTime) {
         linearPlannerRef.current.reset()
         dispatchFollowRef.current(maxTime, 0)
+        transportRef.current = 'idle'
         stopPlayback()
         setPlaying(false)
       } else {
@@ -252,14 +259,17 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: project.settings.ltc.deviceId ? { deviceId: { exact: project.settings.ltc.deviceId } } : true,
         })
-        if (stopped) return
+        if (stopped) {
+          stream.getTracks().forEach((track) => track.stop())
+          return
+        }
         ctx = new AudioContext()
         const src = ctx.createMediaStreamSource(stream)
         const proc = ctx.createScriptProcessor(2048, 2, 1)
         const dec = new LtcDecoder(
           ctx.sampleRate,
           (f) => {
-            if (stopped) return
+            if (stopped || transportRef.current !== 'ltc') return
             const nowMs = performance.now()
             const ltcRate = realFps(effectiveLtcFps)
             const rawSec = tcToSeconds(f, effectiveLtcFps) + project.settings.ltc.offsetFrames / ltcRate
@@ -281,6 +291,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
         proc.connect(ctx.destination)
         setLtcStatus('lost')
       } catch (err) {
+        if (stopped || transportRef.current !== 'ltc') return
         notify(`Không mở được ngõ âm thanh LTC: ${(err as Error).message}`, 'error')
         setLtcStatus('lost')
       }
@@ -292,15 +303,17 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       clock.reset()
       planner.reset()
       ltcSampleRef.current = null
+      holdTimelineTargets()
       stream?.getTracks().forEach((t) => t.stop())
       void ctx?.close()
     }
-  }, [ltcActive, effectiveLtcFps, maxTime, project.settings.ltc, notify])
+  }, [ltcActive, effectiveLtcFps, maxTime, project.settings.ltc, notify, holdTimelineTargets])
 
   const freewheelFrames = project.settings.ltc.freewheelFrames
   useEffect(() => {
     if (!ltcActive) return
     return startDmxFrameLoop(dmxHz, (now) => {
+      if (transportRef.current !== 'ltc') return
       const sample = ltcSampleRef.current
       if (!sample) return
       const res = ltcClockRef.current.poll(now, realFps(effectiveLtcFps), freewheelFrames)
@@ -316,17 +329,19 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       }
       if (res.shouldStop) {
         linearPlannerRef.current.reset()
-        void sendCommandRef.current({ type: 'stop', ids: 'all' }, { source: 'timeline' })
+        holdTimelineTargets()
       }
     })
-  }, [ltcActive, effectiveLtcFps, freewheelFrames, maxTime, dmxHz])
+  }, [ltcActive, effectiveLtcFps, freewheelFrames, maxTime, dmxHz, holdTimelineTargets])
 
   const previewTimelineAt = (t: number) => {
+    if (transportRef.current === 'ltc') return
     linearPlannerRef.current.reset()
     dispatchTimelineFollow(t, 0)
   }
 
   const seekTo = (t: number, forcePreview = true) => {
+    if (transportRef.current === 'ltc') return
     const clampedT = clamp(t, 0, maxTime)
     linearPlannerRef.current.reset()
     timeRef.current = clampedT
@@ -385,7 +400,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
 
   const startHeadOrScrub = (e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation()
-    if (editingHead) return
+    if (editingHead || transportRef.current === 'ltc') return
     const startX = e.clientX
     let moved = false
     let latestT = timeRef.current
@@ -402,6 +417,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   }
 
   const startRulerScrub = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (transportRef.current === 'ltc') return
     const el = e.currentTarget
     let latestT = scrubRulerFromClientX(e.clientX, el.getBoundingClientRect().left)
     const onMove = (ev: PointerEvent) => {
@@ -794,12 +810,21 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     ...new Set([0, ...clips.map((c) => c.startTime), ...project.keys.map((k) => k.time), sequenceEnd]),
   ].sort((a, b) => a - b)
 
-  const togglePlay = () => {
+  const disableLtc = () => {
+    transportRef.current = 'idle'
     setLtcActive(false)
-    if (playing) {
+  }
+
+  const togglePlay = () => {
+    if (transportRef.current === 'ltc') {
+      disableLtc()
+      return
+    }
+    if (transportRef.current === 'local') {
+      transportRef.current = 'idle'
       setPlaying(false)
       linearPlannerRef.current.reset()
-      void sendCommand({ type: 'stop', ids: 'all' }, { source: 'timeline' })
+      holdTimelineTargets()
       return
     }
     if (snapshot?.locked) {
@@ -809,6 +834,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       timeRef.current = project.settings.timeline.startTime
       setTime(project.settings.timeline.startTime)
     }
+    transportRef.current = 'local'
     playbackLastTickRef.current = performance.now()
     linearPlannerRef.current.reset()
     dispatchTimelineFollow(timeRef.current, 0.06)
@@ -825,7 +851,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
             onClick={() => {
               setPlaying(false)
               if (ltcActive) {
-                setLtcActive(false)
+                disableLtc()
               } else {
                 if (!ltcMatched) {
                   notify(
@@ -833,6 +859,10 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
                     'warn',
                   )
                 }
+                transportRef.current = 'ltc'
+                scrubCleanupRef.current?.()
+                setEditingHead(false)
+                holdTimelineTargets()
                 setLtcStatus('lost')
                 setLtcActive(true)
               }
@@ -905,7 +935,10 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
             className="timeline-icon"
             title="Về timecode bắt đầu"
             aria-label="Về timecode bắt đầu"
+            disabled={ltcActive}
             onClick={() => {
+              if (transportRef.current === 'ltc') return
+              transportRef.current = 'idle'
               setPlaying(false)
               seekTo(project.settings.timeline.startTime)
             }}
@@ -917,6 +950,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
             className="timeline-icon"
             title="Mốc trước"
             aria-label="Mốc trước"
+            disabled={ltcActive}
             onClick={() => seekTo([...cueTimes].reverse().find((t) => t < time - 0.01) ?? 0)}
           >
             <ChevronLeft size={13} />
@@ -924,17 +958,18 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
           <button
             type="button"
             className="timeline-play"
-            title={playing ? 'Tạm dừng' : 'Phát'}
-            aria-label={playing ? 'Tạm dừng' : 'Phát'}
+            title={ltcActive ? 'Dừng LTC' : playing ? 'Tạm dừng' : 'Phát'}
+            aria-label={ltcActive ? 'Dừng LTC' : playing ? 'Tạm dừng' : 'Phát'}
             onClick={togglePlay}
           >
-            {playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}
+            {playing || ltcActive ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}
           </button>
           <button
             type="button"
             className="timeline-icon"
             title="Mốc tiếp theo"
             aria-label="Mốc tiếp theo"
+            disabled={ltcActive}
             onClick={() => seekTo(cueTimes.find((t) => t > time + 0.01) ?? sequenceEnd)}
           >
             <ChevronRight size={13} />
@@ -944,7 +979,10 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
             className="timeline-icon"
             title="Về cuối sóng"
             aria-label="Về cuối sóng"
+            disabled={ltcActive}
             onClick={() => {
+              if (transportRef.current === 'ltc') return
+              transportRef.current = 'idle'
               setPlaying(false)
               seekTo(sequenceEnd)
             }}
@@ -1073,24 +1111,25 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
             >
               <div
                 role={editingHead ? undefined : 'button'}
-                tabIndex={editingHead ? undefined : 0}
+                tabIndex={editingHead || ltcActive ? undefined : 0}
                 aria-label={editingHead ? undefined : `Thời gian playhead ${time.toFixed(2)}s, double-click để nhập số`}
                 onPointerDown={startHeadOrScrub}
                 onDoubleClick={(e) => {
                   e.stopPropagation()
+                  if (transportRef.current === 'ltc') return
                   headCanceledRef.current = false
                   setHeadInput(time.toFixed(2))
                   setEditingHead(true)
                 }}
                 onKeyDown={(e) => {
-                  if (!editingHead && (e.key === 'Enter' || e.key === 'F2')) {
+                  if (transportRef.current !== 'ltc' && !editingHead && (e.key === 'Enter' || e.key === 'F2')) {
                     e.preventDefault()
                     headCanceledRef.current = false
                     setHeadInput(time.toFixed(2))
                     setEditingHead(true)
                   }
                 }}
-                title="Kéo để tua · Double-click để nhập số giây"
+                title={ltcActive ? 'Playhead đồng bộ theo LTC' : 'Kéo để tua · Double-click để nhập số giây'}
                 className={`timeline-ruler-marker ${editingHead ? 'editing' : ''}`}
                 style={{ left: editingHead ? Math.max(28, time * pxPerSec) : time * pxPerSec }}
               >

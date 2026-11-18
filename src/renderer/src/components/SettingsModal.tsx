@@ -758,8 +758,8 @@ export function SettingsModal(props: {
                     <div>
                       <div className="font-semibold">Timeline {tl.fps} fps không khớp chuẩn LTC SMPTE</div>
                       <div className="text-[#E7D4B5]">
-                        LTC chuẩn chỉ hỗ trợ 24 / 25 / 29.97 / 30 fps. LTC In/Out đang giữ rate riêng ở{' '}
-                        <strong>{effectiveLtcFps} fps</strong> (không giả vờ hỗ trợ {tl.fps} fps).
+                        LTC In hỗ trợ 24 / 25 / 29.97 / 30 fps và đang dùng{' '}
+                        <strong>{effectiveLtcFps} fps</strong>.
                       </div>
                     </div>
                   </div>
@@ -781,9 +781,9 @@ export function SettingsModal(props: {
                     />
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <span className="text-[11px] leading-4 text-[#C2B3A4]">Tốc độ khung LTC In/Out (chuẩn SMPTE)</span>
+                    <span className="text-[11px] leading-4 text-[#C2B3A4]">Tốc độ khung LTC In (chuẩn SMPTE)</span>
                     <KilnSelect
-                      ariaLabel="Tốc độ khung LTC In/Out"
+                      ariaLabel="Tốc độ khung LTC In"
                       tabular
                       value={project.settings.ltc.fps !== undefined ? String(project.settings.ltc.fps) : 'auto'}
                       options={[
@@ -849,7 +849,11 @@ export function SettingsModal(props: {
                       min="0"
                       max="120"
                       value={project.settings.ltc.freewheelFrames}
-                      onChange={(e) => updateLtcSettings({ freewheelFrames: Number(e.target.value) || 10 })}
+                      onChange={(e) => {
+                        if (Number.isFinite(e.target.valueAsNumber)) {
+                          updateLtcSettings({ freewheelFrames: e.target.valueAsNumber })
+                        }
+                      }}
                       className="kiln-field h-9 w-full px-3 text-xs tabular-nums"
                     />
                   </label>
