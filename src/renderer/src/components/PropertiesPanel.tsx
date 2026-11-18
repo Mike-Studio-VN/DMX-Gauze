@@ -2427,7 +2427,7 @@ function ChannelMonitor({
     { label: 'CH4 Lock', value: String(live[3]), title: `CH4: khoá an toàn. Sent phát ${SENT_CH4_PULSE_VALUE} trong ${SENT_PULSE_MS} ms rồi tự về 0` },
   ]
   return (
-    <div className="mt-auto space-y-2 border-t border-line pt-2.5">
+    <div className="sticky bottom-0 z-10 mt-auto space-y-2 border-t border-line bg-[var(--glass)] pt-2.5 pb-1">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">Giám sát 4 kênh DMX</span>
         <span className="flex items-center gap-1.5 text-[11px] text-[#C2B3A4]">
