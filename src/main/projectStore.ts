@@ -1,4 +1,4 @@
-import { app, dialog } from 'electron'
+import { app, dialog, type BrowserWindow, type OpenDialogOptions } from 'electron'
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { ProjectFileResult, SaveFileResult } from '@shared/api'
@@ -45,7 +45,7 @@ export function parseProjectJson(raw: string): Project {
   return normalizeProject(parsed)
 }
 
-export async function loadSavedProject(): Promise<ProjectFileResult> {
+export async function loadSavedProject(): Promise<ProjectFileResult & { hasAutosave: boolean }> {
   currentFilePath = null
   try {
     const raw = await readFile(defaultFilePath(), 'utf8')
@@ -58,13 +58,13 @@ export async function loadSavedProject(): Promise<ProjectFileResult> {
     } catch {
       /* ignore */
     }
-    return { project, filePath: null }
+    return { project, filePath: null, hasAutosave: true }
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
       console.warn('[projectStore] File dự án tự động lưu bị hỏng hoặc thiếu cấu trúc, khôi phục preset mặc định:', err)
     }
   }
-  return { project: createDefaultProject(), filePath: null }
+  return { project: createDefaultProject(), filePath: null, hasAutosave: false }
 }
 
 export async function saveProjectToDisk(project: Project): Promise<void> {
@@ -75,12 +75,13 @@ export function clearCurrentFilePath(): void {
   currentFilePath = null
 }
 
-export async function openProjectDialog(): Promise<ProjectFileResult | null> {
-  const res = await dialog.showOpenDialog({
+export async function openProjectDialog(parent?: BrowserWindow): Promise<ProjectFileResult | null> {
+  const options: OpenDialogOptions = {
     title: 'Mở dự án DMX Gauze',
     properties: ['openFile'],
     filters: [{ name: 'DMX Gauze Project', extensions: ['json'] }],
-  })
+  }
+  const res = await (parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options))
   if (res.canceled || !res.filePaths[0]) return null
   const filePath = res.filePaths[0]
   const raw = await readFile(filePath, 'utf8')

@@ -1,0 +1,330 @@
+.startup {
+  --startup-text: #f7f6f6;
+  --startup-muted: #b7b2b0;
+  --startup-orange: #ff830e;
+  --startup-border: #453b38;
+  position: relative;
+  height: 100%;
+  color: var(--startup-text);
+  background: radial-gradient(ellipse at 50% 40%, #1c1716, #141110 82%);
+}
+
+.startup h1 {
+  margin: 0;
+  letter-spacing: -0.025em;
+}
+
+.startup-subtitle {
+  color: var(--startup-muted);
+}
+
+.startup-drag {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 34px;
+  -webkit-app-region: drag;
+}
+
+.startup-splash {
+  display: grid;
+  place-items: center;
+  padding: 20px 20px 64px;
+  background: radial-gradient(ellipse at 50% 44%, #190f0b, #130d0a 82%);
+  text-align: center;
+}
+
+.startup-splash-content {
+  width: min(304px, 100%);
+}
+
+.startup-splash-logo {
+  display: block;
+  width: 96px;
+  height: 96px;
+  margin: 0 auto 1px;
+}
+
+.startup-splash h1 {
+  font-size: 36px;
+  font-weight: 750;
+  line-height: 1.15;
+}
+
+.startup-splash .startup-subtitle {
+  margin-top: 5px;
+  font-size: 15.5px;
+}
+
+.startup-loading {
+  margin-top: 36px;
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.startup-progress {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 10px;
+  font-size: 12px;
+  text-align: right;
+}
+
+.startup-progress progress {
+  appearance: none;
+  display: block;
+  flex: 1;
+  min-width: 0;
+  height: 10px;
+  border: 0;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.startup-progress progress::-webkit-progress-bar {
+  background: #392921;
+}
+
+.startup-progress progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ff8219, #ff9928);
+}
+
+.startup-progress span {
+  min-width: 25px;
+}
+
+.startup-picker {
+  overflow-y: auto;
+}
+
+.startup-titlebar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+  height: 34px;
+}
+
+.startup-window-controls {
+  position: relative;
+  display: flex;
+  -webkit-app-region: no-drag;
+}
+
+.startup-window-controls button {
+  display: grid;
+  width: 41px;
+  place-items: center;
+  cursor: pointer;
+}
+
+.startup-window-controls button:focus-visible {
+  outline-offset: -2px;
+}
+
+.startup-window-controls button:hover {
+  background: rgb(255 255 255 / 9%);
+}
+
+.startup-window-controls [data-action='close']:hover {
+  background: #a52f2b;
+}
+
+.startup-projects {
+  width: clamp(420px, 61.3%, 640px);
+  max-width: calc(100% - 48px);
+  margin: 19px auto 30px;
+}
+
+.startup-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--startup-border);
+}
+
+.startup-header img {
+  width: 58px;
+  height: 58px;
+}
+
+.startup-header h1 {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.startup-header .startup-subtitle {
+  margin-top: 6px;
+  font-size: 15px;
+}
+
+.startup-actions {
+  display: grid;
+  gap: 12px;
+  margin-top: 21px;
+}
+
+.startup-card {
+  display: grid;
+  width: 100%;
+  min-height: 68px;
+  grid-template-columns: 26px minmax(0, 1fr) 18px;
+  align-items: center;
+  column-gap: 24px;
+  padding: 8px 20px;
+  border: 1px solid var(--startup-border);
+  border-radius: 12px;
+  background: #1c1716;
+  text-align: left;
+}
+
+.startup-card:enabled {
+  cursor: pointer;
+}
+
+.startup-card:enabled:hover {
+  border-color: #b55b20;
+  background: #241a15;
+}
+
+.startup-card strong {
+  display: block;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.startup-card .startup-subtitle {
+  display: block;
+  margin-top: 2px;
+  font-size: 14px;
+}
+
+.startup-card-icon {
+  color: var(--startup-orange);
+}
+
+.startup-card-arrow {
+  color: #cac5c2;
+}
+
+.startup-message {
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 620px) {
+  .startup-splash {
+    padding: 12px 12px 38px;
+  }
+
+  .startup-splash-content {
+    width: min(184px, 100%);
+  }
+
+  .startup-splash-logo {
+    width: 58px;
+    height: 58px;
+  }
+
+  .startup-splash h1 {
+    font-size: 22px;
+  }
+
+  .startup-splash .startup-subtitle {
+    margin-top: 3px;
+    font-size: 11px;
+  }
+
+  .startup-loading {
+    margin-top: 21px;
+    font-size: 10px;
+  }
+
+  .startup-progress {
+    gap: 5px;
+    margin-top: 6px;
+    font-size: 9px;
+  }
+
+  .startup-progress progress {
+    height: 6px;
+  }
+
+  .startup-progress span {
+    min-width: 21px;
+  }
+
+  .startup-titlebar,
+  .startup-drag {
+    height: 22px;
+  }
+
+  .startup-window-controls button {
+    width: 27px;
+  }
+
+  .startup-window-controls svg {
+    width: 11px;
+    height: 11px;
+  }
+
+  .startup-projects {
+    width: clamp(304px, 61.3%, 420px);
+    margin-top: 9px;
+  }
+
+  .startup-header {
+    gap: 9px;
+    padding-bottom: 9px;
+  }
+
+  .startup-header img {
+    width: 36px;
+    height: 36px;
+  }
+
+  .startup-header h1 {
+    font-size: 17px;
+  }
+
+  .startup-header .startup-subtitle {
+    margin-top: 3px;
+    font-size: 11px;
+  }
+
+  .startup-actions {
+    gap: 7px;
+    margin-top: 12px;
+  }
+
+  .startup-card {
+    min-height: 42px;
+    grid-template-columns: 17px minmax(0, 1fr) 12px;
+    column-gap: 13px;
+    padding: 4px 12px;
+    border-radius: 8px;
+  }
+
+  .startup-card-icon {
+    width: 17px;
+    height: 17px;
+  }
+
+  .startup-card-arrow {
+    width: 12px;
+    height: 12px;
+  }
+
+  .startup-card strong {
+    font-size: 12px;
+  }
+
+  .startup-card .startup-subtitle {
+    margin-top: 1px;
+    font-size: 10.5px;
+  }
+}
