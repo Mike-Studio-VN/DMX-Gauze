@@ -2,6 +2,9 @@
 export const CHANNELS_PER_MODULE = 4
 export const CH = { POSITION: 0, FINE: 1, SPEED: 2, LOCK: 3 } as const
 export const LOCK_VALUE = 77
+/** Nút Sent: CH4 phát giá trị này (77) trong SENT_PULSE_MS rồi tự về 0 và giữ 0. */
+export const SENT_CH4_PULSE_VALUE = 77
+export const SENT_PULSE_MS = 500
 export const DEFAULT_SPEED = 100
 /** Tốc độ tối đa motor H2 (cm/s) ứng với CH3 = 255 (cố định theo hãng; hãng khuyến nghị CH3=100 ≈ 47 cm/s). */
 export const H2_MAX_SPEED_CMS = 120

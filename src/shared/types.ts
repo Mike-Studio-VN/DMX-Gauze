@@ -196,7 +196,8 @@ export interface Snapshot {
   status: ConnectionStatus
   frame: Uint8Array
   /** Override đang phát theo module id → [CH1..CH4] đã gửi. */
-  overrides?: Record<string, number[]>
+  /** Module đang trong xung Sent (CH4=77). */
+  pulsing?: string[]
   /** Id module đang bị khoá riêng. */
   moduleLocks?: string[]
 }
@@ -213,9 +214,11 @@ export type Command =
   | { type: 'stop'; ids: string[] | 'all' }
   | { type: 'estop' }
   | { type: 'lock'; locked: boolean }
-  /** Manual override: phát đúng 4 giá trị CH1..CH4 cho module (kể cả khi khoá toàn cục) cho tới khi xoá. */
-  | { type: 'override'; id: string; values: [number, number, number, number] }
-  | { type: 'clearOverride'; id: string }
+  /**
+   * Nút Sent (test fine tune): giữ CH1/CH3 như hiện có, CH2 = `ch2` (0–255), CH4 = 77 trong SENT_PULSE_MS rồi về 0 và giữ 0
+   * (tới khi module nhận lệnh move kế tiếp). Không đặt đích mới và KHÔNG bị chặn bởi khoá tổng/khoá module.
+   */
+  | { type: 'sendFine'; id: string; ch2: number }
 
 export interface CommandResult {
   ok: boolean

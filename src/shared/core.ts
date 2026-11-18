@@ -1,6 +1,6 @@
 import { portAddress } from './artnet'
-import { ARTNET_PORT, CH, CHANNELS_PER_MODULE, DMX_UNIVERSE_SIZE } from './dmx'
-import { ch1Range, ch3ToCms, clamp, cmsToCh3, durationToCh3, posToCh1, snapPos, speedCap } from './convert'
+import { ARTNET_PORT, CH, CHANNELS_PER_MODULE, DMX_UNIVERSE_SIZE, SENT_CH4_PULSE_VALUE, SENT_PULSE_MS } from './dmx'
+import { ch3ToCms, clamp, cmsToCh3, durationToCh3, posToCh1, snapPos, speedCap } from './convert'
 import { DEFAULT_DMX_TRANSPORT_HZ, normalizeDmxTransportRate, startDmxFrameLoop } from './dmxTransport'
 import type { DriverFactory, DriverEvents, OutputDriver } from './drivers'
 import type {
@@ -45,7 +45,10 @@ export class GauzeCore {
   private frame = new Uint8Array(DMX_UNIVERSE_SIZE)
   /** Khoá theo module, nạp từ ModuleCfg.locked mỗi lần configure. */
   private moduleLocks = new Set<string>()
-  private overrides = new Map<string, number[]>()
+  /** Xung Sent đang chạy (CH4=77 tới `until`, CH2 = ch2). */
+  private pulses = new Map<string, { until: number; ch2: number }>()
+  /** Module đã hết xung: CH4 giữ 0 tới khi nhận lệnh move kế tiếp. */
+  private zeroHold = new Set<string>()
   private sendHz: number = DEFAULT_DMX_TRANSPORT_HZ
   private stopFrameLoop: (() => void) | null = null
   private lastTick = 0
@@ -77,11 +80,11 @@ export class GauzeCore {
       if (!this.states.has(m.id)) this.states.set(m.id, { pos: 0, target: 0, ch3: m.defaultSpeed, moving: false })
     }
     for (const id of [...this.states.keys()]) if (!this.modules.has(id)) this.states.delete(id)
-    for (const id of [...this.overrides.keys()]) if (!this.modules.has(id)) this.overrides.delete(id)
+    for (const id of [...this.pulses.keys()]) if (!this.modules.has(id)) this.pulses.delete(id)
+    for (const id of [...this.zeroHold]) if (!this.modules.has(id)) this.zeroHold.delete(id)
     this.moduleLocks = new Set(cfg.modules.filter((m) => m.locked).map((m) => m.id))
     for (const id of this.moduleLocks) {
-      if (!wasLocked.has(id)) this.hold(id) // vừa khoá: đứng yên, huỷ override
-      this.overrides.delete(id)
+      if (!wasLocked.has(id)) this.hold(id) // vừa khoá: đứng yên
     }
     // Áp lại giới hạn min/max cho mục tiêu hiện có.
     for (const [id, st] of this.states) {
@@ -193,13 +196,11 @@ export class GauzeCore {
         this.locked = cmd.locked
         if (cmd.locked) {
           this.holdAll()
-          this.overrides.clear() // khoá chặn cả override đã gửi
         }
         return { ok: true }
       case 'estop':
         this.holdAll()
         this.locked = true
-        this.overrides.clear()
         return { ok: true }
       case 'stop': {
         const ids = cmd.ids === 'all' ? [...this.states.keys()] : cmd.ids
@@ -208,26 +209,19 @@ export class GauzeCore {
       }
       case 'move':
         return this.move(cmd)
-      case 'override':
-        return this.setOverride(cmd.id, cmd.values)
-      case 'clearOverride':
-        this.overrides.delete(cmd.id)
-        return { ok: true }
+      case 'sendFine':
+        return this.sendFine(cmd.id, cmd.ch2)
     }
   }
 
-  private setOverride(id: string, values: number[]): CommandResult {
-    const m = this.modules.get(id)
-    if (!m) return { ok: false, message: 'Không tìm thấy module.' }
-    if (this.locked) return { ok: false, message: 'Đang khoá – tắt khoá để gửi.' }
-    if (this.moduleLocks.has(id)) return { ok: false, message: 'Module đang khoá – mở khoá module để gửi.' }
-    if (values.length !== CHANNELS_PER_MODULE || values.some((v) => !Number.isInteger(v) || v < 0 || v > 255)) {
-      return { ok: false, message: 'Giá trị DMX phải là số nguyên 0–255.' }
-    }
-    // CH1 = vị trí 8-bit: kẹp theo [min, max] của module. CH2 (fine) và CH3/CH4 phát đúng giá trị nhập.
-    const [c1lo, c1hi] = ch1Range(m)
-    const out = [clamp(values[0], c1lo, c1hi), values[1], values[2], values[3]]
-    this.overrides.set(id, out)
+  private sendFine(id: string, ch2: number): CommandResult {
+    const st = this.states.get(id)
+    if (!this.modules.has(id) || !st) return { ok: false, message: 'Không tìm thấy module.' }
+    if (!Number.isInteger(ch2) || ch2 < 0 || ch2 > 255) return { ok: false, message: 'CH2 phải là số nguyên 0–255.' }
+    // Giữ nguyên chỗ: CH1 = vị trí đang giữ (nếu đang chạy thì dừng tại chỗ), không đặt đích mới; CH3 theo hành vi hiện có.
+    if (st.moving || Math.abs(st.target - st.pos) > 1e-6) this.hold(id)
+    this.pulses.set(id, { until: this.now() + SENT_PULSE_MS, ch2 })
+    this.zeroHold.delete(id)
     return { ok: true }
   }
 
@@ -254,6 +248,7 @@ export class GauzeCore {
         warnings.push(`${m.name}: module đang khoá, bỏ qua.`)
         continue
       }
+      this.zeroHold.delete(id) // move hợp lệ: trở lại điều khiển bình thường (CH4 theo khoá)
       const [lo, hi] = limits(m)
       let target: number
       switch (cmd.target) {
@@ -326,6 +321,13 @@ export class GauzeCore {
   }
 
   private buildFrame(): void {
+    const nowMs = this.now()
+    for (const [id, p] of this.pulses) {
+      if (nowMs >= p.until) {
+        this.pulses.delete(id) // hết xung: CH4 về 0 và giữ 0
+        this.zeroHold.add(id)
+      }
+    }
     this.frame.fill(0)
     const lockVal = this.locked ? 0 : (this.cfg?.lockValue ?? 77)
     for (const m of this.modules.values()) {
@@ -333,11 +335,12 @@ export class GauzeCore {
       const a = m.startAddress - 1
       if (!st || a < 0 || a + CHANNELS_PER_MODULE > DMX_UNIVERSE_SIZE) continue
       this.frame[a + CH.POSITION] = posToCh1(st.target, m)
-      this.frame[a + CH.FINE] = clamp(Math.round(m.ch2Fine ?? 0), 0, 255) // CH2 tĩnh theo module, không phụ thuộc vị trí
+      // CH2: nơi DUY NHẤT ghi CH2 — giá trị người dùng nhập (cfg.ch2Fine hoặc ch2 của xung Sent), không phụ thuộc vị trí/lệnh/khoá.
+      const pulse = this.pulses.get(m.id)
+      this.frame[a + CH.FINE] = pulse ? pulse.ch2 : clamp(Math.round(m.ch2Fine ?? 0), 0, 255)
       this.frame[a + CH.SPEED] = st.ch3
-      this.frame[a + CH.LOCK] = this.moduleLocks.has(m.id) ? 0 : lockVal
-      const ov = this.overrides.get(m.id)
-      if (ov) for (let i = 0; i < CHANNELS_PER_MODULE; i++) this.frame[a + i] = ov[i]
+      if (pulse) this.frame[a + CH.LOCK] = SENT_CH4_PULSE_VALUE
+      else this.frame[a + CH.LOCK] = this.zeroHold.has(m.id) || this.moduleLocks.has(m.id) ? 0 : lockVal
     }
   }
 
@@ -403,7 +406,7 @@ export class GauzeCore {
       locked: this.locked,
       status: this.status(),
       frame: this.frame.slice(),
-      overrides: Object.fromEntries([...this.overrides]),
+      pulsing: [...this.pulses.keys()],
       moduleLocks: [...this.moduleLocks],
     }
   }

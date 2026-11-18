@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { GauzeCore } from './core'
 import { MockDriver } from './drivers'
-import { CH, LOCK_VALUE } from './dmx'
+import { CH, LOCK_VALUE, SENT_PULSE_MS } from './dmx'
 import { DMX_TRANSPORT_RATES } from './dmxTransport'
 import { createDefaultProject, normalizeProject } from './preset'
 
@@ -79,104 +79,134 @@ describe('GauzeCore', () => {
     }
   })
 
-  describe('manual override (Sent)', () => {
-    const setup = () => {
+  describe('Sent (test fine tune)', () => {
+    const cfgOf = (lockedA: boolean, ch2Fine?: number) => {
       const project = createDefaultProject()
       const modules = [
-        { ...project.modules[0], id: 'm-a', startAddress: 1, length: 1, minHeight: 0, maxHeight: 0.5 },
+        { ...project.modules[0], id: 'm-a', startAddress: 1, length: 1, minHeight: 0, maxHeight: 0.5, locked: lockedA, ch2Fine },
         { ...project.modules[0], id: 'm-b', startAddress: 5, length: 1, minHeight: 0, maxHeight: 0.5 },
       ]
-      const core = new GauzeCore((_cfg, events) => new MockDriver(events))
-      core.configure({ modules, output: project.settings.output, lockValue: LOCK_VALUE })
+      return { modules, output: project.settings.output, lockValue: LOCK_VALUE }
+    }
+    let now = 1000
+    const setup = (lockedA = false) => {
+      now = 1000
+      const core = new GauzeCore((_cfg, events) => new MockDriver(events), () => now)
+      core.configure(cfgOf(lockedA))
       return core
     }
+    const tickAt = (core: GauzeCore, t: number) => {
+      now = t
+      core.tick()
+      return [...core.snapshot().frame.slice(0, 8)]
+    }
 
-    it('khoá bật → Sent bị chặn, không tạo override; khoá tắt → gửi đúng 4 giá trị, module khác không đổi', () => {
-      const core = setup()
+    it.each([
+      { global: true, mod: false },
+      { global: false, mod: false },
+      { global: true, mod: true },
+      { global: false, mod: true },
+    ])('gửi được khi khoá tổng=$global, khoá module=$mod: CH1 giữ nguyên, CH2 = giá trị nhập, CH4 = 77 rồi 0', ({ global, mod }) => {
+      const core = setup(mod)
       try {
-        core.command({ type: 'lock', locked: true })
-        core.tick()
-        const locked = [...core.snapshot().frame.slice(0, 8)]
-        const res = core.command({ type: 'override', id: 'm-a', values: [10, 20, 30, 77] })
-        expect(res.ok).toBe(false)
-        core.tick()
-        expect([...core.snapshot().frame.slice(0, 8)]).toEqual(locked)
-        expect(core.snapshot().overrides).toEqual({})
-
-        core.command({ type: 'lock', locked: false })
-        expect(core.command({ type: 'override', id: 'm-a', values: [10, 20, 30, 77] }).ok).toBe(true)
-        core.tick()
-        core.tick()
-        const f = core.snapshot().frame
-        expect([...f.slice(0, 4)]).toEqual([10, 20, 30, 77])
-        expect([...f.slice(4, 8)]).toEqual([0, 0, 100, 77]) // module khác dùng frame thường
+        core.command({ type: 'lock', locked: global })
+        const before = tickAt(core, 1000)
+        expect(core.command({ type: 'sendFine', id: 'm-a', ch2: 123 }).ok).toBe(true)
+        const during = tickAt(core, 1040)
+        expect(during[0]).toBe(before[0]) // CH1 không đổi
+        expect(during[1]).toBe(123) // CH2 = giá trị nhập
+        expect(during[2]).toBe(before[2]) // CH3 theo hành vi hiện có
+        expect(during[3]).toBe(77) // xung CH4
+        expect(during.slice(4)).toEqual(before.slice(4)) // module khác không đổi
+        expect(core.snapshot().pulsing).toEqual(['m-a'])
+        const after = tickAt(core, 1000 + SENT_PULSE_MS + 40)
+        expect(after[3]).toBe(0) // tự về 0
+        expect(tickAt(core, 5000)[3]).toBe(0) // và giữ 0
+        expect(core.snapshot().pulsing).toEqual([])
+        expect(core.snapshot().modules['m-a'].target).toBe(0) // không có đích mới
       } finally {
         core.stop()
       }
     })
 
-    it('khoá theo module (ModuleCfg.locked): (toàn cục tắt, module mở → gửi), (module khoá → không gửi, CH4=0), (toàn cục bật → không gửi dù module mở)', () => {
+    it('đang chạy thì Sent dừng tại chỗ (không đặt đích mới); move kế tiếp trả CH4 về theo khoá', () => {
       const core = setup()
-      const cfgOf = (lockedA: boolean) => {
-        const project = createDefaultProject()
-        const modules = [
-          { ...project.modules[0], id: 'm-a', startAddress: 1, length: 1, minHeight: 0, maxHeight: 0.5, locked: lockedA },
-          { ...project.modules[0], id: 'm-b', startAddress: 5, length: 1, minHeight: 0, maxHeight: 0.5 },
-        ]
-        return { modules, output: project.settings.output, lockValue: LOCK_VALUE }
-      }
       try {
         core.command({ type: 'lock', locked: false })
-        expect(core.command({ type: 'override', id: 'm-a', values: [1, 2, 3, 77] }).ok).toBe(true)
-
-        core.configure(cfgOf(true))
-        core.tick()
-        expect(core.snapshot().moduleLocks).toEqual(['m-a'])
-        expect(core.snapshot().overrides).toEqual({})
+        core.command({ type: 'move', ids: ['m-a'], target: 0.5, speed: { unit: 'cms', value: 10 } })
+        tickAt(core, 1500)
+        tickAt(core, 2000)
+        const pos = core.snapshot().modules['m-a'].pos
+        core.command({ type: 'sendFine', id: 'm-a', ch2: 9 })
+        expect(core.snapshot().modules['m-a'].target).toBeCloseTo(pos, 9)
+        tickAt(core, 6000)
         expect(core.snapshot().frame[3]).toBe(0)
-        expect(core.snapshot().frame[7]).toBe(77) // module khác không bị ảnh hưởng
-        expect(core.command({ type: 'override', id: 'm-a', values: [1, 2, 3, 77] }).ok).toBe(false)
+        core.command({ type: 'move', ids: ['m-a'], target: 0.2, speed: { unit: 'cms', value: 10 } })
+        expect(tickAt(core, 6040)[3]).toBe(LOCK_VALUE)
+      } finally {
+        core.stop()
+      }
+    })
+
+    it('khoá tổng/khoá module vẫn chặn move; từ chối CH2 ngoài 0–255 và module lạ', () => {
+      const core = setup(true)
+      try {
+        core.command({ type: 'lock', locked: false })
         expect(core.command({ type: 'move', ids: ['m-a'], target: 0.3, speed: { unit: 'default' } }).warnings?.length).toBe(1)
-        expect(core.snapshot().modules['m-a'].target).toBe(0)
-
-        core.configure(cfgOf(false))
         core.command({ type: 'lock', locked: true })
-        expect(core.command({ type: 'override', id: 'm-a', values: [1, 2, 3, 77] }).ok).toBe(false)
-        expect(core.snapshot().overrides).toEqual({})
+        expect(core.command({ type: 'move', ids: ['m-b'], target: 0.3, speed: { unit: 'default' } }).ok).toBe(false)
+        expect(core.command({ type: 'sendFine', id: 'm-a', ch2: 256 }).ok).toBe(false)
+        expect(core.command({ type: 'sendFine', id: 'm-a', ch2: 1.5 }).ok).toBe(false)
+        expect(core.command({ type: 'sendFine', id: 'nope', ch2: 1 }).ok).toBe(false)
       } finally {
         core.stop()
       }
     })
 
-    it('bật khoá khi đang có override → override bị xoá, CH4 về 0', () => {
-      const core = setup()
+    it('CH2 chỉ đổi khi người dùng nhập: move/lock/estop/stop/khoá module/timeline không đụng CH2', () => {
+      const core = new GauzeCore((_cfg, events) => new MockDriver(events), () => now)
+      now = 1000
+      core.configure(cfgOf(false, 77))
       try {
         core.command({ type: 'lock', locked: false })
-        core.command({ type: 'override', id: 'm-a', values: [10, 20, 30, 77] })
-        core.tick()
-        core.command({ type: 'lock', locked: true })
-        core.tick()
-        expect(core.snapshot().overrides).toEqual({})
-        expect(core.snapshot().frame[3]).toBe(0)
+        const ch2 = () => [core.snapshot().frame[1], core.snapshot().frame[5]]
+        tickAt(core, 1000)
+        expect(ch2()).toEqual([77, 0])
+        const steps: Array<() => void> = [
+          () => core.command({ type: 'move', ids: ['m-a', 'm-b'], target: 0.4, speed: { unit: 'cms', value: 60 } }),
+          () => core.command({ type: 'move', ids: ['m-a'], target: 'min', speed: { unit: 'sec', value: 2 } }),
+          () => core.command({ type: 'stop', ids: 'all' }),
+          () => core.command({ type: 'lock', locked: true }),
+          () => core.command({ type: 'estop' }),
+          () => core.configure(cfgOf(true, 77)),
+          () => core.configure(cfgOf(false, 77)),
+        ]
+        let t = 1000
+        for (const step of steps) {
+          step()
+          for (let i = 0; i < 5; i++) tickAt(core, (t += 200))
+          expect(ch2()).toEqual([77, 0])
+        }
+        // chỉ đổi khi người dùng nhập: cfg mới hoặc Sent
+        core.configure(cfgOf(false, 5))
+        tickAt(core, (t += 40))
+        expect(ch2()[0]).toBe(5)
+        core.command({ type: 'sendFine', id: 'm-a', ch2: 200 })
+        tickAt(core, (t += 40))
+        expect(ch2()[0]).toBe(200)
       } finally {
         core.stop()
       }
     })
 
-    it('kẹp CH1/CH2 theo max của module, từ chối giá trị ngoài 0–255, clearOverride trả về frame thường', () => {
-      const core = setup()
+    it('khoá theo module (ModuleCfg.locked) vẫn ép CH4=0 và chặn move', () => {
+      const core = setup(true)
       try {
-        expect(core.command({ type: 'override', id: 'm-a', values: [256, 0, 0, 0] }).ok).toBe(false)
-        expect(core.command({ type: 'override', id: 'm-a', values: [1.5, 0, 0, 0] }).ok).toBe(false)
-        expect(core.command({ type: 'override', id: 'nope', values: [0, 0, 0, 0] }).ok).toBe(false)
         core.command({ type: 'lock', locked: false })
-        core.command({ type: 'override', id: 'm-a', values: [255, 255, 50, 77] })
-        core.tick()
-        expect([...core.snapshot().frame.slice(0, 4)]).toEqual([127, 255, 50, 77]) // CH1 kẹp ≤ floor(0.5×255)=127; CH2 raw giữ nguyên
-        core.command({ type: 'clearOverride', id: 'm-a' })
-        core.tick()
-        expect(core.snapshot().overrides).toEqual({})
-        expect(core.snapshot().frame[3]).toBe(77)
+        const f = tickAt(core, 1000)
+        expect(f[3]).toBe(0)
+        expect(f[7]).toBe(77)
+        expect(core.snapshot().moduleLocks).toEqual(['m-a'])
       } finally {
         core.stop()
       }

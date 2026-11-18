@@ -5,6 +5,7 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  Check,
   Eye,
   EyeOff,
   HelpCircle,
@@ -20,7 +21,7 @@ import {
 import { getBridge } from '../services/bridge'
 import { layerLoopAddress } from '@shared/addressing'
 import { ch3ToCms, clamp, cmsToCh3, speedCap } from '@shared/convert'
-import { CH, H2_MAX_SPEED_CMS, addressRange } from '@shared/dmx'
+import { CH, H2_MAX_SPEED_CMS, SENT_CH4_PULSE_VALUE, SENT_PULSE_MS, addressRange } from '@shared/dmx'
 import { defaultLayerTransform, defaultModuleTransform } from '@shared/preset'
 import {
   computeModuleBasePositions,
@@ -2350,122 +2351,135 @@ export function PropertiesPanel(props: {
       <ChannelMonitor
         key={single.id}
         moduleId={single.id}
+        moduleName={single.name}
         live={[ch1, ch2, ch3, ch4]}
-        sent={snapshot?.overrides?.[single.id] ?? null}
         globalLocked={!!snapshot?.locked}
         moduleLocked={!!single.locked}
         onToggleLock={(locked) => updateModule(single.id, { locked: locked || undefined })}
+        onPersistCh2={(v) => updateModule(single.id, { ch2Fine: v })}
       />
     </div>
   )
 }
 
-/** Giám sát + nhập 4 kênh. Nhập chỉ là bản nháp; "Sent" mới phát (override giữ & refresh theo sendHz). */
+/**
+ * Giám sát 4 kênh. Chỉ CH2 (fine) nhập được; CH1/CH3/CH4 chỉ hiển thị. "Sent" TEST fine tune: lưu CH2 vào module,
+ * gửi xung CH4=77 (SENT_PULSE_MS) rồi CH4 tự về 0; CH1 giữ nguyên, không bị khoá chặn.
+ */
 function ChannelMonitor({
   moduleId,
+  moduleName,
   live,
-  sent,
   globalLocked,
   moduleLocked,
   onToggleLock,
+  onPersistCh2,
 }: {
   moduleId: string
+  moduleName: string
   live: number[]
-  sent: number[] | null
   globalLocked: boolean
   moduleLocked: boolean
   onToggleLock: (locked: boolean) => void
+  onPersistCh2: (ch2: number) => void
 }) {
-  const [draft, setDraft] = useState<(string | null)[]>([null, null, null, null])
-  const [err, setErr] = useState<string | null>(null)
-  const shown = live.map((v, i) => draft[i] ?? String(v))
-  const parsed = shown.map((v) => (v.trim() === '' ? NaN : Number(v)))
-  const valid = parsed.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)
-  const dirty = draft.some((d) => d !== null) && (!sent || parsed.some((n, i) => n !== sent[i]))
+  const [draft, setDraft] = useState<string | null>(null)
+  const [phase, setPhase] = useState<'idle' | 'sending' | 'sent'>('idle')
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (resetTimer.current) clearTimeout(resetTimer.current)
+  }, [])
+  const shown = draft ?? String(live[1])
+  const ch2 = shown.trim() === '' ? NaN : Number(shown)
+  const valid = Number.isInteger(ch2) && ch2 >= 0 && ch2 <= 255
+  const notify = useAppStore.getState().notify
   const send = async () => {
-    if (globalLocked) return setErr('Đang khoá – tắt khoá để gửi.')
-    if (moduleLocked) return setErr('Module đang khoá – mở khoá module để gửi.')
-    if (!valid) return setErr('Mỗi kênh phải là số nguyên 0–255.')
-    const res = await getBridge().command({ type: 'override', id: moduleId, values: parsed as [number, number, number, number] })
-    setErr(res.ok ? null : (res.message ?? 'Gửi thất bại'))
-    if (res.ok) setDraft([null, null, null, null])
+    if (!valid || phase === 'sending') return
+    setPhase('sending')
+    onPersistCh2(ch2)
+    try {
+      const res = await getBridge().command({ type: 'sendFine', id: moduleId, ch2 })
+      if (!res.ok) throw new Error(res.message ?? 'Gửi thất bại')
+      setDraft(null)
+      setPhase('sent')
+      notify(`${moduleName}: CH2 = ${ch2}, CH4 77 → 0 (xung ${SENT_PULSE_MS / 1000}s)`, 'success', { title: 'Đã gửi Sent', icon: 'success' })
+    } catch (err) {
+      setPhase('idle')
+      notify((err as Error).message, 'error', { title: 'Sent lỗi', icon: 'error' })
+      return
+    }
+    if (resetTimer.current) clearTimeout(resetTimer.current)
+    resetTimer.current = setTimeout(() => setPhase('idle'), 1400)
   }
-  const labels = ['CH1 Pos', 'CH2 Fine', 'CH3 Spd', 'CH4 Lock']
-  const titles = [
-    'CH1: vị trí lên/xuống 0–255 (0 → chiều dài tối đa), kẹp theo min–max của module',
-    'CH2: fine tĩnh 0–255 (giá trị lưu ở ô Fine tune CH2 của module; nhập ở đây chỉ là override)',
-    `CH3: tốc độ (${ch3ToCms(parsed[2] || 0).toFixed(0)} cm/s)`,
-    'CH4: khoá an toàn (77 = mở, 0 = khoá)',
+  const cells: Array<{ label: string; value: string; title: string; editable?: boolean }> = [
+    { label: 'CH1 Pos', value: String(live[0]), title: 'CH1: vị trí 0–255 (0 → chiều dài tối đa), kẹp theo min–max; Sent không đổi' },
+    { label: 'CH2 Fine', value: shown, title: 'CH2: fine tĩnh 0–255, chỉ đổi khi bạn nhập / bấm Sent', editable: true },
+    { label: 'CH3 Spd', value: String(live[2]), title: `CH3: tốc độ (${ch3ToCms(live[2]).toFixed(0)} cm/s; 255 = ${H2_MAX_SPEED_CMS} cm/s)` },
+    { label: 'CH4 Lock', value: String(live[3]), title: `CH4: khoá an toàn. Sent phát ${SENT_CH4_PULSE_VALUE} trong ${SENT_PULSE_MS} ms rồi tự về 0` },
   ]
   return (
     <div className="mt-auto space-y-2 border-t border-line pt-2.5">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">Giám sát 4 kênh DMX</span>
         <span className="flex items-center gap-1.5 text-[11px] text-[#C2B3A4]">
-          {sent && (
-            <button
-              type="button"
-              onClick={() => void getBridge().command({ type: 'clearOverride', id: moduleId })}
-              title="Xoá override, trở về điều khiển bình thường"
-              className="cursor-pointer rounded-full px-2 py-0.5 text-[10px] font-semibold text-muted shadow-[inset_0_0_0_1px_var(--line)] hover:text-fg"
-            >
-              Xoá
-            </button>
-          )}
           <button
             type="button"
             onClick={() => void send()}
-            disabled={!dirty}
-            title="Gửi 4 giá trị đã nhập ra DMX (giữ & phát lại liên tục)"
-            className="cursor-pointer rounded-full bg-brand/20 px-2 py-0.5 text-[10px] font-semibold text-[#FFB26B] hover:bg-brand/30 disabled:cursor-default disabled:opacity-40"
+            disabled={!valid || phase === 'sending'}
+            title={`Test fine tune: gửi CH2 = ${valid ? ch2 : '?'}, CH4 ${SENT_CH4_PULSE_VALUE} rồi về 0. Không bị khoá chặn, CH1 giữ nguyên.`}
+            aria-live="polite"
+            className={`inline-flex h-5 min-w-[46px] cursor-pointer items-center justify-center gap-1 rounded-full px-2 text-[10px] font-semibold whitespace-nowrap transition-all duration-200 disabled:cursor-default disabled:opacity-40 ${
+              phase === 'sent'
+                ? 'bg-ok/25 text-ok'
+                : phase === 'sending'
+                  ? 'scale-95 animate-pulse bg-brand/35 text-[#FFD08A]'
+                  : 'bg-brand/20 text-[#FFB26B] hover:bg-brand/30'
+            }`}
           >
-            Sent
+            {phase === 'sent' ? <Check size={11} strokeWidth={3} /> : null}
+            {phase === 'sent' ? 'Đã gửi' : phase === 'sending' ? '…' : 'Sent'}
           </button>
           <button
             type="button"
             onClick={() => onToggleLock(!moduleLocked)}
             title={
               moduleLocked
-                ? 'Khoá module này (CH4=0, đóng băng, chặn Sent) — bấm để mở'
-                : 'Module đang mở — bấm để khoá riêng module này. Không vượt được khoá toàn cục.'
+                ? 'Khoá module này (CH4=0, đóng băng timeline/cue/manual) — bấm để mở'
+                : 'Module đang mở — bấm để khoá riêng module này. Sent không bị khoá chặn.'
             }
             aria-label={moduleLocked ? 'Mở khoá module' : 'Khoá module'}
             aria-pressed={moduleLocked}
             className="cursor-pointer rounded p-0.5 hover:bg-white/10"
           >
-            {moduleLocked ? <Lock size={12} className="text-warn" /> : <Unlock size={12} className="text-ok" />}
+            {moduleLocked || globalLocked ? <Lock size={12} className="text-warn" /> : <Unlock size={12} className="text-ok" />}
           </button>
         </span>
       </div>
 
       <div className="grid grid-cols-4 gap-1.5 text-center tabular-nums">
-        {labels.map((label, i) => (
-          <label key={label} className="rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title={titles[i]}>
-            <div className="text-[9.5px] text-muted">{label}</div>
-            <input
-              type="number"
-              min={0}
-              max={255}
-              step={1}
-              value={shown[i]}
-              onChange={(e) => setDraft((d) => d.map((v, j) => (j === i ? e.target.value : (v ?? String(live[j])))))}
-              className="w-full bg-transparent text-center font-semibold text-fg outline-none"
-            />
+        {cells.map((c) => (
+          <label key={c.label} className="min-w-0 rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title={c.title}>
+            <div className="truncate text-[9.5px] text-muted">{c.label}</div>
+            {c.editable ? (
+              <input
+                type="number"
+                min={0}
+                max={255}
+                step={1}
+                value={c.value}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void send()
+                }}
+                className={`w-full bg-transparent text-center font-semibold outline-none ${valid ? 'text-fg' : 'text-danger'}`}
+              />
+            ) : (
+              <div className="font-semibold text-fg">{c.value}</div>
+            )}
           </label>
         ))}
       </div>
-      {(dirty || sent) && (
-        <p className={`text-[10.5px] ${dirty ? 'text-warn' : 'text-ok'}`}>
-          {dirty ? 'Chưa gửi — bấm Sent để phát.' : 'Override đang phát (giữ cho tới khi Xoá).'}
-        </p>
-      )}
-      {globalLocked && (
-        <p className="flex items-start gap-1 text-[10.5px] text-warn">
-          <AlertTriangle size={11} className="mt-px shrink-0" />
-          Đang khoá toàn cục – tắt khoá để gửi (Sent bị chặn; mở khoá module không vượt được khoá toàn cục).
-        </p>
-      )}
-      {err && <p className="text-[10.5px] text-danger">{err}</p>}
+      {!valid && <p className="text-[10.5px] text-danger">CH2 phải là số nguyên 0–255.</p>}
     </div>
   )
 }
