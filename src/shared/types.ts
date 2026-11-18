@@ -59,7 +59,9 @@ export interface ModuleCfg {
   startAddress: number
   /** Tốc độ tối đa motor (cm/s) ứng với CH3 = 255. */
   maxSpeedCms: number
-  /** Hiệu chỉnh tĩnh tại home (vị trí 0), mm, 0..40. Không áp khi chạy timeline/cue/wave. */
+  /** CH2 (fine) tĩnh, 0..255, phát nguyên giá trị này; không bị vị trí/timeline/cue/wave/LTC thay đổi. Mặc định 0. */
+  ch2Fine?: number
+  /** @deprecated v1.0.5–1.0.7 (mm, mã hoá 16-bit cũ). Chỉ giữ lại trong file để không mất dữ liệu, không còn tác dụng. */
   homeOffsetMm?: number
   /** Khoá riêng module: CH4=0, đóng băng, chặn Sent (lưu trong project; không vượt được khoá toàn cục). */
   locked?: boolean
@@ -194,7 +196,8 @@ export interface Snapshot {
   status: ConnectionStatus
   frame: Uint8Array
   /** Override đang phát theo module id → [CH1..CH4] đã gửi. */
-  overrides?: Record<string, number[]>
+  /** Module đang trong xung Sent (CH4=77). */
+  pulsing?: string[]
   /** Id module đang bị khoá riêng. */
   moduleLocks?: string[]
 }
@@ -211,9 +214,11 @@ export type Command =
   | { type: 'stop'; ids: string[] | 'all' }
   | { type: 'estop' }
   | { type: 'lock'; locked: boolean }
-  /** Manual override: phát đúng 4 giá trị CH1..CH4 cho module (kể cả khi khoá toàn cục) cho tới khi xoá. */
-  | { type: 'override'; id: string; values: [number, number, number, number] }
-  | { type: 'clearOverride'; id: string }
+  /**
+   * Nút Sent (test fine tune): giữ CH1/CH3 như hiện có, CH2 = `ch2` (0–255), CH4 = 77 trong SENT_PULSE_MS rồi về 0 và giữ 0
+   * (tới khi module nhận lệnh move kế tiếp). Không đặt đích mới và KHÔNG bị chặn bởi khoá tổng/khoá module.
+   */
+  | { type: 'sendFine'; id: string; ch2: number }
 
 export interface CommandResult {
   ok: boolean

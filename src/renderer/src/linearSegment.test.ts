@@ -11,10 +11,10 @@ function makeMod(id: string, maxSpeedCms = 120): ModuleCfg {
     name: id,
     layerId: 'layer-1',
     visible: true,
-    length: 4,
+    length: 2.55, // 1 bước CH1 = 1 cm → các độ cao tròn cm gần như không bị lượng tử hoá
     width: 1,
     minHeight: 0,
-    maxHeight: 4,
+    maxHeight: 2.55,
     startAddress: 1,
     maxSpeedCms,
     defaultSpeed: 100,

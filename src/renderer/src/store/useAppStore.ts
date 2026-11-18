@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { autoAssign, layerLoopAddress, nextFree, orderedModules, validateAddress } from '@shared/addressing'
 import type { AppInfo, SnapshotDto } from '@shared/api'
-import { clamp, normalizeHomeOffsetMm } from '@shared/convert'
+import { clamp } from '@shared/convert'
 import { DEFAULT_SPEED, H2_MAX_SPEED_CMS, isValidStartAddress, rangesOverlap } from '@shared/dmx'
 import { resolveOutputSettingsPatch } from '@shared/protocols'
 import {
@@ -991,8 +991,8 @@ export const useAppStore = create<AppState>((set, get) => {
         merged.width = Math.min(500, Math.max(0.2, merged.width))
         merged.maxHeight = Math.min(merged.length, Math.max(0, merged.maxHeight))
         merged.minHeight = Math.min(merged.maxHeight, Math.max(0, merged.minHeight))
-        merged.maxSpeedCms = Math.min(10000, Math.max(10, merged.maxSpeedCms))
-        if (merged.homeOffsetMm !== undefined) merged.homeOffsetMm = normalizeHomeOffsetMm(merged.homeOffsetMm)
+        merged.maxSpeedCms = Math.min(H2_MAX_SPEED_CMS, Math.max(10, merged.maxSpeedCms))
+        if (merged.ch2Fine !== undefined) merged.ch2Fine = Math.min(255, Math.max(0, Math.round(merged.ch2Fine) || 0))
         merged.defaultSpeed = Math.min(255, Math.max(1, Math.round(merged.defaultSpeed)))
         return merged
       })
@@ -1118,7 +1118,7 @@ export const useAppStore = create<AppState>((set, get) => {
         merged.width = Math.min(500, Math.max(0.2, merged.width))
         merged.maxHeight = Math.min(merged.length, Math.max(0, merged.maxHeight))
         merged.minHeight = Math.min(merged.maxHeight, Math.max(0, merged.minHeight))
-        merged.maxSpeedCms = Math.min(10000, Math.max(10, merged.maxSpeedCms))
+        merged.maxSpeedCms = Math.min(H2_MAX_SPEED_CMS, Math.max(10, merged.maxSpeedCms))
         merged.defaultSpeed = Math.min(255, Math.max(1, Math.round(merged.defaultSpeed)))
         return merged
       })

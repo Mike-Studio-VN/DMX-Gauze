@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dmxToPos } from './convert'
+import { ch1ToPos } from './convert'
 import { GauzeCore } from './core'
 import { CH } from './dmx'
 import { MockDriver } from './drivers'
@@ -98,7 +98,7 @@ describe('alternating Layer wave', () => {
       return pair.map((mod) => {
         const address = mod.startAddress - 1
         const frame = driver!.last
-        const target = dmxToPos(frame[address + CH.POSITION], frame[address + CH.FINE], mod.length)
+        const target = ch1ToPos(frame[address + CH.POSITION], mod.length)
         expect(target).toBeCloseTo(snapshot.modules[mod.id].target, 4)
         return { target, displayedDrop: snapshot.modules[mod.id].pos }
       })
