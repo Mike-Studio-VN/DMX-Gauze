@@ -152,6 +152,8 @@ interface AppState {
   snapshot: SnapshotDto | null
   activeTab: ControlTab
   playheadTime: number
+  ltcActive: boolean
+  ltcDropFrame: boolean | undefined
   settingsOpen: boolean
   settingsTab: SettingsTab
   toast: ToastMsg | null
@@ -251,6 +253,8 @@ interface AppState {
   ) => number | null
   deleteTimelineLayerClips: (layerId: string) => void
   setPlayheadTime: (time: number) => void
+  setLtcActive: (active: boolean) => void
+  setLtcDropFrame: (dropFrame: boolean | undefined) => void
   applyLayerMotionPreset: (
     layerId: string,
     presetId: LayerMotionPresetId,
@@ -395,6 +399,8 @@ export const useAppStore = create<AppState>((set, get) => {
     snapshot: null,
     activeTab: 'timeline',
     playheadTime: 0,
+    ltcActive: false,
+    ltcDropFrame: undefined,
     settingsOpen: false,
     settingsTab: 'network',
     toast: null,
@@ -404,6 +410,12 @@ export const useAppStore = create<AppState>((set, get) => {
       if (!Number.isFinite(time)) return
       const next = Math.max(0, Number(time.toFixed(4)))
       if (get().playheadTime !== next) set({ playheadTime: next })
+    },
+    setLtcActive(active) {
+      if (get().ltcActive !== active) set({ ltcActive: active, ltcDropFrame: undefined })
+    },
+    setLtcDropFrame(dropFrame) {
+      if (get().ltcDropFrame !== dropFrame) set({ ltcDropFrame: dropFrame })
     },
 
     notify(text, kind = 'info', opts) {

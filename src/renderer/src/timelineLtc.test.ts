@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDefaultProject } from '@shared/preset';
+import { createDefaultProject, normalizeProject } from '@shared/preset';
 import type { Command, TimelineClip } from '@shared/types';
 
 interface VNode {
@@ -168,10 +168,12 @@ function encodeSmpteBiphaseFrame(
   sampleRate = 48000,
   fps = 25,
   startPhase = 1,
+  dropFrame = false,
 ): { samples: Float32Array; endPhase: number } {
   const bits = new Array<number>(80).fill(0);
   writeBcdBits(bits, 0, f % 10, 4);
   writeBcdBits(bits, 8, Math.floor(f / 10), 2);
+  bits[10] = Number(dropFrame);
   writeBcdBits(bits, 16, s % 10, 4);
   writeBcdBits(bits, 24, Math.floor(s / 10), 3);
   writeBcdBits(bits, 32, m % 10, 4);
@@ -347,6 +349,7 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
 
     // Activate LTC mode via real component button handler.
     (ltcBtn!.props.onClick as () => void)();
+    hookRuntime.render();
     await vi.waitFor(() => expect(capturedProc?.onaudioprocess).toBeTypeOf('function'));
 
     // Feed consecutive 25fps LTC frames starting at 00:00:03:00 -> 00:00:03:02 (3.08s),
@@ -421,6 +424,7 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     const stopLtc = collectNodes(hookRuntime.lastTree).find((n) => n.props['aria-label'] === 'Dừng LTC');
     expect(stopLtc).toBeDefined();
     (stopLtc!.props.onClick as () => void)();
+    hookRuntime.render();
     expect(dispatched.at(-1)).toEqual({ type: 'stop', ids: [mod.id] });
     const countAfterStop = dispatched.length;
     vi.advanceTimersByTime(500);
@@ -507,7 +511,8 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     );
     expect(ltcBtn).toBeDefined();
     (ltcBtn!.props.onClick as () => void)();
-    expect(notifySpy).toHaveBeenCalledWith(expect.stringContaining('60 fps'), 'warn');
+    hookRuntime.render();
+    expect(notifySpy).not.toHaveBeenCalledWith(expect.stringContaining('60 fps'), 'warn');
 
     await vi.waitFor(() => expect(capturedProc?.onaudioprocess).toBeTypeOf('function'));
 
@@ -527,7 +532,7 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     for (const frame of [7, 8, 9, 10]) feed(2, frame);
 
     const out = collectNodes(hookRuntime.lastTree).find((n) => n.type === 'output');
-    expect(extractText(out)).toBe('00:00:02:24');
+    expect(extractText(out)).toBe('00:00:02:10');
     expect(observed.every((time, i) => i === 0 || time >= observed[i - 1])).toBe(true);
 
     // Delayed audio delivery crosses P2 in freewheel. The encoded LTC labels still increase by one frame.
@@ -547,5 +552,111 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     feed(0, 1);
     expect(useAppStore.getState().playheadTime).toBeCloseTo(0.04);
     hookRuntime.reset();
+  });
+
+  it('switches the clock and clip snap to the LTC grid, then restores the saved Timeline FPS', () => {
+    const saved = createDefaultProject();
+    saved.settings.timeline.fps = 50;
+    saved.settings.timeline.startTime = 1.092;
+    saved.settings.output.sendHz = 60;
+    delete saved.settings.ltc.fps;
+    const project = normalizeProject(JSON.parse(JSON.stringify(saved)));
+    const addClip = vi.fn<(clip: TimelineClip) => void>();
+    useAppStore.setState({ project, addClip });
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: () => new Promise<MediaStream>(() => {}) },
+    });
+
+    hookRuntime.component = () => TimelineEditor({}) as unknown as VNode;
+    const findNode = (type: string, ariaLabel?: string) =>
+      collectNodes(hookRuntime.lastTree).find((node) =>
+        node.type === type && (ariaLabel === undefined || node.props['aria-label'] === ariaLabel),
+      );
+    const dropAt = (seconds: number) => {
+      const track = collectNodes(hookRuntime.lastTree).find((node) => typeof node.props.onDrop === 'function');
+      const drop = track?.props.onDrop as (event: unknown) => void;
+      drop({
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        clientX: seconds * 64,
+        dataTransfer: { getData: () => project.modules[0].id },
+        currentTarget: { getBoundingClientRect: () => ({ left: 0 }) },
+      });
+      return addClip.mock.lastCall?.[0].startTime;
+    };
+    hookRuntime.render();
+    expect(findNode('select', 'Tốc độ khung hình')?.props).toMatchObject({ value: 50, disabled: false });
+    expect(extractText(findNode('output'))).toBe('00:00:01:05');
+
+    const ltcButton = collectNodes(hookRuntime.lastTree).find((node) =>
+      node.type === 'button' && extractText(node) === 'Timecode',
+    );
+    (ltcButton!.props.onClick as () => void)();
+    hookRuntime.render();
+    expect(findNode('select', 'Tốc độ khung hình')?.props).toMatchObject({
+      value: 30, disabled: true, title: 'Đang link theo LTC: 30 fps',
+    });
+    expect(extractText(findNode('output'))).toBe('00:00:01:03');
+    expect(dropAt(0.026)).toBe(0.0333);
+
+    const select25 = { ...project, settings: { ...project.settings, ltc: { ...project.settings.ltc, fps: 25 as const } } };
+    useAppStore.setState({ project: select25 });
+    hookRuntime.render();
+    expect(findNode('select', 'Tốc độ khung hình')?.props).toMatchObject({ value: 25, disabled: true });
+    expect(extractText(findNode('output'))).toBe('00:00:01:02');
+    expect(dropAt(0.026)).toBe(0.04);
+
+    (findNode('button', 'Dừng LTC')!.props.onClick as () => void)();
+    hookRuntime.render();
+    expect(findNode('select', 'Tốc độ khung hình')?.props).toMatchObject({ value: 50, disabled: false });
+    expect(extractText(findNode('output'))).toBe('00:00:01:05');
+    expect(dropAt(0.026)).toBe(0.02);
+    expect(useAppStore.getState().project).toBe(select25);
+    expect(useAppStore.getState().project.settings.output.sendHz).toBe(60);
+  });
+
+  it.each([
+    { dropFrame: false, firstFrame: 0, expected: '00:01:00:01' },
+    { dropFrame: true, firstFrame: 2, expected: '00:01:00;03' },
+  ])('displays 29.97 LTC numbering from the decoded DF bit ($dropFrame)', async ({ dropFrame, firstFrame, expected }) => {
+    const project = createDefaultProject();
+    project.settings.timeline.fps = 50;
+    project.settings.ltc.fps = 29.97;
+    project.clips = [{ ...project.clips![0], startTime: 60 }];
+    useAppStore.setState({ project, sendCommand: async () => ({ ok: true }) });
+
+    const processor: { connect: () => void; onaudioprocess?: (event: unknown) => void } = { connect: vi.fn() };
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) },
+    });
+    vi.stubGlobal('AudioContext', class {
+      sampleRate = 48000;
+      destination = {};
+      createMediaStreamSource() { return { connect: vi.fn() }; }
+      createScriptProcessor() { return processor; }
+      close = vi.fn(async () => {});
+    });
+
+    hookRuntime.component = () => TimelineEditor({}) as unknown as VNode;
+    const ltcButton = collectNodes(hookRuntime.render()).find((node) =>
+      node.type === 'button' && extractText(node) === 'Timecode',
+    );
+    (ltcButton!.props.onClick as () => void)();
+    hookRuntime.render();
+    await vi.waitFor(() => expect(processor.onaudioprocess).toBeTypeOf('function'));
+
+    let phase = 1;
+    for (const frame of [firstFrame, firstFrame + 1, firstFrame + 2]) {
+      vi.advanceTimersByTime(33);
+      const encoded = encodeSmpteBiphaseFrame(0, 1, 0, frame, 48000, 29.97, phase, dropFrame);
+      phase = encoded.endPhase;
+      processor.onaudioprocess!({
+        inputBuffer: { numberOfChannels: 1, getChannelData: () => encoded.samples },
+      });
+    }
+    expect(useAppStore.getState().ltcDropFrame).toBe(dropFrame);
+    expect(extractText(collectNodes(hookRuntime.lastTree).find((node) => node.type === 'output'))).toBe(expected);
+    hookRuntime.reset();
+    expect(useAppStore.getState().ltcActive).toBe(false);
   });
 });

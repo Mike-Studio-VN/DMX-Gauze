@@ -887,6 +887,16 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
     expect(updateClipStartTime(clip, 5, { minStart: 1.2, maxEnd: 7.5 })).toEqual({ startTime: 3.5 })
   })
 
+  it('round-trips 29.97 LTC drop and non-drop labels across a minute boundary', async () => {
+    const { formatTc, parseTc, realFps, secondsToTc, tcToFrames } = await import('./timecode')
+    const sec = 1800 / realFps(29.97)
+    expect(formatTc(sec, 29.97)).toBe('00:01:00;02')
+    expect(formatTc(sec, 29.97, false)).toBe('00:01:00:00')
+    expect(parseTc('00:01:00:02', 29.97)).toBeCloseTo(sec, 8) // legacy colon input still uses drop-frame
+    expect(parseTc('00:01:00:00', 29.97, false)).toBeCloseTo(sec, 8)
+    expect(tcToFrames(secondsToTc(sec, 29.97, false), 29.97)).toBe(1800)
+  })
+
   it('hỗ trợ timeline 40/50/60 fps: timecode, snap, kéo moment, LTC giữ rate riêng, migrate Art-Net+5568 -> 6454', async () => {
     const {
       FPS_OPTIONS,
@@ -974,6 +984,7 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
     expect(resolveLtcFps(60)).toBe(30)
     expect(resolveLtcFps(50, 25)).toBe(25)
     expect(resolveLtcFps(25)).toBe(25)
+    expect(resolveLtcFps(24, 29.97)).toBe(29.97)
 
     // 1) Legacy v1.0.0 (không có schemaVersion) sACN/KiNET với port 6454 -> migrate về 5568/6038 theo đúng hành vi gửi v1.0.0
     const legacySacn6454 = createDefaultProject()
