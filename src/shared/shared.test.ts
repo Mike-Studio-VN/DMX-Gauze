@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { autoAssign, conflictMap, nextFree, validateAddress } from './addressing'
 import { buildArtDmx, buildArtPoll, buildArtPollReply, parseArtPollReply, portAddress } from './artnet'
-import { ch3ToCms, cmsToCh3, dmxToPos, durationToCh3, posToDmx } from './convert'
+import { ch3ToCms, cmsToCh3, dmxToPos, durationToCh3, homeOffsetSteps, posToDmx } from './convert'
 import { LtcDecoder } from './ltc'
 import { createDefaultProject } from './preset'
 import { formatTc, parseTc } from './timecode'
@@ -18,14 +18,13 @@ describe('convert', () => {
     expect(dmxToPos(mid3.coarse, mid3.fine, 3)).toBeCloseTo(1.5, 3)
   })
 
-  it.each([
-    { base: 0x12ff, offset: 1, coarse: 0x13, fine: 0x00 },
-    { base: 0x1300, offset: -1, coarse: 0x12, fine: 0xff },
-    { base: 1, offset: -255, coarse: 0x00, fine: 0x00 },
-    { base: 65534, offset: 255, coarse: 0xff, fine: 0xff },
-  ])('applies $offset to the full DMX position $base before splitting bytes', ({ base, offset, coarse, fine }) => {
-    expect(posToDmx(base / 65535, 1, offset)).toEqual({ coarse, fine })
-  })
+  it('home offset: mm → bước 16-bit, chỉ áp tại target 0', () => {
+    expect(homeOffsetSteps(40, 1)).toBe(2621)
+    expect(homeOffsetSteps(1000, 1)).toBe(2621) // kẹp 40 mm
+    expect(homeOffsetSteps(-5, 1)).toBe(0)
+    expect(posToDmx(0, 1, 40)).toEqual({ coarse: 10, fine: 0x3d })
+    expect(posToDmx(0.5, 1, 40)).toEqual(posToDmx(0.5, 1))
+  });
 
   it('quy đổi tốc độ H2 120 cm/s và thời gian sang CH3', () => {
     expect(ch3ToCms(255, 120)).toBeCloseTo(120, 5)

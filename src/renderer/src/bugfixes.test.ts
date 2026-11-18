@@ -1098,7 +1098,7 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     expect(modHtml).toContain('placeholder="—"');
   });
 
-  it('renders a signed Fine tune field for a selected module and updates its value through the store', () => {
+  it('renders a home offset (mm) field for a selected module and updates its value through the store', () => {
     vi.useFakeTimers();
     try {
       setupBrowserEnv();
@@ -1115,12 +1115,14 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
       const propertiesHtml = () => renderToStaticMarkup(
         React.createElement(PropertiesPanel, { overrideState: useAppStore.getState() }),
       );
-      expect(propertiesHtml()).toContain('Fine tune CH2 (bước DMX)');
-      expect(propertiesHtml()).toMatch(/<input[^>]*min="-255"[^>]*max="255"[^>]*value="0"/);
+      expect(propertiesHtml()).toContain('Fine tune CH2 — home (mm)');
+      expect(propertiesHtml()).toContain('>Sent<');
+      expect(propertiesHtml()).not.toMatch(/\dm → \d/);
+      expect(propertiesHtml()).toMatch(/<input[^>]*min="0"[^>]*max="40"[^>]*value="0"/);
 
-      useAppStore.getState().updateModule(id, { fineTune: -17 });
-      expect(propertiesHtml()).toMatch(/<input[^>]*min="-255"[^>]*max="255"[^>]*value="-17"/);
-      expect(useAppStore.getState().project.modules[1].fineTune).toBeUndefined();
+      useAppStore.getState().updateModule(id, { homeOffsetMm: 12.5 });
+      expect(propertiesHtml()).toMatch(/<input[^>]*min="0"[^>]*max="40"[^>]*value="12.5"/);
+      expect(useAppStore.getState().project.modules[1].homeOffsetMm).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }

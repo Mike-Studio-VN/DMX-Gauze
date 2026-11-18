@@ -53,28 +53,79 @@ describe('GauzeCore', () => {
     core.stop()
   })
 
-  it('sends each module’s calibrated position after clamping the target', () => {
+  it('home offset chỉ áp ở target 0; khi chạy không đụng CH2', () => {
     const project = createDefaultProject()
     const template = { ...project.modules[0], length: 1, minHeight: 0, maxHeight: 0.5, maxSpeedCms: 120 }
     const modules = [
-      { ...template, id: 'm-a', startAddress: 1, fineTune: -1 },
-      { ...template, id: 'm-b', startAddress: 5, fineTune: 1 },
+      { ...template, id: 'm-a', startAddress: 1, homeOffsetMm: 40 },
+      { ...template, id: 'm-b', startAddress: 5, homeOffsetMm: 40 },
     ]
     const send = vi.fn<MockDriver['send']>()
     const core = new GauzeCore((_cfg, events) => Object.assign(new MockDriver(events), { send }))
-
     try {
       core.configure({ modules, output: project.settings.output, lockValue: LOCK_VALUE })
       core.command({ type: 'lock', locked: false })
-      core.command({ type: 'move', ids: ['m-a', 'm-b'], target: 1.5, speed: { unit: 'cms', value: 120 } })
       core.tick()
-
+      expect(send.mock.lastCall?.[2]).toEqual(Uint8Array.of(10, 0x3d, 100, LOCK_VALUE, 10, 0x3d, 100, LOCK_VALUE))
+      core.command({ type: 'move', ids: ['m-a'], target: 1.5, speed: { unit: 'cms', value: 120 } })
+      core.tick()
       expect(core.snapshot().modules['m-a'].target).toBe(0.5)
-      expect(core.snapshot().modules['m-b'].target).toBe(0.5)
-      expect(send.mock.lastCall?.[2]).toEqual(Uint8Array.of(0x7f, 0xff, 255, LOCK_VALUE, 0x80, 0x01, 255, LOCK_VALUE))
+      expect(send.mock.lastCall?.[2]?.slice(0, 2)).toEqual(Uint8Array.of(0x80, 0x00))
     } finally {
       core.stop()
     }
+  })
+
+  describe('manual override (Sent)', () => {
+    const setup = () => {
+      const project = createDefaultProject()
+      const modules = [
+        { ...project.modules[0], id: 'm-a', startAddress: 1, length: 1, minHeight: 0, maxHeight: 0.5 },
+        { ...project.modules[0], id: 'm-b', startAddress: 5, length: 1, minHeight: 0, maxHeight: 0.5 },
+      ]
+      const core = new GauzeCore((_cfg, events) => new MockDriver(events))
+      core.configure({ modules, output: project.settings.output, lockValue: LOCK_VALUE })
+      return core
+    }
+
+    it('phát đúng 4 giá trị (kể cả CH4) khi khoá toàn cục, chỉ module đó, và giữ qua các tick', () => {
+      const core = setup()
+      try {
+        core.command({ type: 'lock', locked: true })
+        core.tick()
+        const base = core.snapshot().frame.slice(4, 8)
+        const res = core.command({ type: 'override', id: 'm-a', values: [10, 20, 30, 77] })
+        expect(res.ok).toBe(true)
+        expect(res.warnings?.length).toBe(1)
+        core.tick()
+        core.tick()
+        const f = core.snapshot().frame
+        expect([...f.slice(0, 4)]).toEqual([10, 20, 30, 77])
+        expect([...f.slice(4, 8)]).toEqual([...base]) // module khác không bị ảnh hưởng
+        expect(core.snapshot().locked).toBe(true)
+        expect(core.snapshot().overrides?.['m-a']).toEqual([10, 20, 30, 77])
+      } finally {
+        core.stop()
+      }
+    })
+
+    it('kẹp CH1/CH2 theo max của module, từ chối giá trị ngoài 0–255, clearOverride trả về frame thường', () => {
+      const core = setup()
+      try {
+        expect(core.command({ type: 'override', id: 'm-a', values: [256, 0, 0, 0] }).ok).toBe(false)
+        expect(core.command({ type: 'override', id: 'm-a', values: [1.5, 0, 0, 0] }).ok).toBe(false)
+        expect(core.command({ type: 'override', id: 'nope', values: [0, 0, 0, 0] }).ok).toBe(false)
+        core.command({ type: 'override', id: 'm-a', values: [255, 255, 50, 77] })
+        core.tick()
+        expect([...core.snapshot().frame.slice(0, 4)]).toEqual([0x80, 0x00, 50, 77]) // 0.5 m → 32768
+        core.command({ type: 'clearOverride', id: 'm-a' })
+        core.tick()
+        expect(core.snapshot().overrides).toEqual({})
+        expect(core.snapshot().frame[3]).toBe(0) // khoá toàn cục (mặc định) lại ép CH4=0
+      } finally {
+        core.stop()
+      }
+    })
   })
 
   it('xoá sạch byte DMX cũ khi xoá module, đổi địa chỉ, đổi output/route hoặc dừng (P1 safety)', () => {
