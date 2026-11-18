@@ -174,6 +174,15 @@ export function defaultModuleTransform(): Transform3D {
   return { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }
 }
 
+function parseClipSpeed(c: Record<string, unknown>, label: string): Pick<TimelineClip, 'speedMode' | 'speedUnit' | 'speedValue'> {
+  if (c.speedMode === undefined) return {} // moment cũ: giữ hành vi theo từng điểm
+  if (c.speedMode === 'auto') return { speedMode: 'auto' }
+  if (c.speedMode !== 'manual') failProject(`${label}.speedMode phải là 'auto' hoặc 'manual'`)
+  const unit = c.speedUnit === undefined ? 'cms' : c.speedUnit
+  if (unit !== 'cms' && unit !== 'sec' && unit !== 'ch3') failProject(`${label}.speedUnit phải là 'cms', 'sec' hoặc 'ch3'`)
+  return { speedMode: 'manual', speedUnit: unit, speedValue: reqFinite(c.speedValue, `${label}.speedValue`, 0, 10000) }
+}
+
 function parseKeyframeSpeed(kf: Record<string, unknown>, label: string): Pick<ClipKeyframe, 'speedMode' | 'manualSpeedCms'> {
   if (kf.speedMode === undefined || kf.speedMode === 'auto') return {}
   if (kf.speedMode !== 'manual') failProject(`${label}.speedMode phải là 'auto' hoặc 'manual'`)
@@ -329,6 +338,7 @@ export function normalizeProject(raw: unknown): Project {
         ...(c.autoSpeedLimitCms === undefined ? {} : {
           autoSpeedLimitCms: reqFinite(c.autoSpeedLimitCms, `clips[${idx}].autoSpeedLimitCms`, 1, H2_MAX_SPEED_CMS),
         }),
+        ...parseClipSpeed(c, `clips[${idx}]`),
         keyframes,
       }
     })

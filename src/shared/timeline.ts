@@ -392,6 +392,72 @@ export function resolveKeyframeSpeed(
   }
 }
 
+/** Moment có cài đặt tốc độ riêng ở mức moment không (nếu không: hành vi cũ theo từng điểm). */
+export function clipSpeedKey(clip: Pick<TimelineClip, 'speedMode' | 'speedUnit' | 'speedValue'>, p1: Pick<ClipKeyframe, 'speedMode' | 'manualSpeedCms'>): string {
+  if (clip.speedMode === undefined) return p1.speedMode === 'manual' ? `leg${p1.manualSpeedCms}` : 'a'
+  return clip.speedMode === 'auto' ? 'a' : `m:${clip.speedUnit ?? 'cms'}:${clip.speedValue}`
+}
+
+/** Moment/điểm này dùng tốc độ manual cho đoạn đi từ p1? (mức moment ưu tiên; thiếu → theo điểm cũ). */
+export function isSegmentManual(clip: Pick<TimelineClip, 'speedMode'>, p1: Pick<ClipKeyframe, 'speedMode'>): boolean {
+  return clip.speedMode === undefined ? p1.speedMode === 'manual' : clip.speedMode === 'manual'
+}
+
+/**
+ * Tốc độ manual thô (cm/s, CHƯA kẹp) của đoạn đi từ p1 với quãng distCm; null = auto (hoặc không áp được: giây với quãng 0).
+ * cm/s → cùng tốc độ mọi đoạn; CH3 → cùng CH3 (đổi theo max của module); giây → mỗi đoạn đi trong `value` s (cm/s = quãng/giây).
+ */
+export function manualRawCms(
+  clip: Pick<TimelineClip, 'speedMode' | 'speedUnit' | 'speedValue'>,
+  p1: Pick<ClipKeyframe, 'speedMode' | 'manualSpeedCms'>,
+  distCm: number,
+  maxSpeedCms: number,
+): number | null {
+  if (!isSegmentManual(clip, p1)) return null
+  if (clip.speedMode === undefined) return Number.isFinite(p1.manualSpeedCms) ? (p1.manualSpeedCms as number) : null
+  const v = clip.speedValue
+  if (v === undefined || !Number.isFinite(v)) return null
+  switch (clip.speedUnit ?? 'cms') {
+    case 'ch3':
+      return ch3ToCms(clamp(Math.round(v), 1, 255), maxSpeedCms)
+    case 'sec':
+      return distCm > 1e-9 && v > 0 ? distCm / v : null
+    default:
+      return v
+  }
+}
+
+/** Giá trị nhập tương đương (theo kiểu `unit`) của tốc độ `cms` trên đoạn đại diện dài repDistCm; giây với quãng 0 → null. */
+export function momentSpeedValue(unit: 'cms' | 'sec' | 'ch3', cms: number, repDistCm: number, maxSpeedCms: number): number | null {
+  if (unit === 'cms') return Number(cms.toFixed(1))
+  if (unit === 'ch3') return cmsToCh3(cms, maxSpeedCms)
+  const s = cmsToSeconds(repDistCm, cms)
+  return s === null ? null : Number(s.toFixed(2))
+}
+
+/** Đoạn đại diện để đổi đơn vị: đoạn có quãng đường dài nhất (đầu tiên nếu hoà). */
+export function representativeSegmentIndex(distsCm: number[]): number {
+  let best = 0
+  distsCm.forEach((d, i) => {
+    if (d > distsCm[best]) best = i
+  })
+  return best
+}
+
+/** Tốc độ thực của đoạn p1→p2 trong clip theo cài đặt moment (hoặc điểm cũ), kèm cờ cảnh báo. */
+export function resolveClipSegmentSpeed(
+  clip: TimelineClip,
+  p1: ClipKeyframe,
+  p2: ClipKeyframe,
+  mod: ModuleCfg,
+): KeyframeSpeed {
+  const distCm = segmentDistCm(mod, p1.height, p2.height)
+  const dt = p2.offset - p1.offset
+  const cap = speedCap(mod)
+  const raw = manualRawCms(clip, p1, distCm, cap)
+  return resolveKeyframeSpeed(raw === null ? {} : { speedMode: 'manual', manualSpeedCms: raw }, distCm, dt, cap, clipAutoSpeedCms(mod, clip))
+}
+
 /** Tốc độ manual (cm/s) của đoạn đang chạy tại `time` trong clip active; null nếu auto/ngoài đoạn. */
 function manualSpeedAt(clips: TimelineClip[], mod: ModuleCfg, time: number): number | null {
   const c = clips.find((x) => x.moduleId === mod.id && time >= x.startTime && time < x.startTime + x.duration)
@@ -402,9 +468,10 @@ function manualSpeedAt(clips: TimelineClip[], mod: ModuleCfg, time: number): num
   let seg = 0
   while (seg + 1 < sorted.length && sorted[seg + 1].offset <= rel) seg += 1
   const p1 = sorted[seg]
-  if (p1.speedMode !== 'manual') return null
   const p2 = sorted[seg + 1]
-  return resolveKeyframeSpeed(p1, segmentDistCm(mod, p1.height, p2.height), p2.offset - p1.offset, speedCap(mod)).cms
+  if (!isSegmentManual(c, p1)) return null
+  const r = resolveClipSegmentSpeed(c, p1, p2, mod)
+  return r.mode === 'manual' ? r.cms : null
 }
 
 /** Trả về danh sách các đoạn chuyển động giữa 2 key và kiểm tra có vượt tốc độ tối đa của module không. */
@@ -990,7 +1057,7 @@ export function planTimelineFollow(
     let remainingSec: number | null = null
     let segLabel = ''
     let defaultFromH: number
-    let manualP1: ClipKeyframe | null = null
+    let manualSeg: { clip: TimelineClip; p1: ClipKeyframe } | null = null
 
     if (activeClip) {
       const sorted = [...activeClip.keyframes].sort((a, b) => a.offset - b.offset)
@@ -1014,8 +1081,8 @@ export function planTimelineFollow(
         defaultFromH = clampH(p1.height)
         remainingSec = Math.max(0.02, activeClip.startTime + p2.offset - time)
         segLabel = `P${seg + 1}→P${seg + 2}`
-        manualP1 = p1.speedMode === 'manual' ? p1 : null
-        segKey = `seg:${activeClip.id}:${p1.id}:${p2.id}:${activeClip.startTime}:${activeClip.duration}:${p1.offset}:${p2.offset}:${targetH}:${minH}:${maxH}:${speedCap(mod)}:${manualP1 ? `m${manualP1.manualSpeedCms}` : 'a'}`
+        manualSeg = isSegmentManual(activeClip, p1) ? { clip: activeClip, p1 } : null
+        segKey = `seg:${activeClip.id}:${p1.id}:${p2.id}:${activeClip.startTime}:${activeClip.duration}:${p1.offset}:${p2.offset}:${targetH}:${minH}:${maxH}:${speedCap(mod)}:${clipSpeedKey(activeClip, p1)}`
       }
     } else if (time < modClips[0].startTime) {
       if ((modClips[0].curveMode ?? 'smooth') !== 'linear') {
@@ -1062,11 +1129,12 @@ export function planTimelineFollow(
 
     const distM = Math.abs(targetH - curPos)
     let speedCms: number
-    if (manualP1 && remainingSec !== null && distM >= 0.0015) {
-      const r = resolveKeyframeSpeed(manualP1, distM * 100, remainingSec, speedCap(mod))
+    const rawManual = manualSeg ? manualRawCms(manualSeg.clip, manualSeg.p1, distM * 100, speedCap(mod)) : null
+    if (rawManual !== null && remainingSec !== null && distM >= 0.0015) {
+      const r = resolveKeyframeSpeed({ speedMode: 'manual', manualSpeedCms: rawManual }, distM * 100, remainingSec, speedCap(mod))
       speedCms = r.cms
       if (r.overMax) {
-        warnings.push(`${mod.name} (${segLabel}): tốc độ manual ${manualP1.manualSpeedCms} cm/s > tối đa ${speedCap(mod)} cm/s, đã kẹp`)
+        warnings.push(`${mod.name} (${segLabel}): tốc độ manual ${rawManual.toFixed(1)} cm/s > tối đa ${speedCap(mod)} cm/s, đã kẹp`)
       }
       if (r.tooSlow) {
         warnings.push(

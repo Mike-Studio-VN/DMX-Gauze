@@ -124,6 +124,14 @@ export interface TimelineClip {
   curveMode?: 'smooth' | 'linear'
   /** Giới hạn tốc độ Auto của moment mới (cm/s). */
   autoSpeedLimitCms?: number
+  /**
+   * Tốc độ mức moment (áp cho MỌI đoạn). Thiếu = moment cũ: dùng `speedMode/manualSpeedCms` của từng điểm.
+   * 'auto' = mọi đoạn tự tính từ quãng/thời gian; 'manual' = dùng `speedUnit` + `speedValue`.
+   */
+  speedMode?: 'auto' | 'manual'
+  /** Kiểu nhập khi manual: cm/s (cùng tốc độ), giây (mỗi đoạn đi trong N giây), hoặc CH3 trực tiếp (1..255). Mặc định 'cms'. */
+  speedUnit?: 'cms' | 'sec' | 'ch3'
+  speedValue?: number
   keyframes: ClipKeyframe[]
 }
 
