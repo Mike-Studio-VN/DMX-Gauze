@@ -79,20 +79,43 @@ describe('GauzeCore', () => {
     }
   })
 
+  it('CH3 theo maxSpeedCms của từng module (255 = max của module)', () => {
+    const project = createDefaultProject()
+    const base = { ...project.modules[0], length: 1, minHeight: 0, maxHeight: 1 }
+    const modules = [
+      { ...base, id: 'm-80', startAddress: 1, maxSpeedCms: 80 },
+      { ...base, id: 'm-200', startAddress: 5, maxSpeedCms: 200 },
+    ]
+    const core = new GauzeCore((_cfg, events) => new MockDriver(events))
+    try {
+      core.configure({ modules, output: project.settings.output, lockValue: LOCK_VALUE })
+      core.command({ type: 'lock', locked: false })
+      core.command({ type: 'move', ids: ['m-80', 'm-200'], target: 1, speed: { unit: 'cms', value: 40 } })
+      core.tick()
+      const f = core.snapshot().frame
+      expect(f[2]).toBe(128) // 40/80×255
+      expect(f[6]).toBe(51) // 40/200×255 = 51
+      core.command({ type: 'move', ids: ['m-80'], target: 0.5, speed: { unit: 'cms', value: 500 } })
+      expect(core.snapshot().modules['m-80'].ch3).toBe(255) // kẹp ở max của module
+    } finally {
+      core.stop()
+    }
+  })
+
   describe('Sent (test fine tune)', () => {
-    const cfgOf = (lockedA: boolean, ch2Fine?: number) => {
+    const cfgOf = (ch2Fine?: number) => {
       const project = createDefaultProject()
       const modules = [
-        { ...project.modules[0], id: 'm-a', startAddress: 1, length: 1, minHeight: 0, maxHeight: 0.5, locked: lockedA, ch2Fine },
+        { ...project.modules[0], id: 'm-a', startAddress: 1, length: 1, minHeight: 0, maxHeight: 0.5, ch2Fine },
         { ...project.modules[0], id: 'm-b', startAddress: 5, length: 1, minHeight: 0, maxHeight: 0.5 },
       ]
       return { modules, output: project.settings.output, lockValue: LOCK_VALUE }
     }
     let now = 1000
-    const setup = (lockedA = false) => {
+    const setup = () => {
       now = 1000
       const core = new GauzeCore((_cfg, events) => new MockDriver(events), () => now)
-      core.configure(cfgOf(lockedA))
+      core.configure(cfgOf())
       return core
     }
     const tickAt = (core: GauzeCore, t: number) => {
@@ -101,13 +124,8 @@ describe('GauzeCore', () => {
       return [...core.snapshot().frame.slice(0, 8)]
     }
 
-    it.each([
-      { global: true, mod: false },
-      { global: false, mod: false },
-      { global: true, mod: true },
-      { global: false, mod: true },
-    ])('gửi được khi khoá tổng=$global, khoá module=$mod: CH1 giữ nguyên, CH2 = giá trị nhập, CH4 = 77 rồi 0', ({ global, mod }) => {
-      const core = setup(mod)
+    it.each([true, false])('gửi được khi khoá tổng=%s: CH1 giữ nguyên, CH2 = giá trị nhập, CH4 = 77 rồi 0', (global) => {
+      const core = setup()
       try {
         core.command({ type: 'lock', locked: global })
         const before = tickAt(core, 1000)
@@ -148,11 +166,9 @@ describe('GauzeCore', () => {
       }
     })
 
-    it('khoá tổng/khoá module vẫn chặn move; từ chối CH2 ngoài 0–255 và module lạ', () => {
-      const core = setup(true)
+    it('khoá tổng vẫn chặn move; từ chối CH2 ngoài 0–255 và module lạ', () => {
+      const core = setup()
       try {
-        core.command({ type: 'lock', locked: false })
-        expect(core.command({ type: 'move', ids: ['m-a'], target: 0.3, speed: { unit: 'default' } }).warnings?.length).toBe(1)
         core.command({ type: 'lock', locked: true })
         expect(core.command({ type: 'move', ids: ['m-b'], target: 0.3, speed: { unit: 'default' } }).ok).toBe(false)
         expect(core.command({ type: 'sendFine', id: 'm-a', ch2: 256 }).ok).toBe(false)
@@ -163,10 +179,10 @@ describe('GauzeCore', () => {
       }
     })
 
-    it('CH2 chỉ đổi khi người dùng nhập: move/lock/estop/stop/khoá module/timeline không đụng CH2', () => {
+    it('CH2 chỉ đổi khi người dùng nhập: move/lock/estop/stop/cấu hình/timeline không đụng CH2', () => {
       const core = new GauzeCore((_cfg, events) => new MockDriver(events), () => now)
       now = 1000
-      core.configure(cfgOf(false, 77))
+      core.configure(cfgOf(77))
       try {
         core.command({ type: 'lock', locked: false })
         const ch2 = () => [core.snapshot().frame[1], core.snapshot().frame[5]]
@@ -178,8 +194,8 @@ describe('GauzeCore', () => {
           () => core.command({ type: 'stop', ids: 'all' }),
           () => core.command({ type: 'lock', locked: true }),
           () => core.command({ type: 'estop' }),
-          () => core.configure(cfgOf(true, 77)),
-          () => core.configure(cfgOf(false, 77)),
+          () => core.configure(cfgOf(77)),
+          () => core.configure(cfgOf(77)),
         ]
         let t = 1000
         for (const step of steps) {
@@ -188,7 +204,7 @@ describe('GauzeCore', () => {
           expect(ch2()).toEqual([77, 0])
         }
         // chỉ đổi khi người dùng nhập: cfg mới hoặc Sent
-        core.configure(cfgOf(false, 5))
+        core.configure(cfgOf(5))
         tickAt(core, (t += 40))
         expect(ch2()[0]).toBe(5)
         core.command({ type: 'sendFine', id: 'm-a', ch2: 200 })
@@ -199,18 +215,6 @@ describe('GauzeCore', () => {
       }
     })
 
-    it('khoá theo module (ModuleCfg.locked) vẫn ép CH4=0 và chặn move', () => {
-      const core = setup(true)
-      try {
-        core.command({ type: 'lock', locked: false })
-        const f = tickAt(core, 1000)
-        expect(f[3]).toBe(0)
-        expect(f[7]).toBe(77)
-        expect(core.snapshot().moduleLocks).toEqual(['m-a'])
-      } finally {
-        core.stop()
-      }
-    })
   })
 
   it('xoá sạch byte DMX cũ khi xoá module, đổi địa chỉ, đổi output/route hoặc dừng (P1 safety)', () => {

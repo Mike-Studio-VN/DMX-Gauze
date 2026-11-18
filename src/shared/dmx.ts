@@ -6,7 +6,7 @@ export const LOCK_VALUE = 77
 export const SENT_CH4_PULSE_VALUE = 77
 export const SENT_PULSE_MS = 500
 export const DEFAULT_SPEED = 100
-/** Tốc độ tối đa motor H2 (cm/s) ứng với CH3 = 255 (cố định theo hãng; hãng khuyến nghị CH3=100 ≈ 47 cm/s). */
+/** Tốc độ tối đa MẶC ĐỊNH cho module mới (H2, cm/s). Thang CH3 thực tế lấy từ `maxSpeedCms` của từng module (255 = maxSpeedCms). */
 export const H2_MAX_SPEED_CMS = 120
 export const DMX_UNIVERSE_SIZE = 512
 export const DEFAULT_TARGET_IP = '255.255.255.255'

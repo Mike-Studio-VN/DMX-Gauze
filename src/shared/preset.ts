@@ -240,7 +240,7 @@ export function normalizeProject(raw: unknown): Project {
       ...(item.homeOffsetMm === undefined
         ? {}
         : { homeOffsetMm: reqFinite(item.homeOffsetMm, `modules[${idx}].homeOffsetMm`, 0, 40) }),
-      ...(reqOptionalBool(item.locked, `modules[${idx}].locked`, false) ? { locked: true } : {}),
+      // `locked` (khoá theo module, v1.0.5–1.0.8) đã bỏ: giá trị trong file cũ bị bỏ qua, không ghi lại.
       defaultSpeed: reqFinite(item.defaultSpeed, `modules[${idx}].defaultSpeed`, 1, 255, true),
     }
   })

@@ -27,21 +27,29 @@ describe('convert', () => {
     expect(ch1ToPos(255, 3)).toBe(3)
   });
 
-  it('CH3: 100 ≈ 47 cm/s, 255 = 120 cm/s, tròn đúng, không nhảy do epsilon', () => {
-    expect(ch3ToCms(255)).toBe(120)
-    expect(ch3ToCms(100)).toBeCloseTo(47.06, 2)
-    expect(cmsToCh3(47.06)).toBe(100)
-    expect(cmsToCh3(47)).toBe(100)
-    expect(cmsToCh3(50)).toBe(107) // làm tròn lên: không chậm hơn yêu cầu
-    expect(cmsToCh3(120)).toBe(255)
-    expect(cmsToCh3(999)).toBe(255)
-    expect(durationToCh3(0.470588, 1).ch3).toBe(100) // ceil có epsilon: không thành 101
+  it('CH3 theo thang của module: max 120 → 100 ≈ 47 cm/s; max 80 → 255 = 80 cm/s, 40 cm/s → 128', () => {
+    expect(ch3ToCms(255, 120)).toBe(120)
+    expect(ch3ToCms(100, 120)).toBeCloseTo(47.06, 2)
+    expect(cmsToCh3(47.06, 120)).toBe(100)
+    expect(cmsToCh3(47, 120)).toBe(100)
+    expect(cmsToCh3(50, 120)).toBe(107) // làm tròn lên: không chậm hơn yêu cầu
+    expect(cmsToCh3(120, 120)).toBe(255)
+    expect(cmsToCh3(999, 120)).toBe(255)
+    expect(durationToCh3(0.470588, 1, 120).ch3).toBe(100) // ceil có epsilon: không thành 101
+    // module khác: 255 = maxSpeedCms của module đó
+    expect(ch3ToCms(255, 80)).toBe(80)
+    expect(cmsToCh3(80, 80)).toBe(255)
+    expect(cmsToCh3(40, 80)).toBe(128)
+    expect(ch3ToCms(100, 80)).toBeCloseTo(31.37, 2)
+    expect(cmsToCh3(200, 200)).toBe(255) // max > 120 cũng đúng thang
+    expect(cmsToCh3(100, 200)).toBe(128)
+    expect(durationToCh3(0.4, 1, 80).ch3).toBe(128)
   });
 
-  it('quy đổi tốc độ H2 120 cm/s và thời gian sang CH3', () => {
-    expect(ch3ToCms(255)).toBeCloseTo(120, 5)
-    expect(cmsToCh3(60)).toBe(128)
-    expect(cmsToCh3(0)).toBe(1) // không bao giờ trả 0 (phanh)
+  it('quy đổi tốc độ và thời gian sang CH3', () => {
+    expect(ch3ToCms(255, 120)).toBeCloseTo(120, 5)
+    expect(cmsToCh3(60, 120)).toBe(128)
+    expect(cmsToCh3(0, 120)).toBe(1) // không bao giờ trả 0 (phanh)
 
     const r = durationToCh3(3, 5, 120) // 3m trong 5s = 60 cm/s
     expect(r.ch3).toBe(128)
@@ -1043,27 +1051,27 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
 })
 
 describe('project round-trip của trường mới', () => {
-  it('homeOffsetMm + locked + output.sendHz giữ nguyên qua serialize → parse', () => {
+  it('homeOffsetMm giữ nguyên qua serialize → parse; locked cũ bị bỏ qua và không ghi lại', () => {
     const project = createDefaultProject()
     project.modules[0].homeOffsetMm = 12.5
-    project.modules[0].locked = true
+    ;(project.modules[0] as unknown as Record<string, unknown>).locked = true // trường cũ
     project.modules[1].homeOffsetMm = 40
     const back = normalizeProject(JSON.parse(JSON.stringify(normalizeProject(project))))
-    expect(back).toEqual(normalizeProject(project))
-    expect(back.modules[0]).toMatchObject({ homeOffsetMm: 12.5, locked: true })
+    expect(back.modules[0]).toMatchObject({ homeOffsetMm: 12.5 })
+    expect(back.modules.every((m) => !('locked' in m))).toBe(true)
+    expect(JSON.stringify(back)).not.toContain('"locked"')
     expect(back.modules[1].homeOffsetMm).toBe(40)
   })
 
-  it('project cũ không có trường mới vẫn mở được, mặc định: không offset, không khoá', () => {
+  it('project cũ không có trường mới vẫn mở được, mặc định: không offset', () => {
     const project = createDefaultProject()
     const raw = JSON.parse(JSON.stringify(project))
     for (const m of raw.modules) {
       delete m.homeOffsetMm
-      delete m.locked
       m.fineTune = 100 // trường v1.0.4 bị bỏ qua
     }
     const back = normalizeProject(raw)
-    expect(back.modules.every((m) => m.homeOffsetMm === undefined && m.locked === undefined && !('fineTune' in m))).toBe(true)
+    expect(back.modules.every((m) => m.homeOffsetMm === undefined && !('fineTune' in m))).toBe(true)
   })
 })
 
