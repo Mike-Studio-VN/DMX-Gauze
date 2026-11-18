@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DriverEvents } from '@shared/drivers';
 import { buildEnttecMk2Frame, buildEnttecMk2InitFrames } from '@shared/protocols';
 import type { OutputSettings } from '@shared/types';
@@ -114,9 +114,17 @@ async function waitForWrites(count: number): Promise<void> {
 }
 
 describe('SerialDmxDriver POSIX init queue and write safety (Bug 7)', () => {
+  let origPlatform: NodeJS.Platform;
+
   beforeEach(() => {
+    origPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     fakeIo.reset();
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: origPlatform, configurable: true });
   });
 
   it('queues both Enttec Mk2 init frames in strict FIFO order without dropping frame 2 while writing=true', async () => {

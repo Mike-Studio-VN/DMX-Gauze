@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GauzeCore } from '@shared/core';
 import { CH, CHANNELS_PER_MODULE } from '@shared/dmx';
 import { buildEnttecMk2InitFrames } from '@shared/protocols';
@@ -244,11 +244,19 @@ function completeNextSerialWrite(): Buffer {
 }
 
 describe('Core + Async Driver integration cleanup & drain tests', () => {
+  let origPlatform: NodeJS.Platform;
+
   beforeEach(() => {
+    origPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     mocks.serial.reset();
     mocks.win.reset();
     mocks.udp.reset();
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: origPlatform, configurable: true });
   });
 
   it('Core -> POSIX Serial preserves full high-channel zero flush across rapid shrink ticks while fs.write is busy', async () => {
