@@ -263,7 +263,7 @@ export function SettingsModal(props: {
 
             <div className="mt-auto px-3 pb-1 text-[9.5px] leading-relaxed font-medium tracking-wider text-muted uppercase">
               DMX GAUZE ENGINE
-              <br />v{info?.version ?? '1.0.3'} · {info?.runtime ?? 'web'}
+              <br />v{info?.version ?? '1.0.4'} · {info?.runtime ?? 'web'}
             </div>
           </nav>
 
