@@ -50,8 +50,14 @@ export function createWebBridge(): GauzeBridge {
     await writable.close()
   }
 
-  // Không nuốt lỗi (quota / quyền lưu trữ): store cần thấy lỗi để hiện toast.
-  const persistLocal = (json: string): void => localStorage.setItem(STORAGE_KEY, json)
+  // Cache best-effort cho mở/lưu file; chỉ autosave (saveProject) coi localStorage là đích lưu nên mới ném lỗi.
+  const persistLocal = (json: string): void => {
+    try {
+      localStorage.setItem(STORAGE_KEY, json)
+    } catch {
+      /* ignore */
+    }
+  }
 
   const saveViaPickerOrDownload = async (json: string, suggestedName: string): Promise<SaveFileResult> => {
     const picker = typeof window !== 'undefined' ? (window as WindowWithFs).showSaveFilePicker : undefined
@@ -101,7 +107,7 @@ export function createWebBridge(): GauzeBridge {
     },
     async saveProject(project: Project): Promise<void> {
       const validated = normalizeProject(project)
-      persistLocal(JSON.stringify(validated))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(validated))
     },
     async clearCurrentFile(): Promise<void> {
       webFileName = null

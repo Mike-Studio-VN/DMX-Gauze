@@ -1302,6 +1302,9 @@ describe('Save errors are reported and out-of-range inputs are clamped', () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(useAppStore.getState().toast).toMatchObject({ kind: 'error', title: 'Lỗi lưu' });
     expect(useAppStore.getState().toast?.text).toContain('QuotaExceededError');
+    // Các thao tác file chỉ dùng localStorage làm cache nên vẫn phải thành công khi quota đầy.
+    const { getBridge } = await import('./services/bridge');
+    await expect(getBridge().saveProjectFile(useAppStore.getState().project)).resolves.toMatchObject({ saved: true });
   });
 
   it('module and LTC values are clamped to what normalizeProject accepts', () => {
