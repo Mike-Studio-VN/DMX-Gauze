@@ -1,14 +1,20 @@
 // Quy đổi mét / tốc độ / giây ⇄ giá trị DMX (xem plan mục 8.2).
+import { DMX_FINE_TUNE_LIMIT } from './dmx'
 import type { ModuleCfg, Snapshot } from './types'
 
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v))
 }
 
-/** Vị trí (m) → CH1 (coarse) + CH2 (fine) dạng 16-bit. */
-export function posToDmx(pos: number, length: number): { coarse: number; fine: number } {
-  const v = Math.round(clamp(length > 0 ? pos / length : 0, 0, 1) * 65535)
-  return { coarse: v >> 8, fine: v & 0xff }
+export function normalizeDmxFineTune(offset: number): number {
+  return Number.isFinite(offset) ? clamp(Math.round(offset), -DMX_FINE_TUNE_LIMIT, DMX_FINE_TUNE_LIMIT) : 0
+}
+
+/** Vị trí (m) → CH1 (coarse) + CH2 (fine), cộng độ lệch trước khi tách hai byte. */
+export function posToDmx(pos: number, length: number, fineTune = 0): { coarse: number; fine: number } {
+  const position = Math.round(clamp(length > 0 ? pos / length : 0, 0, 1) * 65535)
+  const calibrated = clamp(position + normalizeDmxFineTune(fineTune), 0, 65535)
+  return { coarse: calibrated >> 8, fine: calibrated & 0xff }
 }
 
 export function dmxToPos(coarse: number, fine: number, length: number): number {

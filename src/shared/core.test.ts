@@ -53,6 +53,30 @@ describe('GauzeCore', () => {
     core.stop()
   })
 
+  it('sends each module’s calibrated position after clamping the target', () => {
+    const project = createDefaultProject()
+    const template = { ...project.modules[0], length: 1, minHeight: 0, maxHeight: 0.5, maxSpeedCms: 120 }
+    const modules = [
+      { ...template, id: 'm-a', startAddress: 1, fineTune: -1 },
+      { ...template, id: 'm-b', startAddress: 5, fineTune: 1 },
+    ]
+    const send = vi.fn<MockDriver['send']>()
+    const core = new GauzeCore((_cfg, events) => Object.assign(new MockDriver(events), { send }))
+
+    try {
+      core.configure({ modules, output: project.settings.output, lockValue: LOCK_VALUE })
+      core.command({ type: 'lock', locked: false })
+      core.command({ type: 'move', ids: ['m-a', 'm-b'], target: 1.5, speed: { unit: 'cms', value: 120 } })
+      core.tick()
+
+      expect(core.snapshot().modules['m-a'].target).toBe(0.5)
+      expect(core.snapshot().modules['m-b'].target).toBe(0.5)
+      expect(send.mock.lastCall?.[2]).toEqual(Uint8Array.of(0x7f, 0xff, 255, LOCK_VALUE, 0x80, 0x01, 255, LOCK_VALUE))
+    } finally {
+      core.stop()
+    }
+  })
+
   it('xoá sạch byte DMX cũ khi xoá module, đổi địa chỉ, đổi output/route hoặc dừng (P1 safety)', () => {
     let now = 2000
     const sentFrames: Array<{ net: number; subUni: number; data: Uint8Array }> = []

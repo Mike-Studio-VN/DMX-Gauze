@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { autoAssign, layerLoopAddress, nextFree, orderedModules, validateAddress } from '@shared/addressing'
 import type { AppInfo, SnapshotDto } from '@shared/api'
-import { clamp } from '@shared/convert'
+import { clamp, normalizeDmxFineTune } from '@shared/convert'
 import { DEFAULT_SPEED, H2_MAX_SPEED_CMS, isValidStartAddress, rangesOverlap } from '@shared/dmx'
 import { resolveOutputSettingsPatch } from '@shared/protocols'
 import {
@@ -978,6 +978,7 @@ export const useAppStore = create<AppState>((set, get) => {
         merged.maxHeight = Math.min(merged.length, Math.max(0, merged.maxHeight))
         merged.minHeight = Math.min(merged.maxHeight, Math.max(0, merged.minHeight))
         merged.maxSpeedCms = Math.min(10000, Math.max(10, merged.maxSpeedCms))
+        if (merged.fineTune !== undefined) merged.fineTune = normalizeDmxFineTune(merged.fineTune)
         merged.defaultSpeed = Math.min(255, Math.max(1, Math.round(merged.defaultSpeed)))
         return merged
       })

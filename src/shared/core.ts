@@ -294,7 +294,7 @@ export class GauzeCore {
       const st = this.states.get(m.id)
       const a = m.startAddress - 1
       if (!st || a < 0 || a + CHANNELS_PER_MODULE > DMX_UNIVERSE_SIZE) continue
-      const { coarse, fine } = posToDmx(st.target, m.length)
+      const { coarse, fine } = posToDmx(st.target, m.length, m.fineTune)
       this.frame[a + CH.POSITION] = coarse
       this.frame[a + CH.FINE] = fine
       this.frame[a + CH.SPEED] = st.ch3

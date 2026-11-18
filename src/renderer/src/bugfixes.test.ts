@@ -999,6 +999,34 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     expect(modHtml).toContain('placeholder="—"');
   });
 
+  it('renders a signed Fine tune field for a selected module and updates its value through the store', () => {
+    vi.useFakeTimers();
+    try {
+      setupBrowserEnv();
+      const project = createDefaultProject();
+      const id = project.modules[0].id;
+      useAppStore.setState({
+        project,
+        selectedIds: [id],
+        selectedClipIds: [],
+        selectedClipId: null,
+        selectedLayerId: null,
+        selectedButtonId: null,
+      });
+      const propertiesHtml = () => renderToStaticMarkup(
+        React.createElement(PropertiesPanel, { overrideState: useAppStore.getState() }),
+      );
+      expect(propertiesHtml()).toContain('Fine tune CH2 (bước DMX)');
+      expect(propertiesHtml()).toMatch(/<input[^>]*min="-255"[^>]*max="255"[^>]*value="0"/);
+
+      useAppStore.getState().updateModule(id, { fineTune: -17 });
+      expect(propertiesHtml()).toMatch(/<input[^>]*min="-255"[^>]*max="255"[^>]*value="-17"/);
+      expect(useAppStore.getState().project.modules[1].fineTune).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('GauzeTree toggles Chọn hết -> Bỏ chọn hết, SettingsModal omits Dự án & Preset, and ModeManual renders wave cards', () => {
     setupBrowserEnv();
     const project = createDefaultProject();
