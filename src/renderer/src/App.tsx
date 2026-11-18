@@ -274,7 +274,7 @@ export function App() {
       return {
         chip: 'kiln-chip ok',
         dot: 'bg-ok',
-        text: `${st.nodes.filter((n) => n.confirmed !== false).length} Node · ${st.sendHz}Hz`,
+        text: `${st.nodes.length} Node · ${st.sendHz}Hz`,
         icon: Wifi,
       }
     }

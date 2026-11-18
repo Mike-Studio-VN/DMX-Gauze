@@ -185,8 +185,10 @@ describe('unconfirmed sends do not mask real discovery', () => {
     emit(true)
     emit(false) // send thành công cùng IP
     expect(core.status().state).toBe('online')
+    expect(core.status().nodes).toHaveLength(1) // chỉ node thật, không có bản ghi gửi
     now += 7000 // phản hồi thật hết hạn (6 s), vẫn đang gửi
     emit(false)
     expect(core.status().state).toBe('sending')
+    expect(core.status().nodes).toHaveLength(0)
   })
 })

@@ -349,7 +349,7 @@ export class GauzeCore {
       port: o?.port ?? ARTNET_PORT,
       portAddress: o ? portAddress(o.net, o.subnet, o.universe) : 0,
       sendHz: this.measuredHz,
-      nodes: live,
+      nodes: live.filter((n) => n.confirmed !== false), // danh sách discovery chỉ gồm thiết bị thật đã phản hồi
       message: this.driverError,
       warning: this.driverWarn,
     }
