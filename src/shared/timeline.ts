@@ -105,7 +105,16 @@ export function buildCurveKeyframes(
   }))
 }
 
-export type LayerMotionPresetId = 'all-up' | 'all-down' | 'wave' | 'wave-reverse'
+export type LayerMotionPresetId = 'all-up' | 'all-down' | 'wave' | 'wave-reverse' | 'alternating-wave'
+
+export const DEFAULT_ALTERNATING_WAVE_AMPLITUDE_CM = 10
+
+export interface LayerMotionOptions {
+  duration?: number
+  staggerSec?: number
+  amplitudeCm?: number
+  firstUp?: 'odd' | 'even'
+}
 
 export interface LayerMotionPresetMeta {
   id: LayerMotionPresetId
@@ -117,6 +126,7 @@ export const LAYER_MOTION_PRESETS: LayerMotionPresetMeta[] = [
   { id: 'all-down', label: 'Tất cả xuống' },
   { id: 'wave', label: 'Sóng' },
   { id: 'wave-reverse', label: 'Sóng ngược' },
+  { id: 'alternating-wave', label: 'Sóng so le' },
 ]
 
 /** Tìm thời điểm gốc chung >= startTime sao cho toàn bộ cửa sổ [base + offset_i, base + offset_i + dur] không đụng clip cũ. */
@@ -150,7 +160,8 @@ function findCommonForwardBaseStart(
         const cStart = Math.max(0, c.startTime)
         const cEnd = cStart + Math.max(MIN_DURATION, c.duration)
         if (winStart < cEnd - 1e-6 && winEnd > cStart + 1e-6) {
-          const nextBase = Number(Math.max(candidate, cEnd - offset).toFixed(2))
+          // Round forward so a clip ending between centiseconds never leaves the windows overlapping.
+          const nextBase = Math.ceil((cEnd - offset) * 100 - 1e-8) / 100
           if (nextBase > candidate + 1e-6) {
             candidate = nextBase
             advanced = true
@@ -164,19 +175,49 @@ function findCommonForwardBaseStart(
   return Number(Math.max(baseStart, candidate).toFixed(2))
 }
 
+function buildAlternatingWaveKeyframes(
+  clipId: string,
+  mod: ModuleCfg,
+  period: number,
+  requestedAmplitudeCm: number,
+  risesFirst: boolean,
+  startingHeight: number | null,
+): ClipKeyframe[] {
+  const hi = Math.min(Math.max(0, mod.maxHeight), mod.length)
+  const lo = clamp(mod.minHeight, 0, hi)
+  const segments = 8
+  // Smooth interpolation constrains the Bézier controls to the segment's endpoints.
+  // Its peak speed is bounded by 3 × the largest sample delta divided by the segment duration.
+  const maxSpeedAmplitude = (mod.maxSpeedCms * period) / (100 * 3 * segments * Math.SQRT1_2)
+  const amplitude = Math.min(requestedAmplitudeCm / 100, (hi - lo) / 2, maxSpeedAmplitude)
+  const center = clamp(startingHeight ?? lo, lo + amplitude, Math.max(lo + amplitude, hi - amplitude))
+  // DMX position is drop length, so a negative displacement raises the curtain.
+  const direction = risesFirst ? -1 : 1
+  return Array.from({ length: segments + 1 }, (_, i) => ({
+    id: `${clipId}-kf-${i}`,
+    offset: (i * period) / segments,
+    height: i === segments
+      ? center
+      : clamp(center + direction * amplitude * Math.sin((2 * Math.PI * i) / segments), lo, hi),
+  }))
+}
+
 /** Tạo danh sách moment chuyển động trên Timeline cho các module thuộc 1 layer (không ghi đè hoặc sửa moment cũ). */
-export function buildLayerMotionClips(opts: {
+export function buildLayerMotionClips(opts: LayerMotionOptions & {
   layerId: string
   modules: ModuleCfg[]
   existingClips: TimelineClip[]
   presetId: LayerMotionPresetId
   startTime: number
   duration: number
-  staggerSec?: number
 }): TimelineClip[] {
-  const { layerId, modules, existingClips, presetId, startTime, duration, staggerSec = 0.35 } = opts
+  const {
+    layerId, modules, existingClips, presetId, startTime, duration, staggerSec = 0.35,
+    amplitudeCm = DEFAULT_ALTERNATING_WAVE_AMPLITUDE_CM, firstUp = 'odd',
+  } = opts
   if (!Number.isFinite(startTime) || !Number.isFinite(duration) || duration <= 0) return []
   if (!Number.isFinite(staggerSec) || staggerSec < 0) return []
+  if (presetId === 'alternating-wave' && (!Number.isFinite(amplitudeCm) || amplitudeCm < 0)) return []
 
   const layerMods = modules.filter((m) => m.layerId === layerId)
   if (layerMods.length === 0) return []
@@ -223,6 +264,13 @@ export function buildLayerMotionClips(opts: {
         { id: `kf-lp-${now}-${idx}-0-${Math.random().toString(36).slice(2, 5)}`, offset: 0, height: Number(lo.toFixed(2)) },
         { id: `kf-lp-${now}-${idx}-1-${Math.random().toString(36).slice(2, 5)}`, offset: safeDuration, height: Number(hi.toFixed(2)) },
       ]
+    } else if (presetId === 'alternating-wave') {
+      curveMode = 'smooth'
+      const risingParity = firstUp === 'odd' ? 0 : 1
+      const startingHeight = evaluateModuleTimelineHeight(existingClips, [], mod, placedStart)
+      keyframes = buildAlternatingWaveKeyframes(
+        clipId, mod, safeDuration, amplitudeCm, idx % 2 === risingParity, startingHeight,
+      )
     } else {
       curveMode = 'smooth'
       keyframes = buildCurveKeyframes('sine', safeDuration, lo, hi).map((k, kIdx) => ({

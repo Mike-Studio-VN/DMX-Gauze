@@ -143,6 +143,105 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     vi.unstubAllGlobals();
   });
 
+  it('creates alternating-wave cues only in Timeline and releases their targets on mode changes', async () => {
+    setupBrowserEnv();
+    vi.useFakeTimers();
+    const priorState = useAppStore.getState();
+    try {
+      const { getBridge } = await import('./services/bridge');
+      const { planTimelineFollow } = await import('@shared/timeline');
+      const bridgeCommand = vi.spyOn(getBridge(), 'command').mockResolvedValue({ ok: true });
+      const base = createDefaultProject();
+      const layer = base.layers[0];
+      const project = { ...base, layers: [layer], modules: base.modules.slice(0, 2), clips: [] };
+      useAppStore.setState({ project, playheadTime: 5, activeTab: 'timeline' });
+      const store = useAppStore.getState();
+      store.selectTimelineLayer(layer.id);
+      const renderLayer = () => renderToStaticMarkup(
+        React.createElement(PropertiesPanel, { overrideState: useAppStore.getState() }),
+      );
+
+      for (const mode of ['manual', 'buttons'] as const) {
+        store.setActiveTab(mode);
+        expect(renderLayer()).not.toContain('Thêm cue Sóng so le');
+        expect(store.applyLayerMotionPreset(layer.id, 'alternating-wave')).toBe(0);
+      }
+      expect(useAppStore.getState().project).toBe(project);
+
+      store.setActiveTab('timeline');
+      expect(renderLayer()).toContain('Thêm cue Sóng so le');
+      expect(store.applyLayerMotionPreset(layer.id, 'alternating-wave', {
+        duration: 8, amplitudeCm: 5, firstUp: 'even',
+      })).toBe(2);
+      const withCue = useAppStore.getState().project;
+      const clips = withCue.clips ?? [];
+      expect(clips.map(({ startTime, duration }) => [startTime, duration])).toEqual([[5, 8], [5, 8]]);
+      expect(useAppStore.getState().selectedClipIds).toEqual(clips.map(({ id }) => id));
+      expect(withCue.layers).toBe(project.layers);
+      expect(withCue.modules).toBe(project.modules);
+      expect(bridgeCommand).not.toHaveBeenCalled();
+
+      const [first, second] = project.modules;
+      const { commands } = planTimelineFollow(withCue.modules, clips, [], 7, 0);
+      expect(commands).toHaveLength(2);
+      expect(commands[0]).toMatchObject({ type: 'move', ids: [first.id], target: 0.1 });
+      expect(commands[1]).toMatchObject({ type: 'move', ids: [second.id], target: 0 });
+
+      store.setPlayheadTime(18);
+      expect(store.applyLayerMotionPreset(layer.id, 'alternating-wave', {
+        duration: 4, amplitudeCm: 2, firstUp: 'odd',
+      })).toBe(2);
+      const cueClips = useAppStore.getState().project.clips ?? [];
+      expect(cueClips.slice(0, 2)).toEqual(clips);
+      expect(cueClips.slice(2).map(({ startTime, duration }) => [startTime, duration])).toEqual([[18, 4], [18, 4]]);
+      expect(planTimelineFollow(withCue.modules, cueClips, [], 19, 0).commands).toMatchObject([
+        { type: 'move', ids: [first.id], target: 0.03 },
+        { type: 'move', ids: [second.id], target: 0.07 },
+      ]);
+      expect(bridgeCommand).not.toHaveBeenCalled();
+
+      for (const mode of ['manual', 'buttons'] as const) {
+        await store.sendCommand(commands[0], { source: 'timeline' });
+        store.setActiveTab(mode);
+        expect(bridgeCommand).toHaveBeenLastCalledWith({ type: 'stop', ids: [first.id] });
+        const count = bridgeCommand.mock.calls.length;
+        expect((await store.sendCommand(commands[1], { source: 'timeline' })).ok).toBe(false);
+        expect((await store.sendCommand({ type: 'stop', ids: 'all' }, { source: 'timeline' })).ok).toBe(false);
+        expect(bridgeCommand).toHaveBeenCalledTimes(count);
+
+        const direct = { type: 'move', ids: [second.id], target: 0.45, speed: { unit: 'default' } } satisfies Parameters<typeof store.sendCommand>[0];
+        await store.sendCommand(direct);
+        expect(bridgeCommand).toHaveBeenLastCalledWith(direct);
+        store.setActiveTab('timeline');
+      }
+    } finally {
+      useAppStore.setState(priorState);
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves shared Layer and DMX settings intact when an alternating wave cannot run independently', () => {
+    const priorState = useAppStore.getState();
+    try {
+      const base = createDefaultProject();
+      const [layer] = base.layers;
+      const [first, second] = base.modules;
+      const project = { ...base, layers: [layer], modules: [first, second], clips: [] };
+      const sharedProjects = [
+        { ...project, layers: [{ ...layer, syncLayer: true }] },
+        { ...project, modules: [first, { ...second, dmxLoop: true, startAddress: first.startAddress }] },
+        { ...project, modules: [first, { ...second, startAddress: first.startAddress + 1 }] },
+      ];
+      for (const shared of sharedProjects) {
+        useAppStore.setState({ project: shared, activeTab: 'timeline' });
+        expect(useAppStore.getState().applyLayerMotionPreset(layer.id, 'alternating-wave')).toBe(0);
+        expect(useAppStore.getState().project).toBe(shared);
+      }
+    } finally {
+      useAppStore.setState(priorState);
+    }
+  });
+
   it('Bug 3: updateModule updates clip.layerId so moving layers preserves moments on old-layer removal', () => {
     vi.useFakeTimers();
     try {
