@@ -503,7 +503,7 @@ export function App() {
 
                 <div className="mt-1.5 flex h-9 items-center justify-between border-t border-line px-4 text-[9.5px] font-semibold tracking-widest text-muted uppercase">
                   <span>DMX GAUZE ENGINE</span>
-                  <span>v{info?.version ?? '1.0.7'}</span>
+                  <span>v{info?.version ?? '1.0.8'}</span>
                 </div>
               </div>
             )}
@@ -679,7 +679,7 @@ export function App() {
           <span>Ctrl+Z / Ctrl+Y Hoàn tác · Ctrl+C / Ctrl+V / Delete</span>
         </div>
         <span>
-          v{info?.version ?? '1.0.7'} · @Designed by Mike
+          v{info?.version ?? '1.0.8'} · @Designed by Mike
         </span>
       </footer>
 
