@@ -1,4 +1,4 @@
-import { buildArtDmx, portAddress } from './artnet'
+import { portAddress } from './artnet'
 import { ARTNET_PORT, CH, CHANNELS_PER_MODULE, DMX_UNIVERSE_SIZE } from './dmx'
 import { cmsToCh3, ch3ToCms, clamp, durationToCh3, posToDmx } from './convert'
 import type { DriverFactory, DriverEvents, OutputDriver } from './drivers'
@@ -16,7 +16,6 @@ import type {
 
 const NODE_TIMEOUT_MS = 6000
 const POLL_EVERY_MS = 2500
-const SNAPSHOT_EVERY_MS = 50
 export const DMX_TRANSPORT_HZ = 25
 
 function limits(m: ModuleCfg): [number, number] {
@@ -43,12 +42,10 @@ export class GauzeCore {
   private framesSent = 0
   private rateWindowStart = 0
   private measuredHz = 0
-  private seq = 0
   private frame = new Uint8Array(DMX_UNIVERSE_SIZE)
   private timer: ReturnType<typeof setInterval> | null = null
   private lastTick = 0
   private lastPoll = 0
-  private lastSnap = 0
   private flushLen = 2
   private lastSentRoute: { net: number; subUni: number } | null = null
   private listeners = new Set<(s: Snapshot) => void>()
@@ -258,11 +255,9 @@ export class GauzeCore {
     this.buildFrame()
     this.sendFrame(now)
     if (now - this.lastPoll >= POLL_EVERY_MS) this.pollNow()
-    if (now - this.lastSnap >= SNAPSHOT_EVERY_MS) {
-      this.lastSnap = now
-      const s = this.snapshot()
-      for (const l of this.listeners) l(s)
-    }
+    // Mỗi tick (đã cố định 25 Hz) phát đúng một snapshot, không throttle thêm để tick bù không bị bỏ.
+    const s = this.snapshot()
+    for (const l of this.listeners) l(s)
   }
 
   private simulate(dt: number): void {
@@ -312,9 +307,6 @@ export class GauzeCore {
     if (this.lastSentRoute && (this.lastSentRoute.net !== o.net || this.lastSentRoute.subUni !== subUni)) {
       this.flushZeroRoute(this.driver, this.lastSentRoute, Math.max(this.flushLen, this.usedLength()))
     }
-    this.seq = (this.seq % 255) + 1
-    // Dùng buildArtDmx để kiểm tra khung hợp lệ, driver tự đóng gói theo giao thức của nó.
-    void buildArtDmx
     const sendLen = Math.min(DMX_UNIVERSE_SIZE, Math.max(this.usedLength(), this.flushLen))
     this.driver.send(o.net, subUni, this.frame.slice(0, sendLen))
     this.lastSentRoute = { net: o.net, subUni }

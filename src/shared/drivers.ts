@@ -1,4 +1,3 @@
-import { buildArtPoll } from './artnet'
 import type { DriverId, NodeInfo, OutputSettings } from './types'
 
 export interface DriverEvents {
@@ -36,7 +35,6 @@ export class MockDriver implements OutputDriver {
     this.sent += 1
   }
   poll(): void {
-    void buildArtPoll()
     this.ev.onNode({ ip: '127.0.0.1', name: 'Mock Node', longName: 'Node Art-Net mô phỏng', lastSeen: Date.now() })
   }
   stop(): void {
