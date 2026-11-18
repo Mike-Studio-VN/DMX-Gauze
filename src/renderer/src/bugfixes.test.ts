@@ -1285,6 +1285,25 @@ describe('Save errors are reported and out-of-range inputs are clamped', () => {
     expect(useAppStore.getState().dirty).toBe(true);
   });
 
+  it('a localStorage quota failure in the real web bridge reaches the error toast', async () => {
+    vi.useFakeTimers();
+    setupBrowserEnv();
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error('QuotaExceededError');
+      },
+    });
+    useAppStore.getState().updateNotificationSettings({
+      enabled: true,
+      kinds: { info: true, success: true, warn: true, error: true },
+    });
+    useAppStore.getState().updateOutputSettings({ sendHz: 25 });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(useAppStore.getState().toast).toMatchObject({ kind: 'error', title: 'Lỗi lưu' });
+    expect(useAppStore.getState().toast?.text).toContain('QuotaExceededError');
+  });
+
   it('module and LTC values are clamped to what normalizeProject accepts', () => {
     vi.useFakeTimers();
     setupBrowserEnv();
