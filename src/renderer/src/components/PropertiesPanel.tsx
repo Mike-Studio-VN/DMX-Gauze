@@ -115,7 +115,7 @@ function TransformEditor({
                     disabled={disabled}
                     value={Number(tf[field][i].toFixed(2))}
                     onChange={(e) => updateAxis(field, i as 0 | 1 | 2, Number(e.target.value))}
-                    className="min-w-0 flex-1 bg-transparent text-right text-[11.5px] text-fg tabular-nums outline-none disabled:opacity-45"
+                    className="min-w-0 flex-1 bg-transparent text-right text-[11.5px] text-fg tabular-nums outline-none"
                   />
                 </label>
               )
@@ -214,7 +214,7 @@ function MomentCurveGraph({
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">Curve</span>
           {activeKf && activeIdx >= 0 && (
-            <span className="truncate text-[10px] font-semibold text-[#FFCB72] tabular-nums">
+            <span className="kiln-readout truncate text-[10px] font-semibold tabular-nums">
               P{activeIdx + 1}: {(clip.startTime + activeKf.offset).toFixed(2)}s · {heightToPercent(activeKf.height, mod)}%
             </span>
           )}
@@ -586,7 +586,7 @@ function MomentEditor({
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-1.5 text-[10.5px]">
-          <span className="text-muted tabular-nums">Độ dài: {clip.duration.toFixed(2)}s</span>
+          <span className="kiln-readout tabular-nums">Độ dài: {clip.duration.toFixed(2)}s</span>
           <div className="kiln-seg shrink-0">
             {(
               [
@@ -699,7 +699,7 @@ function MomentEditor({
                 >
                   P{idx + 1}
                 </span>
-                <label className="flex min-w-0 flex-1 items-center gap-0.5">
+                <label className="kiln-field flex min-w-0 flex-1 items-center gap-0.5 px-1">
                   <input
                     type="number"
                     step="0.1"
@@ -737,7 +737,7 @@ function MomentEditor({
                   <span className="text-[10px] text-muted">s</span>
                 </label>
                 <span className="text-muted">·</span>
-                <label className="flex min-w-0 flex-1 items-center gap-0.5">
+                <label className="kiln-field flex min-w-0 flex-1 items-center gap-0.5 px-1">
                   <input
                     type="number"
                     step="0.01"
@@ -838,7 +838,7 @@ function MomentEditor({
               ))}
             </div>
             {r.mode === 'auto' ? (
-              <div className="flex items-center justify-between text-[11px] text-[#C2B3A4]">
+              <div className="kiln-readout flex items-center justify-between text-[11px]">
                 <span>Tự tính (chỉ đọc)</span>
                 <span className="tabular-nums">
                   {r.autoCms.toFixed(1)} cm/s{cmsToSeconds(distCm, r.autoCms) !== null ? ` · ${cmsToSeconds(distCm, r.autoCms)!.toFixed(2)} s` : ''}
@@ -903,7 +903,7 @@ function MomentEditor({
                     />
                   )}
                 </div>
-                <div className="text-[10.5px] text-muted tabular-nums">
+                <div className="kiln-readout text-[10.5px] tabular-nums">
                   {speedUnit === 'cms' ? (secs !== null ? `≈ ${secs.toFixed(2)} s cho ${distCm.toFixed(1)} cm` : 'Quãng đường = 0') : `≈ ${r.cms.toFixed(1)} cm/s`}
                   {' · '}CH3 {cmsToCh3(r.cms, cap)} (255 = {cap} cm/s; khuyến nghị CH3=100 ≈ {((100 / 255) * cap).toFixed(1)} cm/s)
                 </div>
@@ -1199,7 +1199,7 @@ function CueButtonEditor({
                     />
                     <span>{layer.name}</span>
                   </label>
-                  <span className="text-[11px] text-muted tabular-nums">
+                  <span className="kiln-readout text-[11px] tabular-nums">
                     {selectedCount}/{mods.length}
                   </span>
                 </div>
@@ -1215,10 +1215,10 @@ function CueButtonEditor({
                         className={`flex h-8 items-center justify-between gap-2 rounded-full px-2.5 transition ${
                           checked
                             ? 'bg-black/35 shadow-[inset_0_0_0_1.5px_#f7842e]'
-                            : 'bg-black/15 opacity-60 shadow-[inset_0_0_0_1px_var(--line)]'
+                            : 'bg-black/15 shadow-[inset_0_0_0_1px_var(--line)]'
                         }`}
                       >
-                        <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                        <label className={`flex min-w-0 flex-1 cursor-pointer items-center gap-2 ${checked ? '' : 'text-muted'}`}>
                           <input
                             type="checkbox"
                             checked={checked}
@@ -1229,7 +1229,7 @@ function CueButtonEditor({
                             {m.name}
                           </span>
                         </label>
-                        <div className="flex h-6 w-20 items-center rounded-full bg-white/[0.06] px-2 focus-within:ring-1 focus-within:ring-brand">
+                        <div className="kiln-field flex h-6 w-20 items-center rounded-full px-2">
                           <input
                             type="number"
                             step={heightUnit === 'pct' ? '1' : '0.1'}
@@ -1478,7 +1478,7 @@ export function PropertiesPanel(props: {
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-1.5 text-[10.5px]">
-            <span className="text-muted tabular-nums">
+            <span className="kiln-readout tabular-nums">
               Độ dài: {commonDur !== null ? `${commonDur.toFixed(2)}s` : '—'}
             </span>
             <div className="flex items-center gap-1.5">
@@ -1630,7 +1630,7 @@ export function PropertiesPanel(props: {
                 <span className="text-[11px] font-semibold tracking-wide text-[#FFB26B] uppercase">
                   Hiệu ứng chuyển động
                 </span>
-                <span className="text-[10px] text-muted tabular-nums">
+                <span className="kiln-readout text-[10px] tabular-nums">
                   {playheadTime.toFixed(2)}s · {layerMods.length} mod
                 </span>
               </div>
@@ -1906,7 +1906,7 @@ export function PropertiesPanel(props: {
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
                         }}
-                        className="min-w-0 flex-1 bg-transparent text-right text-[11.5px] text-fg tabular-nums outline-none placeholder:text-muted/60 disabled:opacity-45"
+                        className="min-w-0 flex-1 bg-transparent text-right text-[11.5px] text-fg tabular-nums outline-none placeholder:text-muted/60"
                       />
                     </label>
                   )
@@ -2008,9 +2008,9 @@ export function PropertiesPanel(props: {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
               }}
-              className="kiln-field h-8 w-24 px-2.5 text-xs tabular-nums placeholder:text-muted/60 disabled:opacity-55"
+              className="kiln-field h-8 w-24 px-2.5 text-xs tabular-nums placeholder:text-muted/60"
             />
-            <span className="text-[11px] text-muted tabular-nums">
+            <span className="kiln-readout text-[11px] tabular-nums">
               {commonAddr !== null ? `Kênh ${commonAddr}–${commonAddr + 3}` : 'Kênh —'}
             </span>
           </div>
@@ -2067,7 +2067,7 @@ export function PropertiesPanel(props: {
         <div className="space-y-2 border-t border-line pt-3">
           <div className="flex items-center justify-between text-[11px]">
             <span className="font-semibold tracking-wide text-muted uppercase">Giám sát 4 kênh DMX</span>
-            <span className="text-[#C2B3A4] tabular-nums">
+            <span className="kiln-readout tabular-nums">
               {commonPosCm !== null ? commonPosCm : '—'} → {commonTgtCm !== null ? commonTgtCm : '—'} cm
             </span>
           </div>
@@ -2080,9 +2080,9 @@ export function PropertiesPanel(props: {
                 ['CH4 Lock', chVals(CH.LOCK)],
               ] as const
             ).map(([label, v]) => (
-              <div key={label} className="rounded-lg border border-line bg-[#16100C] p-1.5">
+              <div key={label} className="kiln-readout p-1.5">
                 <div className="text-[10px] text-muted">{label}</div>
-                <div className="font-semibold text-fg">{v !== null ? v : '—'}</div>
+                <div className="font-semibold">{v !== null ? v : '—'}</div>
               </div>
             ))}
           </div>
@@ -2206,11 +2206,11 @@ export function PropertiesPanel(props: {
             disabled={isAuto}
             value={addrInput}
             onChange={(e) => handleAddrChange(e.target.value)}
-            className={`kiln-field h-7 w-24 px-2.5 text-xs tabular-nums disabled:opacity-55 ${
+            className={`kiln-field h-7 w-24 px-2.5 text-xs tabular-nums ${
               addrError ? 'shadow-[inset_0_0_0_1.5px_var(--danger)]' : ''
             }`}
           />
-          <span className="kiln-chip cue tabular-nums">
+          <span className="kiln-readout px-2 text-[11px] tabular-nums">
             Kênh {chStart}–{chEnd}
           </span>
           {single.dmxLoop && <span className="kiln-chip acc">Loop 4CH</span>}
@@ -2359,7 +2359,7 @@ export function PropertiesPanel(props: {
             onChange={(e) => updateModule(single.id, { defaultSpeed: Number(e.target.value) || 100 }, `mod-ch3-${single.id}`)}
             className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
-          <span className="text-[10px] text-muted tabular-nums">= {ch3ToCms(single.defaultSpeed, single.maxSpeedCms).toFixed(1)} cm/s (255 = {single.maxSpeedCms} cm/s; khuyến nghị CH3=100 ≈ {((100 / 255) * single.maxSpeedCms).toFixed(1)} cm/s)</span>
+          <span className="kiln-readout text-[10px] tabular-nums">= {ch3ToCms(single.defaultSpeed, single.maxSpeedCms).toFixed(1)} cm/s (255 = {single.maxSpeedCms} cm/s; khuyến nghị CH3=100 ≈ {((100 / 255) * single.maxSpeedCms).toFixed(1)} cm/s)</span>
         </label>
       </div>
 
@@ -2453,7 +2453,7 @@ function ChannelMonitor({
 
       <div className="grid grid-cols-4 gap-1.5 text-center tabular-nums">
         {cells.map((c) => (
-          <label key={c.label} className="min-w-0 rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title={c.title}>
+          <label key={c.label} className={`min-w-0 p-1.5 ${c.editable ? 'kiln-field' : 'kiln-readout'}`} title={c.title}>
             <div className="truncate text-[9.5px] text-muted">{c.label}</div>
             {c.editable ? (
               <input
@@ -2469,7 +2469,7 @@ function ChannelMonitor({
                 className={`w-full bg-transparent text-center font-semibold outline-none ${valid ? 'text-fg' : 'text-danger'}`}
               />
             ) : (
-              <div className="font-semibold text-fg">{c.value}</div>
+              <div className="font-semibold">{c.value}</div>
             )}
           </label>
         ))}

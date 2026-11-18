@@ -1136,6 +1136,10 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     expect(modHtml).toContain('Giám sát 4 kênh DMX');
     expect(modHtml).toContain('Kênh —');
     expect(modHtml).toContain('placeholder="—"');
+    expect(modHtml).toMatch(/<input[^>]*disabled=""[^>]*class="kiln-field[^"]*"/);
+    for (const label of ['CH1 Pos', 'CH2 Fine', 'CH3 Spd', 'CH4 Lock']) {
+      expect(modHtml).toMatch(new RegExp(`<div class="kiln-readout p-1\\.5"><div[^>]*>${label}</div>`));
+    }
   });
 
   it('renameProject trims, falls back to default and marks dirty', () => {
@@ -1170,10 +1174,15 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
       const propertiesHtml = () => renderToStaticMarkup(
         React.createElement(PropertiesPanel, { overrideState: useAppStore.getState() }),
       );
-      expect(propertiesHtml()).toContain('Fine tune CH2 (0–255)');
-      expect(propertiesHtml()).toContain('>Sent<');
-      expect(propertiesHtml()).not.toMatch(/\dm → \d/);
-      expect(propertiesHtml()).toMatch(/<input[^>]*min="0"[^>]*max="255"[^>]*value="0"/);
+      const html = propertiesHtml();
+      expect(html).toContain('Fine tune CH2 (0–255)');
+      expect(html).toContain('>Sent<');
+      expect(html).not.toMatch(/\dm → \d/);
+      expect(html).toMatch(/<input[^>]*min="0"[^>]*max="255"[^>]*value="0"/);
+      expect(html).toMatch(/<label[^>]+class="[^"]*kiln-field"[^>]*><div[^>]*>CH2 Fine<\/div><input/);
+      for (const label of ['CH1 Pos', 'CH3 Spd', 'CH4 Lock']) {
+        expect(html).toMatch(new RegExp(`<label[^>]+class="[^"]*kiln-readout"[^>]*><div[^>]*>${label}</div><div`));
+      }
 
       useAppStore.getState().updateModule(id, { ch2Fine: 300 });
       expect(useAppStore.getState().project.modules[0].ch2Fine).toBe(255); // kẹp 0..255
@@ -1395,7 +1404,7 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
           port: 6454,
           portAddress: 0,
           sendHz: 25,
-          nodes: [],
+          nodes: [{ ip: '192.168.1.30', name: 'Test Node', longName: 'Test Node DMX', lastSeen: 0 }],
           message: null,
           warning: 'Cổng 6454 đang bận — đã tắt nghe ArtPollReply, vẫn gửi ArtDmx bình thường.',
         },
@@ -1420,6 +1429,8 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     expect(netSettingsHtml).toContain('grid-cols-2 items-end gap-3');
     expect(netSettingsHtml).toContain('Cổng 6454 đang bận');
     expect(netSettingsHtml).not.toContain('localhost');
+    expect(netSettingsHtml).toContain('class="kiln-readout font-mono">192.168.1.30</span>');
+    expect(netSettingsHtml).toMatch(/<input[^>]+class="kiln-field[^"]*"[^>]*value="127\.0\.0\.1"/);
 
     // Open KilnSelect renders grouped theme menu & 40/50/60 fps options
     const openDriverHtml = renderToStaticMarkup(
