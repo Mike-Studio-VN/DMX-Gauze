@@ -537,7 +537,9 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     const commands = sendCommand.mock.calls.map(([command]) => command);
     const targets = commands.flatMap((command) => command.type === 'move' ? [command.target] : []);
     expect(observed).toEqual([...observed].sort((a, b) => a - b));
-    expect(targets).toEqual([0.3, 0.5]);
+    expect(targets).toHaveLength(2);
+    expect(targets[0]).toBeCloseTo(0.3, 2); // đích đã lượng tử hoá CH1 (1/255 m)
+    expect(targets[1]).toBeCloseTo(0.5, 2);
     expect(commands.at(-1)).toMatchObject({ speed: { unit: 'cms', value: 20 } });
 
     // A real backward seek in the incoming labels must still move back to the beginning.
