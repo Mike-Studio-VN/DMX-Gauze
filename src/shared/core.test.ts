@@ -169,3 +169,24 @@ describe('normalizeProject', () => {
     expect(() => normalizeProject(p)).toThrow(/id trùng/)
   })
 })
+
+describe('unconfirmed sends do not mask real discovery', () => {
+  it('gửi chưa xác nhận cùng IP không ghi đè node thật; hết phản hồi thật thì về "sending", không "lost"', () => {
+    let now = 1000
+    const p = createDefaultProject()
+    let emit: (c: boolean) => void = () => {}
+    const core = new GauzeCore((_c, ev) => {
+      emit = (c) => ev.onNode({ ip: '1.2.3.4', name: 'n', longName: 'n', lastSeen: now, ...(c ? {} : { confirmed: false }) })
+      const d = new MockDriver(ev)
+      d.poll = () => {}
+      return d
+    }, () => now)
+    core.configure({ modules: [p.modules[0]], output: { ...p.settings.output, driver: 'kinet' }, lockValue: LOCK_VALUE })
+    emit(true)
+    emit(false) // send thành công cùng IP
+    expect(core.status().state).toBe('online')
+    now += 7000 // phản hồi thật hết hạn (6 s), vẫn đang gửi
+    emit(false)
+    expect(core.status().state).toBe('sending')
+  })
+})

@@ -80,6 +80,13 @@ export class KinetDriver implements OutputDriver {
           if (err) this.ev.onError(`Gửi KiNET thất bại: ${err.message}`)
           else {
             this.ev.onError(null)
+            this.ev.onNode({
+              ip,
+              name: `KiNET v${ver} P${kinetPort}`,
+              longName: `KiNET đích ${ip}:${port}`,
+              lastSeen: Date.now(),
+              confirmed: false,
+            })
           }
         })
       },

@@ -115,7 +115,8 @@ export class GauzeCore {
     this.rateWindowStart = this.now()
     this.driverKey = key
     const ev: DriverEvents = {
-      onNode: (n) => this.nodes.set(n.ip, n),
+      // Node tự dựng (confirmed:false) lưu khoá riêng để không ghi đè / bị phản hồi thật ghi đè cùng IP.
+      onNode: (n) => this.nodes.set(n.confirmed === false ? `${n.ip}#unconfirmed` : n.ip, n),
       onError: (m) => {
         this.driverError = m
       },
