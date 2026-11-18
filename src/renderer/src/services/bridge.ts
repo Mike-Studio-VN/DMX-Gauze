@@ -86,7 +86,7 @@ export function createWebBridge(): GauzeBridge {
 
   return {
     async getAppInfo(): Promise<AppInfo> {
-      return { version: '1.1.1', platform: 'web', runtime: 'web' }
+      return { version: '1.1.2', platform: 'web', runtime: 'web' }
     },
     async loadProject(): Promise<ProjectFileResult> {
       try {
