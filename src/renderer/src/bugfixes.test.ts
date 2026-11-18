@@ -1314,6 +1314,8 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     expect(customHtml).toContain(`class="min-w-0 truncate font-sans" title="${longCueName}"`);
     // Cue cũ đang chạy giữ viền xanh + body xanh đậm nhưng bar xanh tối hơn (cue-pad-prev)
     expect(customHtml).toContain('cue-pad group active cue-pad-prev');
+    expect(customHtml).toContain('text-[#dce9ff] hover:bg-white/15');
+    expect(customHtml).toContain('from-[#2860ba] to-[#448af4]');
     // Slider bar chiều cao bằng nền text module (role="progressbar" bọc dải footer MODULES) & chạy theo tiến trình thực tế (65%)
     expect(customHtml).toContain('role="progressbar"');
     expect(customHtml).toContain('data-cue-progress="65"');
@@ -1322,6 +1324,7 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     expect(customHtml).toContain(`Phát ${project.buttons[1].name}`);
     // Cue được click vào bar chỉ sáng bar (bar-selected), không ảnh hưởng body (không có active)
     expect(customHtml).toContain('cue-pad group bar-selected');
+    expect(customHtml).toContain('text-[#f3f7ff] hover:bg-white/15');
     // Bar có draggable để kéo thả đổi vị trí
     expect(customHtml).toContain('draggable="true"');
     // Ô trống không có nút tạo cue khi ấn vào
