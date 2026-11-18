@@ -123,7 +123,7 @@ export interface LtcSettings {
   channel: 'left' | 'right'
   freewheelFrames: number
   offsetFrames: number
-  /** Tốc độ khung hình riêng của LTC In/Out (chuẩn SMPTE chỉ 24/25/29.97/30). */
+  /** Tốc độ khung hình riêng của LTC In (chuẩn SMPTE chỉ 24/25/29.97/30). */
   fps?: LtcFps
 }
 
