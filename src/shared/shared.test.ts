@@ -4,7 +4,7 @@ import { buildArtDmx, buildArtPoll, buildArtPollReply, parseArtPollReply, portAd
 import { ch3ToCms, cmsToCh3, dmxToPos, durationToCh3, homeOffsetSteps, posToDmx } from './convert'
 import { LtcDecoder } from './ltc'
 import { DEFAULT_PROJECT_NAME, PROJECT_NAME_MAX, createDefaultProject, normalizeProject, projectFileName } from './preset'
-import { formatTc, parseTc } from './timecode'
+import { formatTc, parseTc, tcToFrames } from './timecode'
 import { analyzeClipSpeeds } from './timeline'
 
 describe('convert', () => {
@@ -200,6 +200,13 @@ describe('timecode & timeline', () => {
     expect(formatTc(s!, 25)).toBe('01:02:03:12')
     expect(parseTc('00:00:00:25', 25)).toBeNull()
     expect(formatTc(60, 29.97)).toContain(';')
+  })
+
+  it('keeps LTC frame numbers consecutive at a 29.97 minute boundary for DF and NDF', () => {
+    const lastFrame = { h: 0, m: 0, s: 59, f: 29 }
+    const nextMinute = { h: 0, m: 1, s: 0 }
+    expect(tcToFrames({ ...nextMinute, f: 0, df: false }, 29.97)).toBe(tcToFrames(lastFrame, 29.97) + 1)
+    expect(tcToFrames({ ...nextMinute, f: 2, df: true }, 29.97)).toBe(tcToFrames(lastFrame, 29.97) + 1)
   })
 
   it('analyzeClipSpeeds cảnh báo đoạn vượt tốc độ tối đa', () => {
@@ -786,11 +793,11 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
     const fps = 25
     const freewheelFrames = 10 // 400ms @ 25fps
 
-    expect(tracker.onDecodedFrame(12, 1000)).toBe(12)
+    expect(tracker.onDecodedFrame(12, 1000)).toEqual({ timeSec: 12, discontinuity: false })
     expect(tracker.poll(1050, fps, freewheelFrames)).toEqual({
       status: 'lock',
-      timeSec: 12,
-      shouldFollow: false,
+      timeSec: 12.05,
+      shouldFollow: true,
       shouldStop: false,
     })
 
@@ -818,7 +825,7 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
     })
 
     // Có tín hiệu lại -> lock trở lại
-    expect(tracker.onDecodedFrame(15, 2100)).toBe(15)
+    expect(tracker.onDecodedFrame(15, 2100)).toEqual({ timeSec: 15, discontinuity: true })
     expect(tracker.poll(2120, fps, freewheelFrames).status).toBe('lock')
   })
 

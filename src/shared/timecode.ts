@@ -5,6 +5,8 @@ export interface Tc {
   m: number
   s: number
   f: number
+  /** LTC input can explicitly request non-drop numbering at 29.97 fps. */
+  df?: boolean
 }
 
 export const LTC_FPS_OPTIONS: LtcFps[] = [24, 25, 29.97, 30]
@@ -51,7 +53,7 @@ export function isDropFrame(fps: Fps): boolean {
 export function tcToFrames(tc: Tc, fps: Fps): number {
   const n = nominalFps(fps)
   const base = n * (3600 * tc.h + 60 * tc.m + tc.s) + tc.f
-  if (!isDropFrame(fps)) return base
+  if (!isDropFrame(fps) || tc.df === false) return base
   const totalMin = 60 * tc.h + tc.m
   return base - 2 * (totalMin - Math.floor(totalMin / 10))
 }
