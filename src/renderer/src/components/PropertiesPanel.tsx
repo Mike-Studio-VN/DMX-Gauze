@@ -34,7 +34,6 @@ import {
   type LayerMotionPresetId,
   analyzeClipSpeeds,
   buildCurveKeyframes,
-  clipAutoSpeedCms,
   fitDefaultMotionDuration,
   fullCurvePath,
   heightToPercent,
@@ -44,8 +43,9 @@ import {
   removeClipKeyframe,
   resolveClipBoundsNoOverlap,
   cmsToSeconds,
-  resolveKeyframeSpeed,
-  secondsToCms,
+  momentSpeedValue,
+  representativeSegmentIndex,
+  resolveClipSegmentSpeed,
   segmentDistCm,
   segmentPath,
   updateClipEndTime,
@@ -432,7 +432,6 @@ function MomentEditor({
   const [draftStart, setDraftStart] = useState<{ clipId: string; raw: string } | null>(null)
   const [draftEnd, setDraftEnd] = useState<{ clipId: string; raw: string } | null>(null)
   const [draftTime, setDraftTime] = useState<{ id: string; raw: string } | null>(null)
-  const [speedUnit, setSpeedUnit] = useState<'cms' | 'sec'>('cms')
   const [draftPct, setDraftPct] = useState<{ id: string; raw: string } | null>(null)
 
   const commitStartTime = (rawVal: number) => {
@@ -792,147 +791,124 @@ function MomentEditor({
         </div>
       </div>
 
-      {(() => {
-        const idx = sorted.findIndex((k) => k.id === selectedKeyId)
-        if (idx < 0) return null
-        const kf = sorted[idx]
-        const next = sorted[idx + 1]
-        if (!next) {
-          return <p className="text-[10.5px] text-muted">Điểm cuối: không có đoạn kế tiếp nên không đặt tốc độ.</p>
-        }
-        const cap = speedCap(mod)
-        const distCm = segmentDistCm(mod, kf.height, next.height)
-        const dt = next.offset - kf.offset
-        const r = resolveKeyframeSpeed(kf, distCm, dt, cap, clipAutoSpeedCms(mod, clip))
-        const secs = cmsToSeconds(distCm, r.cms)
-        const setSpeed = (patch: Partial<ClipKeyframe>) =>
-          onUpdate({ keyframes: sorted.map((k) => (k.id === kf.id ? { ...k, ...patch } : k)) }, `kfspd-${kf.id}`)
-        const commitCms = (v: number) => {
-          const nextCms = clamp(v, 1, cap)
-          if (nextCms !== kf.manualSpeedCms) setSpeed({ speedMode: 'manual', manualSpeedCms: nextCms })
-        }
-        return (
-          <div className="space-y-1.5 border-t border-line pt-2.5">
-            <div className="text-[11px] font-semibold tracking-wide text-muted uppercase">
-              Tốc độ đoạn P{idx + 1} → P{idx + 2}
-            </div>
-            <div className="grid grid-cols-2 gap-1 rounded-xl bg-black/30 p-0.5 shadow-[inset_0_0_0_1px_var(--line)]" role="group" aria-label="Chế độ tốc độ">
-              {(['auto', 'manual'] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  aria-pressed={r.mode === m}
-                  onClick={() =>
-                    setSpeed(
-                      m === 'auto'
-                        ? { speedMode: undefined, manualSpeedCms: undefined }
-                        : { speedMode: 'manual', manualSpeedCms: Number(r.autoCms.toFixed(1)) },
-                    )
-                  }
-                  className={`cursor-pointer rounded-[10px] py-1 text-[11px] font-semibold capitalize transition ${
-                    r.mode === m ? 'bg-brand/25 text-[#FFB26B]' : 'text-muted hover:text-fg'
-                  }`}
-                >
-                  {m === 'auto' ? 'Auto' : 'Manual'}
-                </button>
-              ))}
-            </div>
-            {r.mode === 'auto' ? (
-              <div className="kiln-readout flex items-center justify-between text-[11px]">
-                <span>Tự tính (chỉ đọc)</span>
-                <span className="tabular-nums">
-                  {r.autoCms.toFixed(1)} cm/s{cmsToSeconds(distCm, r.autoCms) !== null ? ` · ${cmsToSeconds(distCm, r.autoCms)!.toFixed(2)} s` : ''}
-                </span>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                <div className="flex items-center justify-between gap-2 text-[11px] text-[#C2B3A4]">
-                  <div className="grid grid-cols-2 gap-0.5 rounded-lg bg-black/30 p-0.5" role="group" aria-label="Đơn vị tốc độ">
-                    {(['cms', 'sec'] as const).map((u) => (
-                      <button
-                        key={u}
-                        type="button"
-                        aria-pressed={speedUnit === u}
-                        onClick={() => setSpeedUnit(u)}
-                        className={`cursor-pointer rounded-md px-2 py-0.5 text-[10.5px] font-semibold ${
-                          speedUnit === u ? 'bg-brand/25 text-[#FFB26B]' : 'text-muted hover:text-fg'
-                        }`}
-                      >
-                        {u === 'cms' ? 'cm/s' : 's'}
-                      </button>
-                    ))}
-                  </div>
-                  {speedUnit === 'cms' || secs === null ? (
-                    <input
-                      key={`${kf.id}-cms-${kf.manualSpeedCms}`}
-                      type="number"
-                      min={1}
-                      max={cap}
-                      step={1}
-                      disabled={speedUnit === 'sec'}
-                      defaultValue={Number(r.cms.toFixed(1))}
-                      onBlur={(e) => {
-                        const v = e.currentTarget.valueAsNumber
-                        const n = Number.isFinite(v) ? clamp(v, 1, cap) : r.cms
-                        e.currentTarget.value = String(n)
-                        commitCms(n)
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') e.currentTarget.blur()
-                      }}
-                      className="kiln-field h-7 w-24 px-2.5 text-xs tabular-nums"
-                    />
-                  ) : (
-                    <input
-                      key={`${kf.id}-sec-${kf.manualSpeedCms}`}
-                      type="number"
-                      min={Number((distCm / cap).toFixed(2))}
-                      max={Number(distCm.toFixed(2))}
-                      step={0.1}
-                      defaultValue={Number(secs.toFixed(2))}
-                      onBlur={(e) => {
-                        const v = e.currentTarget.valueAsNumber
-                        const n = Number.isFinite(v) ? secondsToCms(distCm, v, cap) : null
-                        if (n !== null) commitCms(n)
-                        else e.currentTarget.value = String(Number(secs.toFixed(2)))
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') e.currentTarget.blur()
-                      }}
-                      className="kiln-field h-7 w-24 px-2.5 text-xs tabular-nums"
-                    />
-                  )}
-                </div>
-                <div className="kiln-readout text-[10.5px] tabular-nums">
-                  {speedUnit === 'cms' ? (secs !== null ? `≈ ${secs.toFixed(2)} s cho ${distCm.toFixed(1)} cm` : 'Quãng đường = 0') : `≈ ${r.cms.toFixed(1)} cm/s`}
-                  {' · '}CH3 {cmsToCh3(r.cms, cap)} (255 = {cap} cm/s; khuyến nghị CH3=100 ≈ {((100 / 255) * cap).toFixed(1)} cm/s)
-                </div>
-                {speedUnit === 'sec' && secs === null && (
-                  <p className="text-[10.5px] text-muted">Quãng đường = 0: không đổi được sang giây, nhập theo cm/s.</p>
-                )}
-              </div>
-            )}
-            {r.mode === 'manual' && r.tooSlow && (
-              <p className="flex items-start gap-1 text-[10.5px] text-warn">
-                <AlertTriangle size={11} className="mt-px shrink-0" />
-                Quá chậm: cần {(distCm / r.cms).toFixed(2)}s, đoạn chỉ có {dt.toFixed(2)}s (auto: {r.autoCms.toFixed(1)} cm/s).
-              </p>
-            )}
-            {r.mode === 'manual' && r.overMax && (
-              <p className="flex items-start gap-1 text-[10.5px] text-warn">
-                <AlertTriangle size={11} className="mt-px shrink-0" />
-                Vượt tối đa {cap} cm/s: đã kẹp.
-              </p>
-            )}
-            {distCm / Math.max(0.001, dt) > cap + 1e-3 && (
-              <p className="flex items-start gap-1 text-[10.5px] text-warn">
-                <AlertTriangle size={11} className="mt-px shrink-0" />
-                Vượt tốc độ tối đa {cap} cm/s: đoạn này không kịp thời gian.
-              </p>
-            )}
+      <MomentSpeedEditor clip={clip} sorted={sorted} mod={mod} onUpdate={onUpdate} />
+    </div>
+  )
+}
+
+/**
+ * TỐC ĐỘ MOMENT: một cài đặt cho toàn bộ N đoạn. Auto = mỗi đoạn tự tính; Manual = cm/s (cùng tốc độ), s (mỗi đoạn
+ * đi trong N giây, không dời điểm) hoặc CH3 (cùng CH3). Đoạn đại diện để đổi đơn vị = đoạn có quãng đường dài nhất.
+ */
+function MomentSpeedEditor({
+  clip,
+  sorted,
+  mod,
+  onUpdate,
+}: {
+  clip: TimelineClip
+  sorted: ClipKeyframe[]
+  mod: ModuleCfg
+  onUpdate: (patch: Partial<TimelineClip>, coalesceKey?: string) => void
+}) {
+  if (sorted.length < 2) return null
+  const cap = speedCap(mod)
+  const segs = sorted.slice(0, -1).map((p1, i) => {
+    const p2 = sorted[i + 1]
+    return { p1, p2, dist: segmentDistCm(mod, p1.height, p2.height), dt: p2.offset - p1.offset, res: resolveClipSegmentSpeed(clip, p1, p2, mod) }
+  })
+  const repIdx = representativeSegmentIndex(segs.map((s) => s.dist)) // đoạn dài nhất (đầu tiên nếu hoà)
+  const rep = segs[repIdx]
+  const legacy = clip.speedMode === undefined
+  const mode = clip.speedMode
+  const unit = clip.speedUnit ?? 'cms'
+  const clearPointSpeeds = sorted.map((k) => ({ ...k, speedMode: undefined, manualSpeedCms: undefined }))
+  const apply = (patch: Partial<TimelineClip>) => onUpdate({ ...patch, keyframes: clearPointSpeeds }, `momspd-${clip.id}`)
+  const repCms = rep.res.cms
+  // Giá trị tương đương theo đơn vị cho đoạn đại diện (quãng 0 → null với đơn vị giây).
+  const valueFor = (u: 'cms' | 'sec' | 'ch3', cms: number): number | null => momentSpeedValue(u, cms, rep.dist, cap)
+  const setMode = (m: 'auto' | 'manual') => {
+    if (m === 'auto') apply({ speedMode: 'auto', speedUnit: undefined, speedValue: undefined })
+    else apply({ speedMode: 'manual', speedUnit: unit, speedValue: valueFor(unit, repCms) ?? Number(repCms.toFixed(1)) })
+  }
+  const setUnit = (u: 'cms' | 'sec' | 'ch3') => {
+    if (u === unit) return
+    const v = valueFor(u, repCms)
+    apply({ speedMode: 'manual', speedUnit: u, speedValue: v ?? (u === 'sec' ? clip.speedValue ?? 1 : Number(repCms.toFixed(1))) })
+  }
+  const commit = (raw: number) => {
+    if (!Number.isFinite(raw)) return
+    const v = unit === 'ch3' ? clamp(Math.round(raw), 1, 255) : unit === 'cms' ? clamp(raw, 1, cap) : Math.max(0.05, raw)
+    if (v !== clip.speedValue) apply({ speedMode: 'manual', speedUnit: unit, speedValue: v })
+  }
+  const over = segs.some((s) => s.res.mode === 'manual' && s.res.overMax)
+  const slow = segs.filter((s) => s.res.mode === 'manual' && s.res.tooSlow)
+  const cmsLabel = unit === 'ch3' ? `${ch3ToCms(clamp(Math.round(clip.speedValue ?? 0), 1, 255), cap).toFixed(1)} cm/s` : null
+  return (
+    <div className="space-y-1.5 border-t border-line pt-2.5">
+      <div className="text-[11px] font-semibold tracking-wide text-muted uppercase">Tốc độ moment</div>
+      <div className="kiln-seg" role="group" aria-label="Chế độ tốc độ moment">
+        {(['auto', 'manual'] as const).map((m) => (
+          <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)} className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${mode === m ? 'on' : ''}`}>
+            {m === 'auto' ? 'Auto' : 'Manual'}
+          </button>
+        ))}
+      </div>
+      {legacy && <p className="text-[10.5px] text-muted">Moment cũ: đang dùng tốc độ theo từng điểm. Chọn Auto/Manual để áp cho cả moment.</p>}
+      {mode === 'auto' && (
+        <div className="space-y-0.5 text-[10.5px] text-muted tabular-nums">
+          <div>Mọi {segs.length} đoạn tự tính từ quãng đường / thời gian giữa các điểm.</div>
+          <div>
+            Đoạn P{repIdx + 1}→P{repIdx + 2}: {rep.res.autoCms.toFixed(1)} cm/s · CH3 {cmsToCh3(rep.res.autoCms, cap)}
           </div>
-        )
-      })()}
+        </div>
+      )}
+      {mode === 'manual' && (
+        <div className="space-y-1">
+          <div className="kiln-seg" role="group" aria-label="Kiểu nhập tốc độ">
+            {(['cms', 'sec', 'ch3'] as const).map((u) => (
+              <button key={u} type="button" aria-pressed={unit === u} onClick={() => setUnit(u)} className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${unit === u ? 'on' : ''}`}>
+                {u === 'cms' ? 'cm/s' : u === 'sec' ? 's' : 'CH3'}
+              </button>
+            ))}
+          </div>
+          <input
+            key={`${clip.id}-${unit}-${clip.speedValue}`}
+            type="number"
+            min={unit === 'ch3' ? 1 : unit === 'sec' ? 0.05 : 1}
+            max={unit === 'ch3' ? 255 : unit === 'cms' ? cap : undefined}
+            step={unit === 'sec' ? 0.1 : 1}
+            defaultValue={clip.speedValue}
+            aria-label={unit === 'cms' ? 'Tốc độ chung (cm/s)' : unit === 'sec' ? 'Thời gian mỗi đoạn (s)' : 'CH3 chung (1–255)'}
+            onBlur={(e) => commit(e.currentTarget.valueAsNumber)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur()
+            }}
+            className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
+          />
+          <div className="text-[10.5px] text-muted tabular-nums">
+            {unit === 'cms' && `Mọi đoạn ${clip.speedValue ?? '—'} cm/s · CH3 ${cmsToCh3(clip.speedValue ?? 0, cap)}`}
+            {unit === 'ch3' && `Mọi đoạn CH3 ${clip.speedValue ?? '—'} ≈ ${cmsLabel} (255 = ${cap} cm/s)`}
+            {unit === 'sec' && `Mỗi đoạn đi trong ${clip.speedValue ?? '—'} s (cm/s = quãng ÷ s; không dời điểm)`}
+          </div>
+          <div className="text-[10.5px] text-muted tabular-nums">
+            Đại diện P{repIdx + 1}→P{repIdx + 2} ({rep.dist.toFixed(1)} cm): {rep.res.cms.toFixed(1)} cm/s · {cmsToSeconds(rep.dist, rep.res.cms)?.toFixed(2) ?? '—'} s · CH3 {cmsToCh3(rep.res.cms, cap)}
+          </div>
+          <div className="text-[10px] text-muted">255 = {cap} cm/s; khuyến nghị CH3=100 ≈ {((100 / 255) * cap).toFixed(1)} cm/s</div>
+        </div>
+      )}
+      {over && (
+        <p className="flex items-start gap-1 text-[10.5px] text-warn">
+          <AlertTriangle size={11} className="mt-px shrink-0" />
+          Có đoạn vượt tốc độ tối đa {cap} cm/s: đã kẹp.
+        </p>
+      )}
+      {slow.length > 0 && (
+        <p className="flex items-start gap-1 text-[10.5px] text-warn">
+          <AlertTriangle size={11} className="mt-px shrink-0" />
+          {slow.length}/{segs.length} đoạn quá chậm, không kịp tới đích đúng giờ (vd P{segs.indexOf(slow[0]) + 1}→P{segs.indexOf(slow[0]) + 2}: cần {(slow[0].dist / slow[0].res.cms).toFixed(2)}s, có {slow[0].dt.toFixed(2)}s).
+        </p>
+      )}
     </div>
   )
 }
