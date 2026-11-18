@@ -18,6 +18,15 @@ describe('convert', () => {
     expect(dmxToPos(mid3.coarse, mid3.fine, 3)).toBeCloseTo(1.5, 3)
   })
 
+  it.each([
+    { base: 0x12ff, offset: 1, coarse: 0x13, fine: 0x00 },
+    { base: 0x1300, offset: -1, coarse: 0x12, fine: 0xff },
+    { base: 1, offset: -255, coarse: 0x00, fine: 0x00 },
+    { base: 65534, offset: 255, coarse: 0xff, fine: 0xff },
+  ])('applies $offset to the full DMX position $base before splitting bytes', ({ base, offset, coarse, fine }) => {
+    expect(posToDmx(base / 65535, 1, offset)).toEqual({ coarse, fine })
+  })
+
   it('quy đổi tốc độ H2 120 cm/s và thời gian sang CH3', () => {
     expect(ch3ToCms(255, 120)).toBeCloseTo(120, 5)
     expect(cmsToCh3(60, 120)).toBe(128)
