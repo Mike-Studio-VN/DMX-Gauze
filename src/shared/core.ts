@@ -43,8 +43,6 @@ export class GauzeCore {
   private rateWindowStart = 0
   private measuredHz = 0
   private frame = new Uint8Array(DMX_UNIVERSE_SIZE)
-  /** Khoá theo module, nạp từ ModuleCfg.locked mỗi lần configure. */
-  private moduleLocks = new Set<string>()
   /** Xung Sent đang chạy (CH4=77 tới `until`, CH2 = ch2). */
   private pulses = new Map<string, { until: number; ch2: number }>()
   /** Module đã hết xung: CH4 giữ 0 tới khi nhận lệnh move kế tiếp. */
@@ -73,7 +71,6 @@ export class GauzeCore {
       this.lastSentRoute ??
       (this.cfg ? { net: this.cfg.output.net, subUni: (this.cfg.output.subnet << 4) | this.cfg.output.universe } : null)
 
-    const wasLocked = this.moduleLocks
     this.cfg = cfg
     this.modules = new Map(cfg.modules.map((m) => [m.id, m]))
     for (const m of cfg.modules) {
@@ -82,10 +79,6 @@ export class GauzeCore {
     for (const id of [...this.states.keys()]) if (!this.modules.has(id)) this.states.delete(id)
     for (const id of [...this.pulses.keys()]) if (!this.modules.has(id)) this.pulses.delete(id)
     for (const id of [...this.zeroHold]) if (!this.modules.has(id)) this.zeroHold.delete(id)
-    this.moduleLocks = new Set(cfg.modules.filter((m) => m.locked).map((m) => m.id))
-    for (const id of this.moduleLocks) {
-      if (!wasLocked.has(id)) this.hold(id) // vừa khoá: đứng yên
-    }
     // Áp lại giới hạn min/max cho mục tiêu hiện có.
     for (const [id, st] of this.states) {
       const [lo, hi] = limits(this.modules.get(id)!)
@@ -244,11 +237,7 @@ export class GauzeCore {
       const m = this.modules.get(id)
       const st = this.states.get(id)
       if (!m || !st) continue
-      if (this.moduleLocks.has(id)) {
-        warnings.push(`${m.name}: module đang khoá, bỏ qua.`)
-        continue
-      }
-      this.zeroHold.delete(id) // move hợp lệ: trở lại điều khiển bình thường (CH4 theo khoá)
+      this.zeroHold.delete(id) // move hợp lệ: trở lại điều khiển bình thường (CH4 theo khoá tổng)
       const [lo, hi] = limits(m)
       let target: number
       switch (cmd.target) {
@@ -303,9 +292,9 @@ export class GauzeCore {
   }
 
   private simulate(dt: number): void {
-    for (const [id, st] of this.states) {
+    for (const st of this.states.values()) {
       const diff = st.target - st.pos
-      if (this.locked || this.moduleLocks.has(id) || Math.abs(diff) < 1e-6) {
+      if (this.locked || Math.abs(diff) < 1e-6) {
         st.moving = false
         continue
       }
@@ -340,7 +329,7 @@ export class GauzeCore {
       this.frame[a + CH.FINE] = pulse ? pulse.ch2 : clamp(Math.round(m.ch2Fine ?? 0), 0, 255)
       this.frame[a + CH.SPEED] = st.ch3
       if (pulse) this.frame[a + CH.LOCK] = SENT_CH4_PULSE_VALUE
-      else this.frame[a + CH.LOCK] = this.zeroHold.has(m.id) || this.moduleLocks.has(m.id) ? 0 : lockVal
+      else this.frame[a + CH.LOCK] = this.zeroHold.has(m.id) ? 0 : lockVal
     }
   }
 
@@ -407,7 +396,6 @@ export class GauzeCore {
       status: this.status(),
       frame: this.frame.slice(),
       pulsing: [...this.pulses.keys()],
-      moduleLocks: [...this.moduleLocks],
     }
   }
 }

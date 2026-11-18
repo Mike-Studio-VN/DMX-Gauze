@@ -11,11 +11,9 @@ import {
   HelpCircle,
   Layers,
   Link2,
-  Lock,
   Plus,
   RotateCcw,
   Trash2,
-  Unlock,
   Waves,
 } from 'lucide-react'
 import { getBridge } from '../services/bridge'
@@ -2353,9 +2351,6 @@ export function PropertiesPanel(props: {
         moduleId={single.id}
         moduleName={single.name}
         live={[ch1, ch2, ch3, ch4]}
-        globalLocked={!!snapshot?.locked}
-        moduleLocked={!!single.locked}
-        onToggleLock={(locked) => updateModule(single.id, { locked: locked || undefined })}
         onPersistCh2={(v) => updateModule(single.id, { ch2Fine: v })}
       />
     </div>
@@ -2370,17 +2365,11 @@ function ChannelMonitor({
   moduleId,
   moduleName,
   live,
-  globalLocked,
-  moduleLocked,
-  onToggleLock,
   onPersistCh2,
 }: {
   moduleId: string
   moduleName: string
   live: number[]
-  globalLocked: boolean
-  moduleLocked: boolean
-  onToggleLock: (locked: boolean) => void
   onPersistCh2: (ch2: number) => void
 }) {
   const [draft, setDraft] = useState<string | null>(null)
@@ -2438,20 +2427,6 @@ function ChannelMonitor({
           >
             {phase === 'sent' ? <Check size={11} strokeWidth={3} /> : null}
             {phase === 'sent' ? 'Đã gửi' : phase === 'sending' ? '…' : 'Sent'}
-          </button>
-          <button
-            type="button"
-            onClick={() => onToggleLock(!moduleLocked)}
-            title={
-              moduleLocked
-                ? 'Khoá module này (CH4=0, đóng băng timeline/cue/manual) — bấm để mở'
-                : 'Module đang mở — bấm để khoá riêng module này. Sent không bị khoá chặn.'
-            }
-            aria-label={moduleLocked ? 'Mở khoá module' : 'Khoá module'}
-            aria-pressed={moduleLocked}
-            className="cursor-pointer rounded p-0.5 hover:bg-white/10"
-          >
-            {moduleLocked || globalLocked ? <Lock size={12} className="text-warn" /> : <Unlock size={12} className="text-ok" />}
           </button>
         </span>
       </div>
