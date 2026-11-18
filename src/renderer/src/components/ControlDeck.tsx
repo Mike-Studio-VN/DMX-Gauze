@@ -18,6 +18,7 @@ import {
   computeSharedManualWaveLevel,
   resolveCueButtonBaselines,
 } from '@shared/convert'
+import { DEFAULT_MOTION_SPEED_CMS } from '@shared/timeline'
 import type { CueButton, SpeedUnit } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 import { TimelineEditor } from './TimelineEditor'
@@ -332,8 +333,8 @@ export function ModeButtons(props: {
         moduleId: m.id,
         position: Number((snapshot?.modules[m.id]?.pos ?? m.minHeight).toFixed(2)),
       })),
-      speedUnit: 'sec',
-      speedValue: 4,
+      speedUnit: 'cms',
+      speedValue: Number(DEFAULT_MOTION_SPEED_CMS.toFixed(2)),
       slotIndex: nextSlot,
       loop: false,
     }

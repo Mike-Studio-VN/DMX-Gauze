@@ -582,7 +582,7 @@ describe('timeline -> GauzeCore end-to-end execution', () => {
   it('rèm thực sự chạy lên xuống chính xác theo timeline (cả pre-roll từ vị trí lệch, mượt Catmull-Rom và khung DMX)', async () => {
     const { GauzeCore } = await import('./core')
     const { MockDriver } = await import('./drivers')
-    const { CH, LOCK_VALUE } = await import('./dmx')
+    const { CH, DEFAULT_SPEED, LOCK_VALUE } = await import('./dmx')
     const { ch1ToPos } = await import('./convert')
     const { buildTimelineFollowCommands, evaluateModuleTimelineHeight } = await import('./timeline')
 
@@ -597,18 +597,23 @@ describe('timeline -> GauzeCore end-to-end execution', () => {
     core.start()
     core.command({ type: 'lock', locked: false })
 
-    // Giả lập Trước 1 đang thả ở 0.8m (từ chế độ Manual trước đó)
-    core.command({ type: 'move', ids: ['m-front-1'], target: 0.8, speed: { unit: 'cms', value: 120 } })
+    // Giả lập Trước 1 đang lệch 0.4m, đủ để pre-roll 1s về 0 với CH3=100.
+    core.command({ type: 'move', ids: ['m-front-1'], target: 0.4, speed: { unit: 'cms', value: 120 } })
     for (let i = 0; i < 40; i += 1) {
       now += 25
       core.tick()
     }
-    expect(core.snapshot().modules['m-front-1'].pos).toBeCloseTo(0.8, 2)
+    expect(core.snapshot().modules['m-front-1'].pos).toBeCloseTo(0.4, 2)
 
-    // Chạy timeline từ t=0s..8.2s: bước mô phỏng core 20ms, cập nhật follow command mỗi 40ms
+    const [frontClip, backClip] = p.clips!
+    const keyTimes = (clip: typeof frontClip) => clip.keyframes.map(({ offset }) => Math.round((clip.startTime + offset) * 50) * 20)
+    const frontTimes = keyTimes(frontClip)
+    const backTimes = keyTimes(backClip)
+    const checkpoints = new Set([...frontTimes, ...backTimes])
+    // Mô phỏng core mỗi 20ms, cập nhật lệnh Timeline mỗi 40ms.
     const sampled: Record<number, { front: number; back: number }> = {}
     let nextFollowT = 0
-    for (let ms = 0; ms <= 8200; ms += 20) {
+    for (let ms = 0; ms <= Math.max(...checkpoints) + 200; ms += 20) {
       const t = ms / 1000
       if (t + 1e-6 >= nextFollowT) {
         nextFollowT += 0.04
@@ -621,8 +626,9 @@ describe('timeline -> GauzeCore end-to-end execution', () => {
       }
       now += 20
       core.tick()
-      if ([1000, 2000, 3000, 4000, 5000, 6500, 8100].includes(ms)) {
+      if (checkpoints.has(ms)) {
         const s = core.snapshot()
+        expect(s.frame[CH.SPEED]).toBeLessThanOrEqual(DEFAULT_SPEED)
         sampled[ms] = {
           front: s.modules['m-front-1'].pos,
           back: s.modules['m-back-1'].pos,
@@ -630,19 +636,9 @@ describe('timeline -> GauzeCore end-to-end execution', () => {
       }
     }
 
-    // 1) Pre-roll đưa Trước 1 từ 0.8m về 0.0m trước khi sóng bắt đầu ở 1s
-    expect(sampled[1000].front).toBeLessThan(0.05)
-    // 2) Trước 1 đi xuống ~0.7m (2s) -> đỉnh 1.0m (3s) -> đi lên ~0.7m (4s) -> về 0.0m (5s)
-    expect(sampled[2000].front).toBeGreaterThan(0.62)
-    expect(sampled[2000].front).toBeLessThan(0.78)
-    expect(sampled[3000].front).toBeGreaterThan(0.95)
-    expect(sampled[4000].front).toBeGreaterThan(0.62)
-    expect(sampled[4000].front).toBeLessThan(0.78)
-    expect(sampled[5000].front).toBeLessThan(0.08)
-
-    // 3) Sau 1 (3m) đi xuống ~2.4m (5s) rồi thu về 0.0m (8s)
-    expect(sampled[5000].back).toBeGreaterThan(2.3)
-    expect(sampled[8100].back).toBeLessThan(0.05)
+    // Kiểm tra pre-roll, các điểm sóng Mượt đã giãn và vị trí chốt.
+    frontTimes.forEach((ms, i) => expect(Math.abs(sampled[ms].front - frontClip.keyframes[i].height)).toBeLessThan(0.08))
+    backTimes.forEach((ms, i) => expect(Math.abs(sampled[ms].back - backClip.keyframes[i].height)).toBeLessThan(0.1))
 
     // 4) Kiểm tra frame DMX thực sự xuất CH4=77 và vị trí khớp chiều dài cuối clip
     const finalSnap = core.snapshot()

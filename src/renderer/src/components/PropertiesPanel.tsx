@@ -36,6 +36,7 @@ import {
   type LayerMotionPresetId,
   analyzeClipSpeeds,
   buildCurveKeyframes,
+  fitDefaultMotionDuration,
   fullCurvePath,
   heightToPercent,
   insertClipKeyframe,
@@ -407,6 +408,7 @@ function MomentEditor({
   onBackToModule,
   onUpdate,
   onDelete,
+  onPresetOverlap,
 }: {
   clip: TimelineClip
   allClips: TimelineClip[]
@@ -416,6 +418,7 @@ function MomentEditor({
   onBackToModule: () => void
   onUpdate: (patch: Partial<TimelineClip>, coalesceKey?: string, syncEdge?: 'start' | 'end') => void
   onDelete: () => void
+  onPresetOverlap: () => void
 }) {
   const sorted = [...clip.keyframes].sort((a, b) => a.offset - b.offset)
   const sameModClips = allClips.filter((c) => c.moduleId === clip.moduleId)
@@ -472,7 +475,17 @@ function MomentEditor({
     }
     const curveMode: 'smooth' | 'linear' =
       presetId === 'triangle' || presetId === 'steps' || presetId === 'hold' ? 'linear' : 'smooth'
-    onUpdate({ keyframes: kfs, curveMode })
+    const fitted = fitDefaultMotionDuration({ ...clip, keyframes: kfs, curveMode }, mod)
+    if (fitted.duration > clip.duration && clip.startTime + fitted.duration > bounds.maxEnd + 1e-6) {
+      onPresetOverlap()
+      return
+    }
+    onUpdate({
+      keyframes: fitted.keyframes,
+      curveMode,
+      duration: fitted.duration,
+      autoSpeedLimitCms: fitted.autoSpeedLimitCms,
+    })
     onSelectKey(kfs[Math.min(1, kfs.length - 1)]?.id ?? null)
   }
 
@@ -791,7 +804,7 @@ function MomentEditor({
         const cap = speedCap(mod)
         const distCm = segmentDistCm(mod, kf.height, next.height)
         const dt = next.offset - kf.offset
-        const r = resolveKeyframeSpeed(kf, distCm, dt, cap)
+        const r = resolveKeyframeSpeed(kf, distCm, dt, cap, clip.autoSpeedLimitCms)
         const secs = cmsToSeconds(distCm, r.cms)
         const setSpeed = (patch: Partial<ClipKeyframe>) =>
           onUpdate({ keyframes: sorted.map((k) => (k.id === kf.id ? { ...k, ...patch } : k)) }, `kfspd-${kf.id}`)
@@ -1548,6 +1561,7 @@ export function PropertiesPanel(props: {
         onBackToModule={() => selectTimelineClip(null)}
         onUpdate={(patch, coalesceKey, syncEdge) => updateClip(activeClip.id, patch, coalesceKey, syncEdge)}
         onDelete={() => deleteClip(activeClip.id)}
+        onPresetOverlap={() => notify('Không đủ chỗ để áp dụng mẫu sóng ở tốc độ Auto mặc định', 'warn')}
       />
     )
   }
@@ -1622,7 +1636,7 @@ export function PropertiesPanel(props: {
 
               <div className="grid grid-cols-2 gap-1.5">
                 <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
-                  <span className="shrink-0 text-[10px] text-muted">Thời lượng</span>
+                  <span className="shrink-0 text-[10px] text-muted">Thời lượng tối thiểu</span>
                   <input
                     type="number"
                     step="0.2"
@@ -1713,7 +1727,7 @@ export function PropertiesPanel(props: {
                     className="kiln-btn col-span-2 h-8 justify-start gap-1.5 px-2.5 text-[11px] text-fg disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     {presetIcon('alternating-wave')}
-                    Thêm cue Sóng so le · {layerPresetDur}s
+                    Thêm cue Sóng so le · ≥ {layerPresetDur}s
                   </button>
                 </div>
               )}

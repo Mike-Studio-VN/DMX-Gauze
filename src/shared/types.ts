@@ -121,6 +121,8 @@ export interface TimelineClip {
   duration: number
   /** Dạng đường cong hiển thị: mượt (spline) hoặc thẳng (linear). */
   curveMode?: 'smooth' | 'linear'
+  /** Giới hạn tốc độ Auto của moment mới (cm/s). */
+  autoSpeedLimitCms?: number
   keyframes: ClipKeyframe[]
 }
 
