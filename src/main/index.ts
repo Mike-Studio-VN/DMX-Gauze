@@ -70,6 +70,8 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       sandbox: false,
+      // Timeline phát bằng requestAnimationFrame: không được dừng khi cửa sổ thu nhỏ/bị che.
+      backgroundThrottling: false,
     },
   })
   mainWin = win

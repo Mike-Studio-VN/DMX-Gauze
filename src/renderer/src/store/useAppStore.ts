@@ -279,6 +279,10 @@ let lastCoalesceAt = 0
 let lastToastSig = ''
 let lastToastAt = 0
 
+function reportSaveError(err: unknown): void {
+  useAppStore.getState().notify(`Không lưu được dự án: ${(err as Error).message}`, 'error', { title: 'Lỗi lưu', icon: 'error' })
+}
+
 function persistAndSync(project: Project): void {
   const b = getBridge()
   void b.configure({
@@ -288,7 +292,7 @@ function persistAndSync(project: Project): void {
   })
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
-    void b.saveProject(project)
+    b.saveProject(project).catch((err: unknown) => reportSaveError(err))
   }, 250)
 }
 
@@ -969,11 +973,11 @@ export const useAppStore = create<AppState>((set, get) => {
             position: [merged.transform.position[0], 0, merged.transform.position[2]],
           }
         }
-        merged.length = Math.max(0.2, merged.length)
-        merged.width = Math.max(0.2, merged.width)
+        merged.length = Math.min(500, Math.max(0.2, merged.length))
+        merged.width = Math.min(500, Math.max(0.2, merged.width))
         merged.maxHeight = Math.min(merged.length, Math.max(0, merged.maxHeight))
         merged.minHeight = Math.min(merged.maxHeight, Math.max(0, merged.minHeight))
-        merged.maxSpeedCms = Math.max(10, merged.maxSpeedCms)
+        merged.maxSpeedCms = Math.min(10000, Math.max(10, merged.maxSpeedCms))
         merged.defaultSpeed = Math.min(255, Math.max(1, Math.round(merged.defaultSpeed)))
         return merged
       })
@@ -1095,11 +1099,11 @@ export const useAppStore = create<AppState>((set, get) => {
             position: [merged.transform.position[0], 0, merged.transform.position[2]],
           }
         }
-        merged.length = Math.max(0.2, merged.length)
-        merged.width = Math.max(0.2, merged.width)
+        merged.length = Math.min(500, Math.max(0.2, merged.length))
+        merged.width = Math.min(500, Math.max(0.2, merged.width))
         merged.maxHeight = Math.min(merged.length, Math.max(0, merged.maxHeight))
         merged.minHeight = Math.min(merged.maxHeight, Math.max(0, merged.minHeight))
-        merged.maxSpeedCms = Math.max(10, merged.maxSpeedCms)
+        merged.maxSpeedCms = Math.min(10000, Math.max(10, merged.maxSpeedCms))
         merged.defaultSpeed = Math.min(255, Math.max(1, Math.round(merged.defaultSpeed)))
         return merged
       })
@@ -1174,6 +1178,8 @@ export const useAppStore = create<AppState>((set, get) => {
     updateLtcSettings(patch) {
       const { project } = get()
       const nextLtc: LtcSettings = { ...project.settings.ltc, ...patch }
+      nextLtc.freewheelFrames = clamp(nextLtc.freewheelFrames, 0, 600)
+      nextLtc.offsetFrames = clamp(nextLtc.offsetFrames, -600, 600)
       if ('fps' in patch && patch.fps === undefined) {
         delete nextLtc.fps
       }
@@ -1718,7 +1724,13 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     async saveCurrentProject() {
-      const res = await getBridge().saveProjectFile(get().project)
+      let res
+      try {
+        res = await getBridge().saveProjectFile(get().project)
+      } catch (err) {
+        reportSaveError(err)
+        return
+      }
       if (res.saved) {
         set({ projectFilePath: res.filePath, dirty: false })
         get().notify('Đã lưu file dự án hiện tại', 'success', { title: 'Lưu dự án', icon: 'save' })
@@ -1726,7 +1738,13 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     async saveAsProject() {
-      const res = await getBridge().saveProjectAs(get().project)
+      let res
+      try {
+        res = await getBridge().saveProjectAs(get().project)
+      } catch (err) {
+        reportSaveError(err)
+        return
+      }
       if (res.saved) {
         set({ projectFilePath: res.filePath, dirty: false })
         get().notify('Đã lưu dự án sang file mới', 'success', { title: 'Lưu thành file mới', icon: 'save' })
