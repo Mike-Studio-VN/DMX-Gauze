@@ -21,6 +21,7 @@ export interface KilnSelectProps {
   size?: 'sm' | 'md'
   tabular?: boolean
   defaultOpen?: boolean
+  disabled?: boolean
 }
 
 interface MenuCoords {
@@ -40,8 +41,10 @@ export function KilnSelect({
   size = 'md',
   tabular = false,
   defaultOpen = false,
+  disabled = false,
 }: KilnSelectProps) {
-  const [open, setOpen] = useState(defaultOpen)
+  const [menuOpen, setOpen] = useState(defaultOpen)
+  const open = menuOpen && !disabled
   const [highlightIdx, setHighlightIdx] = useState(-1)
   const [coords, setCoords] = useState<MenuCoords | null>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -95,6 +98,10 @@ export function KilnSelect({
   }, [open, options.length])
 
   useEffect(() => {
+    if (disabled) {
+      setOpen(false)
+      return
+    }
     if (!open || typeof window === 'undefined') return
     const selectedIdx = options.findIndex((o) => o.value === value && !o.disabled)
     setHighlightIdx(selectedIdx >= 0 ? selectedIdx : 0)
@@ -126,10 +133,10 @@ export function KilnSelect({
       window.removeEventListener('resize', onReposition)
       window.removeEventListener('scroll', onReposition, true)
     }
-  }, [open, options, value])
+  }, [disabled, open, options, value])
 
   const choose = (opt: KilnSelectOption) => {
-    if (opt.disabled) return
+    if (disabled || opt.disabled) return
     onChange(opt.value)
     setOpen(false)
     triggerRef.current?.focus()
@@ -275,14 +282,15 @@ export function KilnSelect({
       <button
         ref={triggerRef}
         type="button"
+        disabled={disabled}
         role="combobox"
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-label={ariaLabel}
         onClick={() => setOpen((v) => !v)}
         onKeyDown={handleTriggerKeyDown}
-        className={`kiln-field flex w-full cursor-pointer items-center gap-2 text-left text-xs transition ${heightCls} ${
-          open ? '!bg-[#1b130f] !shadow-[inset_0_0_0_1.5px_var(--acc)]' : 'hover:bg-white/[0.04]'
+        className={`kiln-field flex w-full items-center gap-2 text-left text-xs transition ${heightCls} ${disabled ? 'cursor-default' : 'cursor-pointer'} ${
+          open ? '!bg-[#1b130f] !shadow-[inset_0_0_0_1.5px_var(--acc)]' : !disabled ? 'hover:bg-white/[0.04]' : ''
         }`}
       >
         {selectedOption?.icon && (
@@ -295,7 +303,7 @@ export function KilnSelect({
         )}
         <span
           className={`min-w-0 flex-1 truncate font-medium ${tabular ? 'tabular-nums' : ''} ${
-            selectedOption ? 'text-[var(--t1)]' : 'text-[var(--t3)]'
+            selectedOption && !disabled ? 'text-[var(--t1)]' : 'text-[var(--t3)]'
           }`}
         >
           {selectedOption?.label ?? placeholder}

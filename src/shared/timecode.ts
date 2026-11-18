@@ -58,10 +58,10 @@ export function tcToFrames(tc: Tc, fps: Fps): number {
   return base - 2 * (totalMin - Math.floor(totalMin / 10))
 }
 
-export function framesToTc(frames: number, fps: Fps): Tc {
+export function framesToTc(frames: number, fps: Fps, dropFrame = isDropFrame(fps)): Tc {
   let n = Math.max(0, Math.floor(frames))
   const nom = nominalFps(fps)
-  if (isDropFrame(fps)) {
+  if (isDropFrame(fps) && dropFrame) {
     const d = Math.floor(n / 17982)
     const m = n % 17982
     n += 18 * d + (m >= 2 ? 2 * Math.floor((m - 2) / 1798) : 0)
@@ -71,6 +71,7 @@ export function framesToTc(frames: number, fps: Fps): Tc {
     s: Math.floor(n / nom) % 60,
     m: Math.floor(n / (nom * 60)) % 60,
     h: Math.floor(n / (nom * 3600)),
+    ...(isDropFrame(fps) && !dropFrame ? { df: false } : {}),
   }
 }
 
@@ -78,20 +79,20 @@ export function tcToSeconds(tc: Tc, fps: Fps): number {
   return tcToFrames(tc, fps) / realFps(fps)
 }
 
-export function secondsToTc(sec: number, fps: Fps): Tc {
-  return framesToTc(Math.round(sec * realFps(fps)), fps)
+export function secondsToTc(sec: number, fps: Fps, dropFrame?: boolean): Tc {
+  return framesToTc(Math.round(sec * realFps(fps)), fps, dropFrame)
 }
 
 const p2 = (n: number): string => String(n).padStart(2, '0')
 
-export function formatTc(sec: number, fps: Fps): string {
-  const t = secondsToTc(sec, fps)
-  const sep = isDropFrame(fps) ? ';' : ':'
+export function formatTc(sec: number, fps: Fps, dropFrame = isDropFrame(fps)): string {
+  const t = secondsToTc(sec, fps, dropFrame)
+  const sep = isDropFrame(fps) && dropFrame ? ';' : ':'
   return `${p2(t.h)}:${p2(t.m)}:${p2(t.s)}${sep}${p2(t.f)}`
 }
 
 /** Nhận "hh:mm:ss:ff", cũng chấp nhận ';' hoặc '.', hoặc chuỗi chữ số liền. null nếu sai. */
-export function parseTc(text: string, fps: Fps): number | null {
+export function parseTc(text: string, fps: Fps, dropFrame?: boolean): number | null {
   const parts = text.trim().split(/[:;.]/)
   let nums: number[]
   if (parts.length === 1 && /^\d{1,8}$/.test(parts[0])) {
@@ -102,5 +103,5 @@ export function parseTc(text: string, fps: Fps): number | null {
   } else return null
   const [h, m, s, f] = nums
   if (m > 59 || s > 59 || f >= nominalFps(fps)) return null
-  return tcToSeconds({ h, m, s, f }, fps)
+  return tcToSeconds({ h, m, s, f, df: dropFrame }, fps)
 }

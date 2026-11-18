@@ -1367,11 +1367,11 @@ export function buildMultiClipShiftPatch(
 }
 
 /** Phân tích chuỗi người dùng nhập khi double-click nhãn playhead (số giây như "3.5", "3,5", "12s" hoặc timecode "hh:mm:ss:ff"). */
-export function parseTimelineSecondsInput(raw: string, fps: Fps): number | null {
+export function parseTimelineSecondsInput(raw: string, fps: Fps, dropFrame?: boolean): number | null {
   const trimmed = raw.trim()
   if (!trimmed) return null
   if (trimmed.includes(':') || trimmed.includes(';')) {
-    return parseTc(trimmed, fps)
+    return parseTc(trimmed, fps, dropFrame)
   }
   const normalized = trimmed.replace(/s$/i, '').trim().replace(',', '.')
   if (!/^-?\d+(\.\d+)?$/.test(normalized)) return null

@@ -40,6 +40,8 @@ export function SettingsModal(props: {
   const {
     info,
     project,
+    ltcActive,
+    ltcDropFrame,
     snapshot,
     settingsOpen,
     settingsTab,
@@ -58,9 +60,13 @@ export function SettingsModal(props: {
 
   const out = project.settings.output
   const tl = project.settings.timeline
+  const ltcMatched = isStandardLtcFps(tl.fps)
+  const effectiveLtcFps = resolveLtcFps(tl.fps, project.settings.ltc.fps)
+  const fps = ltcActive ? effectiveLtcFps : tl.fps
+  const dropFrame = ltcActive ? ltcDropFrame : undefined
   const [ipText, setIpText] = useState(out.ip)
   const [ipErr, setIpErr] = useState<string | null>(null)
-  const [startTcText, setStartTcText] = useState(() => formatTc(tl.startTime, tl.fps))
+  const [startTcText, setStartTcText] = useState(() => formatTc(tl.startTime, fps, dropFrame))
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([])
   const [serialPorts, setSerialPorts] = useState<string[]>([])
 
@@ -77,8 +83,8 @@ export function SettingsModal(props: {
   }, [out.ip, settingsOpen])
 
   useEffect(() => {
-    setStartTcText(formatTc(tl.startTime, tl.fps))
-  }, [tl.startTime, tl.fps, settingsOpen])
+    setStartTcText(formatTc(tl.startTime, fps, dropFrame))
+  }, [tl.startTime, fps, dropFrame, settingsOpen])
 
   useEffect(() => {
     if (!settingsOpen) return
@@ -103,10 +109,10 @@ export function SettingsModal(props: {
   }
 
   const applyStartTc = () => {
-    const sec = parseTc(startTcText, tl.fps)
+    const sec = parseTc(startTcText, fps, dropFrame)
     if (sec === null) {
       notify('Timecode không hợp lệ (định dạng hh:mm:ss:ff)', 'warn')
-      setStartTcText(formatTc(tl.startTime, tl.fps))
+      setStartTcText(formatTc(tl.startTime, fps, dropFrame))
       return
     }
     updateTimelineSettings({ startTime: sec })
@@ -743,16 +749,13 @@ export function SettingsModal(props: {
               </div>
             )}
 
-            {tab === 'ltc' && (() => {
-              const ltcMatched = isStandardLtcFps(tl.fps)
-              const effectiveLtcFps = resolveLtcFps(tl.fps, project.settings.ltc.fps)
-              return (
+            {tab === 'ltc' && (
               <div className="space-y-4">
                 <div className="text-[11px] font-semibold tracking-wide text-muted uppercase">
                   Đồng bộ Timecode &amp; LTC Audio
                 </div>
 
-                {!ltcMatched && (
+                {!ltcActive && !ltcMatched && (
                   <div className="flex items-start gap-2 rounded-xl bg-warn/10 px-3 py-2 text-[11px] text-warn shadow-[inset_0_0_0_1px_rgba(255,203,114,0.35)]">
                     <AlertTriangle size={14} className="mt-0.5 shrink-0" />
                     <div>
@@ -771,7 +774,8 @@ export function SettingsModal(props: {
                     <KilnSelect
                       ariaLabel="Tốc độ khung hình Timeline"
                       tabular
-                      value={String(tl.fps)}
+                      disabled={ltcActive}
+                      value={String(fps)}
                       options={FPS_OPTIONS.map((f) => ({
                         value: String(f),
                         label: `${f} fps`,
@@ -779,6 +783,9 @@ export function SettingsModal(props: {
                       }))}
                       onChange={(val) => updateTimelineSettings({ fps: Number(val) as Fps })}
                     />
+                    {ltcActive && (
+                      <span className="kiln-readout text-[11px]">Đang link theo LTC: {fps} fps</span>
+                    )}
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <span className="text-[11px] leading-4 text-[#C2B3A4]">Tốc độ khung LTC In (chuẩn SMPTE)</span>
@@ -789,19 +796,22 @@ export function SettingsModal(props: {
                       options={[
                         {
                           value: 'auto',
-                          label: ltcMatched ? 'Theo Timeline' : 'Giữ rate riêng',
-                          badge: `${effectiveLtcFps} fps`,
+                          label: ltcActive || ltcMatched ? 'Theo Timeline' : 'Giữ rate riêng',
+                          badge: `${resolveLtcFps(tl.fps)} fps`,
                         },
                         ...LTC_FPS_OPTIONS.map((f) => ({
                           value: String(f),
                           label: `${f} fps`,
-                          badge: f === 29.97 ? 'Drop Frame' : undefined,
+                          badge: f === 29.97 ? 'DF / NDF' : undefined,
                         })),
                       ]}
                       onChange={(val) =>
                         updateLtcSettings({ fps: val === 'auto' ? undefined : (Number(val) as LtcFps) })
                       }
                     />
+                    {ltcActive && !ltcMatched && (
+                      <span className="kiln-readout text-[11px]">Theo Timeline dùng 30 fps khi FPS đã lưu là {tl.fps}.</span>
+                    )}
                   </div>
                   <label className="flex flex-col gap-1.5">
                     <span className="text-[11px] leading-4 text-[#C2B3A4]">Timecode bắt đầu (hh:mm:ss:ff)</span>
@@ -870,8 +880,7 @@ export function SettingsModal(props: {
                   </label>
                 </div>
               </div>
-              )
-            })()}
+            )}
 
             {tab === 'notifications' && (
               <div className="space-y-4">

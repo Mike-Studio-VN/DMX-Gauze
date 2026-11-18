@@ -123,15 +123,22 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     updateTimelineSettings,
     setSettingsOpen,
     setPlayheadTime,
+    ltcActive,
+    setLtcActive,
+    ltcDropFrame,
+    setLtcDropFrame,
     sendCommand,
     holdTimelineTargets,
     notify,
   } = useAppStore()
 
-  const fps = project.settings.timeline.fps
+  const storedFps = project.settings.timeline.fps
   const dmxHz = project.settings.output.sendHz
-  const ltcMatched = isStandardLtcFps(fps)
-  const effectiveLtcFps = resolveLtcFps(fps, project.settings.ltc.fps)
+  const ltcMatched = isStandardLtcFps(storedFps)
+  const effectiveLtcFps = resolveLtcFps(storedFps, project.settings.ltc.fps)
+  const fps = ltcActive ? effectiveLtcFps : storedFps
+  const dropFrame = ltcActive ? ltcDropFrame : undefined
+  const formatTimelineTc = (sec: number) => formatTc(sec, fps, dropFrame)
   const clips = useMemo(() => project.clips ?? [], [project.clips])
   const [time, setTime] = useState(project.settings.timeline.startTime)
 
@@ -139,7 +146,6 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     setPlayheadTime(time)
   }, [time, setPlayheadTime])
   const [playing, setPlaying] = useState(false)
-  const [ltcActive, setLtcActive] = useState(false)
   const transportRef = useRef<'idle' | 'local' | 'ltc'>('idle')
   const [ltcStatus, setLtcStatus] = useState<'off' | 'lock' | 'freewheel' | 'lost'>('off')
   const [snapToFrame, setSnapToFrame] = useState(true)
@@ -208,7 +214,8 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   useEffect(() => () => {
     marqueeCleanupRef.current?.()
     scrubCleanupRef.current?.()
-  }, [])
+    setLtcActive(false)
+  }, [setLtcActive])
 
   useEffect(() => {
     if (snapshot?.locked) {
@@ -253,6 +260,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     let stream: MediaStream | null = null
     const clock = ltcClockRef.current
     planner.reset()
+    setLtcDropFrame(undefined)
 
     const startLtc = async () => {
       try {
@@ -276,6 +284,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
             const { timeSec, discontinuity } = clock.onDecodedFrame(rawSec, nowMs)
             const sec = clamp(timeSec, 0, maxTime)
             if (discontinuity) planner.reset()
+            if (effectiveLtcFps === 29.97) setLtcDropFrame(f.df)
             setLtcStatus('lock')
             timeRef.current = sec
             setTime(sec)
@@ -305,7 +314,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       stream?.getTracks().forEach((t) => t.stop())
       void ctx?.close()
     }
-  }, [ltcActive, effectiveLtcFps, maxTime, project.settings.ltc, notify, holdTimelineTargets])
+  }, [ltcActive, effectiveLtcFps, maxTime, project.settings.ltc, notify, holdTimelineTargets, setLtcDropFrame])
 
   const freewheelFrames = project.settings.ltc.freewheelFrames
   useEffect(() => {
@@ -356,7 +365,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       setEditingHead(false)
       return
     }
-    const parsed = parseTimelineSecondsInput(headInput, fps)
+    const parsed = parseTimelineSecondsInput(headInput, fps, dropFrame)
     if (parsed !== null) {
       const targetSec = snapToFrame ? snapTimeToFps(parsed, fps) : Number(parsed.toFixed(4))
       const clampedT = clamp(targetSec, 0, maxTime)
@@ -463,7 +472,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
           const sign = appliedDelta >= 0 ? '+' : ''
           updateTooltip(
             ev,
-            `${formatTc(nextS, fps)} · ${nextS.toFixed(2)}s → ${(nextS + origDur).toFixed(2)}s (${sign}${appliedDelta.toFixed(2)}s)`,
+            `${formatTimelineTc(nextS)} · ${nextS.toFixed(2)}s → ${(nextS + origDur).toFixed(2)}s (${sign}${appliedDelta.toFixed(2)}s)`,
           )
         }
         return
@@ -472,7 +481,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       if (mode === 'move') {
         const nextStart = resolveClipStartNoOverlap(sameModClips, origDur, origStart + dxSec, clip.id, activeSnapFps)
         updateClip(clip.id, { startTime: nextStart }, `clip-move-${clip.id}`)
-        updateTooltip(ev, `${formatTc(nextStart, fps)} · ${nextStart.toFixed(2)}s → ${(nextStart + origDur).toFixed(2)}s`)
+        updateTooltip(ev, `${formatTimelineTc(nextStart)} · ${nextStart.toFixed(2)}s → ${(nextStart + origDur).toFixed(2)}s`)
       } else if (mode === 'trim-right') {
         const bounds = resolveClipBoundsNoOverlap(sameModClips, clip)
         const maxDur = Number.isFinite(bounds.maxEnd)
@@ -486,7 +495,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
         updateClip(clip.id, { duration: nextDur, keyframes: nextKfs }, `clip-trim-${clip.id}`)
         updateTooltip(
           ev,
-          `${formatTc(origStart + nextDur, fps)} · ${origStart.toFixed(2)}s → ${(origStart + nextDur).toFixed(2)}s (${nextDur.toFixed(2)}s)`,
+          `${formatTimelineTc(origStart + nextDur)} · ${origStart.toFixed(2)}s → ${(origStart + nextDur).toFixed(2)}s (${nextDur.toFixed(2)}s)`,
         )
       } else {
         const bounds = resolveClipBoundsNoOverlap(sameModClips, clip)
@@ -502,7 +511,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
         updateClip(clip.id, { startTime: nextStart, duration: nextDur, keyframes: nextKfs }, `clip-trim-${clip.id}`)
         updateTooltip(
           ev,
-          `${formatTc(nextStart, fps)} · ${nextStart.toFixed(2)}s → ${(nextStart + nextDur).toFixed(2)}s (${nextDur.toFixed(2)}s)`,
+          `${formatTimelineTc(nextStart)} · ${nextStart.toFixed(2)}s → ${(nextStart + nextDur).toFixed(2)}s (${nextDur.toFixed(2)}s)`,
         )
       }
     }
@@ -847,12 +856,6 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
               if (ltcActive) {
                 disableLtc()
               } else {
-                if (!ltcMatched) {
-                  notify(
-                    `Timeline ${fps} fps vượt chuẩn LTC (24/25/29.97/30). LTC đang giữ rate riêng ${effectiveLtcFps} fps.`,
-                    'warn',
-                  )
-                }
                 transportRef.current = 'ltc'
                 scrubCleanupRef.current?.()
                 setEditingHead(false)
@@ -865,7 +868,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
               !ltcActive
                 ? ltcMatched
                   ? 'Bấm để đồng bộ với bộ Timecode ngoài (LTC)'
-                  : `Bấm để đồng bộ LTC (cảnh báo: Timeline ${fps} fps vượt chuẩn LTC — giữ rate riêng ${effectiveLtcFps} fps)`
+                  : `Bấm để đồng bộ LTC (Timeline ${storedFps} fps sẽ theo LTC ${effectiveLtcFps} fps)`
                 : isLtcLive
                   ? 'Đang kết nối bộ Timecode ngoài (Live) · Bấm để ngắt đồng bộ'
                   : 'Không kết nối được bộ Timecode ngoài · Bấm để tắt đồng bộ'
@@ -896,11 +899,11 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
             )}
           </button>
 
-          {!ltcMatched && (
+          {!ltcActive && !ltcMatched && (
             <button
               type="button"
               onClick={() => setSettingsOpen(true, 'ltc')}
-              title={`LTC chuẩn chỉ 24/25/29.97/30 fps (không hỗ trợ ${fps} fps). LTC giữ rate riêng ${effectiveLtcFps} fps.`}
+              title={`LTC chuẩn chỉ 24/25/29.97/30 fps (không hỗ trợ ${storedFps} fps). Khi bật, Timeline sẽ theo LTC ${effectiveLtcFps} fps.`}
               className="inline-flex h-5 cursor-pointer items-center gap-1 rounded-full bg-warn/15 px-2 text-[10px] font-medium text-warn shadow-[inset_0_0_0_1px_rgba(255,203,114,0.35)]"
             >
               <AlertTriangle size={10} />
@@ -908,7 +911,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
             </button>
           )}
 
-          <output className="kiln-readout">{formatTc(time, fps)}</output>
+          <output className="kiln-readout">{formatTimelineTc(time)}</output>
 
           <button
             type="button"
@@ -986,9 +989,9 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
         </div>
 
         <div className="timeline-position">
-          <span>{formatTc(time, fps)}</span>
+          <span>{formatTimelineTc(time)}</span>
           <span className="text-muted">/</span>
-          <span>{formatTc(sequenceEnd, fps)}</span>
+          <span>{formatTimelineTc(sequenceEnd)}</span>
         </div>
 
         <div className="timeline-tools">
@@ -1049,8 +1052,10 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
           <select
             aria-label="Tốc độ khung hình"
             value={fps}
+            disabled={ltcActive}
+            title={ltcActive ? `Đang link theo LTC: ${fps} fps` : undefined}
             onChange={(e) => updateTimelineSettings({ fps: Number(e.target.value) as Fps })}
-            className="timeline-fps kiln-field h-7 px-2 text-[11px]"
+            className="timeline-fps kiln-field h-7 px-2 text-[11px] disabled:cursor-default"
           >
             {FPS_OPTIONS.map((f) => (
               <option key={f} value={f}>
