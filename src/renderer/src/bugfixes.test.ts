@@ -237,10 +237,9 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     expect(env.writtenChunks[1]).toContain('Third Save Via Handle');
     expect(env.getWritableCloseCalls()).toBe(2);
 
-    // Write failure must report { saved: false } instead of lying.
+    // Write failure must propagate so the store can show an error toast (not resolve quietly).
     env.setPickerError(new Error('Disk write failure'));
-    const failedWrite = await bridge.saveProjectFile(project);
-    expect(failedWrite.saved).toBe(false);
+    await expect(bridge.saveProjectFile(project)).rejects.toThrow('Disk write failure');
     env.setPickerError(null);
 
     // AbortError in saveProjectAs must return { saved: false } while keeping or clearing active filename.

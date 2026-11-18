@@ -138,13 +138,10 @@ export function createWebBridge(): GauzeBridge {
       const validated = normalizeProject(project)
       const json = JSON.stringify(validated, null, 2)
       if (webFileHandle) {
-        try {
-          await writeToHandle(webFileHandle, json)
-          persistLocal(json)
-          return { saved: true, filePath: webFileName }
-        } catch {
-          return { saved: false, filePath: webFileName }
-        }
+        // Lỗi ghi (quyền, đĩa đầy...) phải nổi lên để store hiện toast lỗi, không nuốt thành saved:false.
+        await writeToHandle(webFileHandle, json)
+        persistLocal(json)
+        return { saved: true, filePath: webFileName }
       }
       persistLocal(json)
       const targetName = webFileName ?? 'dmx-gauze-project.json'
