@@ -26,6 +26,7 @@ if (process.argv.includes('--gauze-startup')) {
   const startupBridge: StartupBridge = {
     hasRecentProject: () => ipcRenderer.invoke('startup:has-recent'),
     chooseProject: (choice) => ipcRenderer.invoke('startup:choose', choice),
+    windowAction: (action) => ipcRenderer.invoke('startup:window-action', action),
   }
   contextBridge.exposeInMainWorld('gauzeStartup', startupBridge)
 } else {

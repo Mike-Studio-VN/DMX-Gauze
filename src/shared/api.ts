@@ -38,7 +38,10 @@ export interface GauzeBridge {
 
 export type StartupProjectChoice = 'recent' | 'new' | 'open'
 
+export type StartupWindowAction = 'minimize' | 'toggle-maximize' | 'close'
+
 export interface StartupBridge {
   hasRecentProject(): Promise<boolean>
   chooseProject(choice: StartupProjectChoice): Promise<boolean>
+  windowAction(action: StartupWindowAction): Promise<void>
 }

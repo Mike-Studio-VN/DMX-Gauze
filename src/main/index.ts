@@ -74,14 +74,14 @@ function createStartupWindow(): void {
   if (startup || mainWin) return
   const icon = resolveAppIcon()
   const win = new BrowserWindow({
-    width: 410,
-    height: 420,
-    useContentSize: true,
-    resizable: false,
-    maximizable: false,
+    width: 504,
+    height: 284,
+    minWidth: 480,
+    minHeight: 270,
+    frame: false,
     fullscreenable: false,
     show: false,
-    backgroundColor: '#0a0706',
+    backgroundColor: '#171312',
     title: 'DMX Gauze',
     ...(icon ? { icon } : {}),
     autoHideMenuBar: true,
@@ -158,6 +158,23 @@ ipcMain.handle('app:info', (): AppInfo => ({
 ipcMain.handle('startup:has-recent', async ({ sender }) => {
   const picker = startup
   return picker?.win.webContents === sender && (await picker.recent).hasAutosave
+})
+ipcMain.handle('startup:window-action', ({ sender }, action: unknown) => {
+  const win = startup?.win
+  if (win?.webContents !== sender) return
+
+  switch (action) {
+    case 'minimize':
+      win.minimize()
+      break
+    case 'toggle-maximize':
+      if (win.isMaximized()) win.unmaximize()
+      else win.maximize()
+      break
+    case 'close':
+      win.close()
+      break
+  }
 })
 ipcMain.handle('startup:choose', async ({ sender }, choice: unknown) => {
   const picker = startup

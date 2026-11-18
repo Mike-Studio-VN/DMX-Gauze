@@ -12,6 +12,9 @@ interface TestWindow {
   emit(event: string): void
   close(): void
   show: ReturnType<typeof vi.fn>
+  minimize: ReturnType<typeof vi.fn>
+  maximize: ReturnType<typeof vi.fn>
+  unmaximize: ReturnType<typeof vi.fn>
 }
 
 type IpcHandler = (event: { sender: object }, ...args: unknown[]) => unknown
@@ -30,6 +33,11 @@ vi.mock('electron', async () => {
   class BrowserWindow extends EventEmitter {
     webContents = { setWindowOpenHandler: vi.fn() }
     show = vi.fn()
+    minimize = vi.fn()
+    maximize = vi.fn(() => { this.maximized = true })
+    unmaximize = vi.fn(() => { this.maximized = false })
+    isMaximized = () => this.maximized
+    private maximized = false
     loadFile = vi.fn(async () => {})
     loadURL = vi.fn(async () => {})
     isDestroyed = () => this.destroyed
@@ -113,6 +121,25 @@ describe('Electron project choice at startup', () => {
     expect(state.startTransport).toHaveBeenCalledOnce()
     editor.close()
     expect(state.stopTransport).toHaveBeenCalledOnce()
+  })
+
+  it('routes native window controls only to the startup picker', async () => {
+    await import('./index')
+    const [picker] = state.windows
+    expect(picker.options.frame).toBe(false)
+    const windowAction = state.handlers.get('startup:window-action')!
+    windowAction({ sender: {} }, 'minimize')
+    expect(picker.minimize).not.toHaveBeenCalled()
+
+    invoke(picker, 'startup:window-action', 'minimize')
+    invoke(picker, 'startup:window-action', 'toggle-maximize')
+    invoke(picker, 'startup:window-action', 'toggle-maximize')
+    expect(picker.minimize).toHaveBeenCalledOnce()
+    expect(picker.maximize).toHaveBeenCalledOnce()
+    expect(picker.unmaximize).toHaveBeenCalledOnce()
+    invoke(picker, 'startup:window-action', 'close')
+    await expect(invoke(picker, 'startup:has-recent')).resolves.toBe(false)
+    expect(state.startTransport).not.toHaveBeenCalled()
   })
 
   it('uses the validated autosave when choosing the recent project', async () => {
