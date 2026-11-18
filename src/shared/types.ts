@@ -103,6 +103,10 @@ export interface ClipKeyframe {
   offset: number
   /** Chiều cao thả màn (m). */
   height: number
+  /** Tốc độ đoạn đi từ điểm này tới điểm kế: 'auto' (mặc định, tính từ quãng/thời gian) hoặc 'manual'. */
+  speedMode?: 'auto' | 'manual'
+  /** Tốc độ nhập tay (cm/s) khi speedMode = 'manual'; kẹp [1, maxSpeedCms] lúc phát. */
+  manualSpeedCms?: number
 }
 
 export interface TimelineClip {
