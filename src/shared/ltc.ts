@@ -110,6 +110,11 @@ export interface LtcClockPollResult {
   shouldStop: boolean
 }
 
+export interface LtcDecodedTime {
+  timeSec: number
+  discontinuity: boolean
+}
+
 /**
  * Bộ theo dõi đồng hồ LTC kèm nội suy chạy trớn (freewheel) có giới hạn trong `freewheelFrames`
  * và chuyển trạng thái `lost` dứt khoát khi quá ngưỡng.
@@ -117,23 +122,30 @@ export interface LtcClockPollResult {
 export class LtcClockTracker {
   private lastFrameAtMs: number | null = null
   private lastSec = 0
-  private lastExtrapolatedSec = 0
+  private lastPublishedSec = 0
   private stopDispatchedOnLoss = false
 
   reset(): void {
     this.lastFrameAtMs = null
     this.lastSec = 0
-    this.lastExtrapolatedSec = 0
+    this.lastPublishedSec = 0
     this.stopDispatchedOnLoss = false
   }
 
-  onDecodedFrame(sec: number, nowMs: number): number {
-    const safeSec = Math.max(0, sec)
+  onDecodedFrame(sec: number, nowMs: number): LtcDecodedTime {
+    // Only consecutive source timestamps can identify a seek. The published
+    // clock may already be ahead of a late, but sequential, audio frame.
+    const discontinuity = this.lastFrameAtMs !== null && (sec < this.lastSec || sec - this.lastSec > 0.25)
     this.lastFrameAtMs = nowMs
-    this.lastSec = safeSec
-    this.lastExtrapolatedSec = safeSec
+    this.lastSec = sec
+    if (discontinuity) this.lastPublishedSec = Math.max(0, sec)
     this.stopDispatchedOnLoss = false
-    return safeSec
+    return { timeSec: this.advanceTo(sec), discontinuity }
+  }
+
+  private advanceTo(sec: number): number {
+    this.lastPublishedSec = Math.max(this.lastPublishedSec, sec)
+    return this.lastPublishedSec
   }
 
   poll(nowMs: number, fps: number, freewheelFrames: number): LtcClockPollResult {
@@ -144,19 +156,15 @@ export class LtcClockTracker {
     const fwSec = Math.max(0, freewheelFrames) / Math.max(1, fps)
     const fwMs = fwSec * 1000
 
-    if (gapMs <= 80) {
-      return { status: 'lock', timeSec: this.lastSec, shouldFollow: false, shouldStop: false }
-    }
-
-    if (fwMs > 0 && gapMs <= fwMs) {
-      const nextSec = this.lastSec + gapMs / 1000
-      this.lastExtrapolatedSec = nextSec
-      return { status: 'freewheel', timeSec: nextSec, shouldFollow: true, shouldStop: false }
+    const lockGraceMs = 80
+    if (gapMs <= Math.max(lockGraceMs, fwMs)) {
+      const status = gapMs <= lockGraceMs ? 'lock' : 'freewheel'
+      const timeSec = this.advanceTo(this.lastSec + gapMs / 1000)
+      return { status, timeSec, shouldFollow: true, shouldStop: false }
     }
 
     const boundedEndSec = this.lastSec + fwSec
-    const finalSec = fwMs > 0 && this.lastExtrapolatedSec < boundedEndSec ? boundedEndSec : null
-    if (finalSec !== null) this.lastExtrapolatedSec = finalSec
+    const finalSec = fwMs > 0 && this.lastPublishedSec < boundedEndSec ? this.advanceTo(boundedEndSec) : null
     const shouldStop = !this.stopDispatchedOnLoss
     this.stopDispatchedOnLoss = true
     return {

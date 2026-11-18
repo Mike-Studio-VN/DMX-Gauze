@@ -174,7 +174,6 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   const playbackLastTickRef = useRef(0)
   const linearPlannerRef = useRef(new LinearFollowPlanner())
   const ltcClockRef = useRef(new LtcClockTracker())
-  const ltcSampleRef = useRef<{ sec: number; atMs: number } | null>(null)
 
   const maxTime = useMemo(
     () => Math.max(20, ...clips.map((c) => c.startTime + c.duration + 4), ...project.keys.map((k) => k.time + 4)),
@@ -273,10 +272,9 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
             const nowMs = performance.now()
             const ltcRate = realFps(effectiveLtcFps)
             const rawSec = tcToSeconds(f, effectiveLtcFps) + project.settings.ltc.offsetFrames / ltcRate
-            const sec = clamp(clock.onDecodedFrame(rawSec, nowMs), 0, maxTime)
-            const previous = ltcSampleRef.current
-            if (previous && Math.abs(sec - previous.sec) > 0.25) planner.reset()
-            ltcSampleRef.current = { sec, atMs: nowMs }
+            const { timeSec, discontinuity } = clock.onDecodedFrame(rawSec, nowMs)
+            const sec = clamp(timeSec, 0, maxTime)
+            if (discontinuity) planner.reset()
             setLtcStatus('lock')
             timeRef.current = sec
             setTime(sec)
@@ -302,7 +300,6 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       stopped = true
       clock.reset()
       planner.reset()
-      ltcSampleRef.current = null
       holdTimelineTargets()
       stream?.getTracks().forEach((t) => t.stop())
       void ctx?.close()
@@ -314,14 +311,9 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     if (!ltcActive) return
     return startDmxFrameLoop(dmxHz, (now) => {
       if (transportRef.current !== 'ltc') return
-      const sample = ltcSampleRef.current
-      if (!sample) return
       const res = ltcClockRef.current.poll(now, realFps(effectiveLtcFps), freewheelFrames)
       setLtcStatus(res.status)
-      if (res.status === 'lock') {
-        const sec = sample.sec + Math.max(0, now - sample.atMs) / 1000
-        dispatchFollowRef.current(Math.min(sec, maxTime), 0.06)
-      } else if (res.timeSec !== null) {
+      if (res.timeSec !== null) {
         const clampedSec = clamp(res.timeSec, 0, maxTime)
         timeRef.current = clampedSec
         setTime(clampedSec)
