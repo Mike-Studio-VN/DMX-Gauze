@@ -856,7 +856,7 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
     expect(updateClipStartTime(clip, 5, { minStart: 1.2, maxEnd: 7.5 })).toEqual({ startTime: 3.5 })
   })
 
-  it('hỗ trợ timeline 40/50/60 fps: timecode, snap, kéo moment, LTC giữ rate riêng, migrate Art-Net+5568 -> 6454 và DMX giữ 25 Hz', async () => {
+  it('hỗ trợ timeline 40/50/60 fps: timecode, snap, kéo moment, LTC giữ rate riêng, migrate Art-Net+5568 -> 6454', async () => {
     const {
       FPS_OPTIONS,
       LTC_FPS_OPTIONS,
@@ -874,11 +874,9 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
     } = await import('./timeline')
     const { normalizeProject } = await import('./preset')
     const { resolveOutputSettingsPatch } = await import('./protocols')
-    const { DMX_TRANSPORT_HZ } = await import('./core')
 
     expect(FPS_OPTIONS).toEqual([24, 25, 29.97, 30, 40, 50, 60])
     expect(LTC_FPS_OPTIONS).toEqual([24, 25, 29.97, 30])
-    expect(DMX_TRANSPORT_HZ).toBe(25)
 
     // Timecode & snap ở 40, 50, 60 fps
     expect(formatTc(1.025, 40)).toBe('00:00:01:01')

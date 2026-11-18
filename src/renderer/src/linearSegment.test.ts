@@ -21,7 +21,7 @@ function makeMod(id: string, maxSpeedCms = 120): ModuleCfg {
   };
 }
 
-describe('Linear segment 25Hz follow & DMX transport integration', () => {
+describe('Linear segment follow & DMX transport integration', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -30,9 +30,9 @@ describe('Linear segment 25Hz follow & DMX transport integration', () => {
     vi.useRealTimers();
   });
 
-  it('sends exactly ONE move command per linear P segment while GauzeCore emits DMX frames continuously at 25Hz (40ms)', () => {
+  it.each([25, 60])('sends one move per linear segment while the transport runs at %i FPS', (sendHz) => {
     const project = createDefaultProject();
-    expect(project.settings.output.sendHz).toBe(25);
+    project.settings.output.sendHz = sendHz;
 
     const mod = makeMod('m-lin', 100);
     const clip: TimelineClip = {
@@ -66,7 +66,7 @@ describe('Linear segment 25Hz follow & DMX transport integration', () => {
     );
     core.configure({
       modules: [mod],
-      output: project.settings.output, // default 25Hz -> 40ms interval
+      output: project.settings.output,
       lockValue: 77,
     });
     core.command({ type: 'lock', locked: false });
@@ -75,9 +75,9 @@ describe('Linear segment 25Hz follow & DMX transport integration', () => {
     const planner = new LinearFollowPlanner();
     const dispatchedMoves: Array<{ t: number; target: unknown; speed: unknown }> = [];
 
-    // Step 25Hz ticks across 0s..9s (pre-roll 0..2, seg1 2..5, flat 5..6, seg3 6..8, post-roll 8..9)
-    for (let step = 0; step <= 225; step += 1) {
-      const t = Number((step * 0.04).toFixed(2));
+    // Follow nine seconds of timeline at the selected transport rate.
+    for (let step = 0; step < 9 * sendHz; step += 1) {
+      const t = step / sendHz;
       const snap = core.snapshot();
       const { commands, warnings } = planTimelineFollow([mod], [clip], [], t, 0.06, snap, planner);
       expect(warnings).toEqual([]);
@@ -87,12 +87,13 @@ describe('Linear segment 25Hz follow & DMX transport integration', () => {
         }
         core.command(cmd);
       }
-      nowMs += 40;
-      vi.advanceTimersByTime(40);
+      const nextMs = Math.ceil(((step + 1) * 1000) / sendHz);
+      const elapsedMs = nextMs - nowMs;
+      nowMs = nextMs;
+      vi.advanceTimersByTime(elapsedMs);
     }
 
-    // 25Hz transport emitted ~225 continuous DMX frames independently of segment command count!
-    expect(driverSentCount).toBeGreaterThanOrEqual(220);
+    expect(driverSentCount).toBe(9 * sendHz);
 
     // Exactly ONE move at P1->P2 (t=2s, target=1.5, ~50 cm/s) and ONE move at P3->P4 (t=6s, target=0.5, ~50 cm/s);
     // flat segment P2->P3 and pre/post-roll emit zero redundant commands.
@@ -261,40 +262,4 @@ describe('Linear segment 25Hz follow & DMX transport integration', () => {
     expect(linearMoves).toEqual([2]); // exactly one command at segment entry
   });
 
-  it('legacy saved projects with sendHz=40 still emit DMX frames strictly at 25Hz (40ms cadence, not 25ms)', () => {
-    const legacyProject = createDefaultProject();
-    legacyProject.settings.output.sendHz = 40; // legacy config from earlier saved project
-
-    let nowMs = 0;
-    let sentFrames = 0;
-    const core = new GauzeCore(
-      (_cfg, ev) => {
-        const d = new MockDriver(ev);
-        const origSend = d.send.bind(d);
-        d.send = (net, subUni, data) => {
-          sentFrames += 1;
-          origSend(net, subUni, data);
-        };
-        return d;
-      },
-      () => nowMs,
-    );
-
-    core.configure({
-      modules: [makeMod('m-legacy', 100)],
-      output: legacyProject.settings.output,
-      lockValue: legacyProject.settings.lockValue,
-    });
-    core.start();
-
-    // Advance 1040ms in 40ms ticks keeping core clock in sync: 25Hz yields 25 frames in first 1000ms (not 40!).
-    for (let i = 0; i < 26; i += 1) {
-      nowMs += 40;
-      vi.advanceTimersByTime(40);
-    }
-    expect(sentFrames).toBe(26);
-    expect(core.snapshot().status.sendHz).toBe(25);
-
-    core.stop();
-  });
 });

@@ -1,6 +1,7 @@
 import { portAddress } from './artnet'
 import { ARTNET_PORT, CH, CHANNELS_PER_MODULE, DMX_UNIVERSE_SIZE } from './dmx'
 import { cmsToCh3, ch3ToCms, clamp, durationToCh3, posToDmx } from './convert'
+import { DEFAULT_DMX_TRANSPORT_HZ, normalizeDmxTransportRate, startDmxFrameLoop } from './dmxTransport'
 import type { DriverFactory, DriverEvents, OutputDriver } from './drivers'
 import type {
   Command,
@@ -16,7 +17,6 @@ import type {
 
 const NODE_TIMEOUT_MS = 6000
 const POLL_EVERY_MS = 2500
-export const DMX_TRANSPORT_HZ = 25
 
 function limits(m: ModuleCfg): [number, number] {
   const hi = Math.min(m.maxHeight, m.length)
@@ -43,7 +43,8 @@ export class GauzeCore {
   private rateWindowStart = 0
   private measuredHz = 0
   private frame = new Uint8Array(DMX_UNIVERSE_SIZE)
-  private timer: ReturnType<typeof setInterval> | null = null
+  private sendHz: number = DEFAULT_DMX_TRANSPORT_HZ
+  private stopFrameLoop: (() => void) | null = null
   private lastTick = 0
   private lastPoll = 0
   private flushLen = 2
@@ -77,13 +78,26 @@ export class GauzeCore {
       const [lo, hi] = limits(this.modules.get(id)!)
       st.target = clamp(st.target, lo, hi)
     }
-    const key = JSON.stringify(cfg.output)
+    const { sendHz, ...driverSettings } = cfg.output
+    const key = JSON.stringify(driverSettings)
     if (key !== this.driverKey) {
       this.restartDriver(cfg.output, key, prevUsed, prevRoute)
     } else {
       this.flushLen = Math.max(this.flushLen, prevUsed)
     }
     this.buildFrame()
+
+    const nextHz = normalizeDmxTransportRate(sendHz)
+    if (nextHz !== this.sendHz) {
+      this.sendHz = nextHz
+      this.framesSent = 0
+      this.measuredHz = 0
+      this.rateWindowStart = this.now()
+      if (this.stopFrameLoop) {
+        this.stopFrameLoop()
+        this.stopFrameLoop = startDmxFrameLoop(this.sendHz, () => this.tick())
+      }
+    }
   }
 
   private flushZeroRoute(driver: OutputDriver | null, route: { net: number; subUni: number } | null, len: number): void {
@@ -128,15 +142,17 @@ export class GauzeCore {
   }
 
   start(): void {
-    if (this.timer) return
+    if (this.stopFrameLoop) return
     this.lastTick = this.now()
-    // Phát frame DMX cố định ở 25 Hz (40 ms/frame), kể cả khi mở file dự án cũ từng lưu sendHz=40.
-    this.timer = setInterval(() => this.tick(), Math.round(1000 / DMX_TRANSPORT_HZ))
+    this.rateWindowStart = this.lastTick
+    this.framesSent = 0
+    this.measuredHz = 0
+    this.stopFrameLoop = startDmxFrameLoop(this.sendHz, () => this.tick())
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer)
-    this.timer = null
+    this.stopFrameLoop?.()
+    this.stopFrameLoop = null
     const flushTargetLen = Math.max(this.usedLength(), this.flushLen)
     const route =
       this.lastSentRoute ??
@@ -152,14 +168,6 @@ export class GauzeCore {
     this.driverKey = ''
     this.lastSentRoute = null
     this.flushLen = 2
-  }
-
-  /** Đổi tần số gửi khi đang chạy. */
-  restartTimer(): void {
-    if (!this.timer) return
-    clearInterval(this.timer)
-    this.timer = null
-    this.start()
   }
 
   pollNow(): void {
@@ -255,7 +263,7 @@ export class GauzeCore {
     this.buildFrame()
     this.sendFrame(now)
     if (now - this.lastPoll >= POLL_EVERY_MS) this.pollNow()
-    // Mỗi tick (đã cố định 25 Hz) phát đúng một snapshot, không throttle thêm để tick bù không bị bỏ.
+    // Mỗi tick phát đúng một snapshot.
     const s = this.snapshot()
     for (const l of this.listeners) l(s)
   }

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { clamp } from '@shared/convert'
 import { addressRange } from '@shared/dmx'
+import { startDmxFrameLoop } from '@shared/dmxTransport'
 import { LtcClockTracker, LtcDecoder } from '@shared/ltc'
 import {
   FPS_OPTIONS,
@@ -126,6 +127,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   } = useAppStore()
 
   const fps = project.settings.timeline.fps
+  const dmxHz = project.settings.output.sendHz
   const ltcMatched = isStandardLtcFps(fps)
   const effectiveLtcFps = resolveLtcFps(fps, project.settings.ltc.fps)
   const clips = useMemo(() => project.clips ?? [], [project.clips])
@@ -166,9 +168,10 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   const sendCommandRef = useRef(sendCommand)
   sendCommandRef.current = sendCommand
   const lastScrubSendRef = useRef(0)
-  const lastFollowSendRef = useRef(0)
+  const playbackLastTickRef = useRef(0)
   const linearPlannerRef = useRef(new LinearFollowPlanner())
-  const prevLtcSecRef = useRef<number | null>(null)
+  const ltcClockRef = useRef(new LtcClockTracker())
+  const ltcSampleRef = useRef<{ sec: number; atMs: number } | null>(null)
 
   const maxTime = useMemo(
     () => Math.max(20, ...clips.map((c) => c.startTime + c.duration + 4), ...project.keys.map((k) => k.time + 4)),
@@ -210,39 +213,23 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
 
   useEffect(() => {
     if (!playing || ltcActive) return
-    const planner = linearPlannerRef.current
-    let cancelled = false
-    let raf = 0
-    let last = performance.now()
-    lastFollowSendRef.current = 0
-    planner.reset()
-    const step = (now: number) => {
-      if (cancelled) return
-      const dt = (now - last) / 1000
-      last = now
+    const stopPlayback = startDmxFrameLoop(dmxHz, (now) => {
+      const dt = (now - playbackLastTickRef.current) / 1000
+      playbackLastTickRef.current = now
       const next = Math.min(maxTime, timeRef.current + dt)
       timeRef.current = next
       setTime(next)
-      if (now - lastFollowSendRef.current >= 38) {
-        lastFollowSendRef.current = now
+      if (next >= maxTime) {
+        linearPlannerRef.current.reset()
+        dispatchFollowRef.current(maxTime, 0)
+        stopPlayback()
+        setPlaying(false)
+      } else {
         dispatchFollowRef.current(next, 0.06)
       }
-      if (next >= maxTime) {
-        planner.reset()
-        dispatchFollowRef.current(maxTime, 0)
-        setPlaying(false)
-      } else if (!cancelled) {
-        raf = requestAnimationFrame(step)
-      }
-    }
-    dispatchFollowRef.current(timeRef.current, 0.06)
-    raf = requestAnimationFrame(step)
-    return () => {
-      cancelled = true
-      cancelAnimationFrame(raf)
-      planner.reset()
-    }
-  }, [playing, ltcActive, maxTime])
+    })
+    return stopPlayback
+  }, [playing, ltcActive, maxTime, dmxHz])
 
   useEffect(() => {
     if (!ltcActive) {
@@ -253,10 +240,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     let stopped = false
     let ctx: AudioContext | null = null
     let stream: MediaStream | null = null
-    let hasDecoded = false
-    const clock = new LtcClockTracker()
-    lastFollowSendRef.current = 0
-    prevLtcSecRef.current = null
+    const clock = ltcClockRef.current
     planner.reset()
 
     const startLtc = async () => {
@@ -272,22 +256,16 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
           ctx.sampleRate,
           (f) => {
             if (stopped) return
-            hasDecoded = true
             const nowMs = performance.now()
             const ltcRate = realFps(effectiveLtcFps)
             const rawSec = tcToSeconds(f, effectiveLtcFps) + project.settings.ltc.offsetFrames / ltcRate
             const sec = clamp(clock.onDecodedFrame(rawSec, nowMs), 0, maxTime)
-            if (prevLtcSecRef.current !== null && Math.abs(sec - prevLtcSecRef.current) > 0.25) {
-              planner.reset()
-            }
-            prevLtcSecRef.current = sec
+            const previous = ltcSampleRef.current
+            if (previous && Math.abs(sec - previous.sec) > 0.25) planner.reset()
+            ltcSampleRef.current = { sec, atMs: nowMs }
             setLtcStatus('lock')
             timeRef.current = sec
             setTime(sec)
-            if (nowMs - lastFollowSendRef.current >= 35) {
-              lastFollowSendRef.current = nowMs
-              dispatchFollowRef.current(sec, 0.06)
-            }
           },
           nominalFps(effectiveLtcFps),
         )
@@ -305,38 +283,39 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     }
     void startLtc()
 
-    const watch = setInterval(() => {
-      if (stopped || !hasDecoded) return
-      const res = clock.poll(performance.now(), realFps(effectiveLtcFps), project.settings.ltc.freewheelFrames)
-      setLtcStatus(res.status)
-      if (res.timeSec !== null) {
-        const clampedSec = clamp(res.timeSec, 0, maxTime)
-        timeRef.current = clampedSec
-        setTime(clampedSec)
-        if (res.shouldFollow) {
-          const nowMs = performance.now()
-          if (nowMs - lastFollowSendRef.current >= 35) {
-            lastFollowSendRef.current = nowMs
-            dispatchFollowRef.current(clampedSec, 0.06)
-          }
-        }
-      }
-      if (res.shouldStop) {
-        planner.reset()
-        void sendCommandRef.current({ type: 'stop', ids: 'all' })
-      }
-    }, 35)
-
     return () => {
       stopped = true
       clock.reset()
       planner.reset()
-      prevLtcSecRef.current = null
-      clearInterval(watch)
+      ltcSampleRef.current = null
       stream?.getTracks().forEach((t) => t.stop())
       void ctx?.close()
     }
   }, [ltcActive, effectiveLtcFps, maxTime, project.settings.ltc, notify])
+
+  const freewheelFrames = project.settings.ltc.freewheelFrames
+  useEffect(() => {
+    if (!ltcActive) return
+    return startDmxFrameLoop(dmxHz, (now) => {
+      const sample = ltcSampleRef.current
+      if (!sample) return
+      const res = ltcClockRef.current.poll(now, realFps(effectiveLtcFps), freewheelFrames)
+      setLtcStatus(res.status)
+      if (res.status === 'lock') {
+        const sec = sample.sec + Math.max(0, now - sample.atMs) / 1000
+        dispatchFollowRef.current(Math.min(sec, maxTime), 0.06)
+      } else if (res.timeSec !== null) {
+        const clampedSec = clamp(res.timeSec, 0, maxTime)
+        timeRef.current = clampedSec
+        setTime(clampedSec)
+        if (res.shouldFollow) dispatchFollowRef.current(clampedSec, 0.06)
+      }
+      if (res.shouldStop) {
+        linearPlannerRef.current.reset()
+        void sendCommandRef.current({ type: 'stop', ids: 'all' })
+      }
+    })
+  }, [ltcActive, effectiveLtcFps, freewheelFrames, maxTime, dmxHz])
 
   const previewTimelineAt = (t: number) => {
     linearPlannerRef.current.reset()
@@ -350,7 +329,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     setTime(clampedT)
     if (!forcePreview) return
     const now = performance.now()
-    if (now - lastScrubSendRef.current >= 40) {
+    if (now - lastScrubSendRef.current >= 1000 / dmxHz) {
       lastScrubSendRef.current = now
       previewTimelineAt(clampedT)
     }
@@ -818,8 +797,9 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       timeRef.current = project.settings.timeline.startTime
       setTime(project.settings.timeline.startTime)
     }
-    lastFollowSendRef.current = 0
+    playbackLastTickRef.current = performance.now()
     linearPlannerRef.current.reset()
+    dispatchTimelineFollow(timeRef.current, 0.06)
     setPlaying(true)
   }
 

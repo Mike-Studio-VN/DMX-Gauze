@@ -1,5 +1,6 @@
 import { autoAssign } from './addressing'
 import { ARTNET_PORT, DEFAULT_SPEED, DEFAULT_TARGET_IP, H2_MAX_SPEED_CMS, LOCK_VALUE } from './dmx'
+import { DEFAULT_DMX_TRANSPORT_HZ, normalizeDmxTransportRate } from './dmxTransport'
 import { KINET_PORT, SACN_PORT, defaultPortForDriver } from './protocols'
 import { FPS_OPTIONS, LTC_FPS_OPTIONS } from './timecode'
 
@@ -95,7 +96,9 @@ function validateSettings(rawSettings: unknown, legacySchema: boolean): Settings
     net: reqFinite(rawOut.net, 'settings.output.net', 0, 127, true),
     subnet: reqFinite(rawOut.subnet, 'settings.output.subnet', 0, 15, true),
     universe: reqFinite(rawOut.universe, 'settings.output.universe', 0, 15, true),
-    sendHz: reqFinite(rawOut.sendHz, 'settings.output.sendHz', 1, 120),
+    sendHz: normalizeDmxTransportRate(
+      rawOut.sendHz === undefined ? undefined : reqFinite(rawOut.sendHz, 'settings.output.sendHz', 1, 120),
+    ),
   }
   if (rawOut.sacnUniverse !== undefined) {
     output.sacnUniverse = reqFinite(rawOut.sacnUniverse, 'settings.output.sacnUniverse', 1, 63999, true)
@@ -338,7 +341,7 @@ export function createBlankProject(baseSettings?: Settings): Project {
           net: 0,
           subnet: 0,
           universe: 0,
-          sendHz: 25,
+          sendHz: DEFAULT_DMX_TRANSPORT_HZ,
         },
         addressMode: 'auto',
         lockValue: LOCK_VALUE,
@@ -472,7 +475,7 @@ export function createDefaultProject(): Project {
         net: 0,
         subnet: 0,
         universe: 0,
-        sendHz: 25,
+        sendHz: DEFAULT_DMX_TRANSPORT_HZ,
       },
       addressMode: 'auto',
       lockValue: LOCK_VALUE,

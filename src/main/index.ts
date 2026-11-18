@@ -70,7 +70,7 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       sandbox: false,
-      // Timeline phát bằng requestAnimationFrame: không được dừng khi cửa sổ thu nhỏ/bị che.
+      // Tiếp tục phát timeline khi cửa sổ thu nhỏ hoặc bị che.
       backgroundThrottling: false,
     },
   })
@@ -106,7 +106,6 @@ ipcMain.handle('project:save-as', (_e, p: Project) => saveProjectAsDialog(p))
 ipcMain.handle('project:export', (_e, p: Project) => exportProjectDialog(p))
 ipcMain.handle('dmx:configure', (_e, cfg: CoreConfig) => {
   core.configure(cfg)
-  core.restartTimer()
 })
 ipcMain.handle('dmx:command', (_e, cmd: Command) => core.command(cmd))
 ipcMain.handle('dmx:poll', () => core.pollNow())
