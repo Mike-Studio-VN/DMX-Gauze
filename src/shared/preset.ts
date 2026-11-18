@@ -173,6 +173,22 @@ export function defaultModuleTransform(): Transform3D {
   return { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }
 }
 
+export const PROJECT_NAME_MAX = 80
+export const DEFAULT_PROJECT_NAME = 'DMX Gauze Stage'
+
+/** Trim, gộp khoảng trắng, cắt tối đa 80 ký tự; rỗng/không hợp lệ → tên mặc định. */
+export function normalizeProjectName(v: unknown): string {
+  const s = typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, PROJECT_NAME_MAX).trim() : ''
+  return s || DEFAULT_PROJECT_NAME
+}
+
+/** Tên file mặc định cho 'Lưu thành...': bỏ ký tự cấm trong tên file. */
+export function projectFileName(name: string | undefined): string {
+  // eslint-disable-next-line no-control-regex
+  const base = normalizeProjectName(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/[. ]+$/, '')
+  return `${base || DEFAULT_PROJECT_NAME}.json`
+}
+
 export function normalizeProject(raw: unknown): Project {
   if (!isRecord(raw) || raw.version !== 1) failProject('version phải bằng 1')
   if (!Array.isArray(raw.layers)) failProject('thiếu mảng layers')
@@ -311,6 +327,7 @@ export function normalizeProject(raw: unknown): Project {
   return {
     version: 1,
     schemaVersion: CURRENT_SCHEMA_VERSION,
+    name: normalizeProjectName(raw.name),
     layers,
     modules,
     buttons,

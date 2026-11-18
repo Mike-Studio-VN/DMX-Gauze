@@ -3,7 +3,7 @@ import { autoAssign, conflictMap, nextFree, validateAddress } from './addressing
 import { buildArtDmx, buildArtPoll, buildArtPollReply, parseArtPollReply, portAddress } from './artnet'
 import { ch3ToCms, cmsToCh3, dmxToPos, durationToCh3, homeOffsetSteps, posToDmx } from './convert'
 import { LtcDecoder } from './ltc'
-import { createDefaultProject, normalizeProject } from './preset'
+import { DEFAULT_PROJECT_NAME, PROJECT_NAME_MAX, createDefaultProject, normalizeProject, projectFileName } from './preset'
 import { formatTc, parseTc } from './timecode'
 import { analyzeClipSpeeds } from './timeline'
 
@@ -1049,5 +1049,31 @@ describe('project round-trip của trường mới', () => {
     }
     const back = normalizeProject(raw)
     expect(back.modules.every((m) => m.homeOffsetMm === undefined && m.locked === undefined && !('fineTune' in m))).toBe(true)
+  })
+})
+
+describe('tên project', () => {
+  it('round-trip giữ nguyên tên; trim, gộp khoảng trắng, giới hạn độ dài', () => {
+    const project = createDefaultProject()
+    project.name = 'Sân khấu A'
+    const back = normalizeProject(JSON.parse(JSON.stringify(normalizeProject(project))))
+    expect(back.name).toBe('Sân khấu A')
+    expect(back).toEqual(normalizeProject(project))
+    expect(normalizeProject({ ...project, name: '  Màn   1  ' }).name).toBe('Màn 1')
+    expect(normalizeProject({ ...project, name: 'x'.repeat(500) }).name).toHaveLength(PROJECT_NAME_MAX)
+  })
+
+  it('project cũ không có name hoặc name rỗng/sai kiểu → tên mặc định', () => {
+    const raw = JSON.parse(JSON.stringify(createDefaultProject()))
+    delete raw.name
+    expect(normalizeProject(raw).name).toBe(DEFAULT_PROJECT_NAME)
+    expect(normalizeProject({ ...raw, name: '   ' }).name).toBe(DEFAULT_PROJECT_NAME)
+    expect(normalizeProject({ ...raw, name: 42 }).name).toBe(DEFAULT_PROJECT_NAME)
+  })
+
+  it('tên file mặc định cho Save As an toàn', () => {
+    expect(projectFileName('Sân khấu A')).toBe('Sân khấu A.json')
+    expect(projectFileName('a/b:c*?.')).toBe('a_b_c__.json')
+    expect(projectFileName(undefined)).toBe(`${DEFAULT_PROJECT_NAME}.json`)
   })
 })

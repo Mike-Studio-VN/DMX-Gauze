@@ -21,6 +21,8 @@ import {
   createDefaultProject,
   defaultLayerTransform,
   defaultModuleTransform,
+  DEFAULT_PROJECT_NAME,
+  normalizeProjectName,
 } from '@shared/preset'
 import type {
   Command,
@@ -197,6 +199,7 @@ interface AppState {
   duplicateModule: (id: string) => void
   moveModule: (id: string, dir: -1 | 1) => void
   reorderModule: (dragId: string, targetLayerId: string, targetIndexInLayer: number) => void
+  renameProject: (name: string) => void
   updateModule: (id: string, patch: Partial<ModuleCfg>, coalesceKey?: string) => string | null
   updateModulesBatch: (
     ids: string[],
@@ -956,6 +959,12 @@ export const useAppStore = create<AppState>((set, get) => {
           },
         },
       )
+    },
+
+    renameProject(name) {
+      const { project } = get()
+      const next = normalizeProjectName(name)
+      if (next !== (project.name ?? DEFAULT_PROJECT_NAME)) applyProject({ ...project, name: next })
     },
 
     updateModule(id, patch, coalesceKey) {

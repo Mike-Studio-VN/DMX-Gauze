@@ -15,6 +15,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Pencil,
   Play,
   Redo2,
   RotateCcw,
@@ -30,6 +31,7 @@ import {
   X,
 } from 'lucide-react'
 import { ARTNET_PORT, isLoopbackTarget } from '@shared/dmx'
+import { PROJECT_NAME_MAX, normalizeProjectName } from '@shared/preset'
 import { IconButton } from './components/IconButton'
 import { GauzeTree } from './components/GauzeTree'
 import { CollapsedTreeRail } from './components/CollapsedTreeRail'
@@ -136,11 +138,13 @@ export function App() {
     openProject,
     saveCurrentProject,
     saveAsProject,
+    renameProject,
     exportProject,
     resetPreset,
   } = useAppStore()
 
   const [menuOpen, setMenuOpen] = useState(false)
+  const [renaming, setRenaming] = useState<string | null>(null)
   const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [rightCollapsed, setRightCollapsed] = useState(false)
   const [leftWidth, setLeftWidth] = useState(() => Number(localStorage.getItem('gauze-w-left')) || 268)
@@ -190,7 +194,10 @@ export function App() {
       }
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenuOpen(false)
+      if (e.key === 'Escape') {
+        setMenuOpen(false)
+        setRenaming(null)
+      }
       const mod = e.metaKey || e.ctrlKey
       const key = e.key.toLowerCase()
 
@@ -255,6 +262,7 @@ export function App() {
   const out = project.settings.output
   const artNetLoopback = out.driver === 'artnet' && out.port === ARTNET_PORT && isLoopbackTarget(out.ip)
   const statusTarget = artNetLoopback ? '' : ` · Đích: ${out.ip}:${out.port}`
+  const projectName = normalizeProjectName(project.name)
   const fileLabel = projectFilePath ? projectFilePath.split(/[\\/]/).pop() : 'Chưa lưu'
   const driverShortLabel: Record<string, string> = {
     artnet: 'Art-Net',
@@ -318,8 +326,8 @@ export function App() {
                   DMX Gauze
                   <ChevronDown size={13} className={`text-muted transition ${menuOpen ? 'rotate-180' : ''}`} />
                 </span>
-                <span className="block text-[10.5px] leading-tight text-muted">
-                  {fileLabel}
+                <span className="block max-w-[220px] truncate text-[10.5px] leading-tight text-muted" title={fileLabel}>
+                  {projectName}
                   {dirty ? ' *' : ''}
                 </span>
               </span>
@@ -341,9 +349,47 @@ export function App() {
                 </div>
 
                 <div className="mx-3 mb-1.5 rounded-xl bg-black/30 px-3.5 py-2.5 shadow-[inset_0_0_0_1px_var(--line)]">
-                  <div className="truncate text-[14px] font-semibold text-fg">
-                    {projectFilePath ? fileLabel : 'DMX Gauze Stage'}
-                  </div>
+                  {renaming !== null ? (
+                    <input
+                      autoFocus
+                      value={renaming}
+                      maxLength={PROJECT_NAME_MAX}
+                      aria-label="Tên project"
+                      onChange={(e) => setRenaming(e.target.value)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          renameProject(renaming)
+                          setRenaming(null)
+                        } else if (e.key === 'Escape') {
+                          e.stopPropagation()
+                          setRenaming(null)
+                        }
+                      }}
+                      onBlur={() => setRenaming(null)}
+                      className="kiln-field h-8 w-full px-2.5 text-[13px] font-semibold"
+                    />
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <div
+                        className="min-w-0 flex-1 cursor-text truncate text-[14px] font-semibold text-fg"
+                        title="Nhấp đúp để đổi tên project"
+                        onDoubleClick={() => setRenaming(projectName)}
+                      >
+                        {projectName}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setRenaming(projectName)}
+                        title="Đổi tên project"
+                        aria-label="Đổi tên project"
+                        className="cursor-pointer rounded p-1 text-muted hover:bg-white/10 hover:text-fg"
+                      >
+                        <Pencil size={12} />
+                      </button>
+                    </div>
+                  )}
+                  <div className="truncate text-[10.5px] text-muted">{fileLabel}</div>
                   <div className="mt-1.5 flex justify-between text-[10.5px] text-muted">
                     <span>
                       {project.layers.length} lớp · {project.modules.length} module

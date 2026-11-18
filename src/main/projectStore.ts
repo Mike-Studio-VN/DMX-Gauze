@@ -2,7 +2,7 @@ import { app, dialog, type BrowserWindow, type OpenDialogOptions } from 'electro
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { ProjectFileResult, SaveFileResult } from '@shared/api'
-import { createDefaultProject, normalizeProject } from '@shared/preset'
+import { createDefaultProject, normalizeProject, projectFileName } from '@shared/preset'
 import type { Project } from '@shared/types'
 
 let currentFilePath: string | null = null
@@ -96,7 +96,7 @@ export async function saveProjectAsDialog(project: Project): Promise<SaveFileRes
   const json = serializeProject(project)
   const res = await dialog.showSaveDialog({
     title: 'Lưu dự án DMX Gauze thành...',
-    defaultPath: currentFilePath ?? 'dmx-gauze-project.json',
+    defaultPath: currentFilePath ?? projectFileName(project.name),
     filters: [{ name: 'DMX Gauze Project', extensions: ['json'] }],
   })
   if (res.canceled || !res.filePath) return { saved: false, filePath: currentFilePath }
