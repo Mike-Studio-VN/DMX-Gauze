@@ -432,20 +432,39 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     expect(trackStopSpy).toHaveBeenCalled();
   });
 
-  it('keeps standard LTC rate (25fps) and warns on mismatch when timeline is 60fps', async () => {
+  it('keeps playhead and DMX moving forward through a keyframe when sequential LTC arrives late', async () => {
     const project = createDefaultProject();
     project.settings.timeline.fps = 60;
+    project.settings.timeline.startTime = 1.5;
+    project.settings.output.sendHz = 50;
     project.settings.ltc.fps = 25;
     project.settings.ltc.freewheelFrames = 10;
-    project.settings.ltc.offsetFrames = 0;
+    project.settings.ltc.offsetFrames = 1;
+    const mod = project.modules[0];
+    project.clips = [{
+      id: 'ltc-through-point', layerId: mod.layerId, moduleId: mod.id,
+      startTime: 2, duration: 1, curveMode: 'linear',
+      keyframes: [
+        { id: 'p1', offset: 0, height: 0.1 },
+        { id: 'p2', offset: 0.49, height: 0.3, speedMode: 'manual', manualSpeedCms: 20 },
+        { id: 'p3', offset: 1, height: 0.5 },
+      ],
+    }];
 
     const notifySpy = vi.fn();
+    const sendCommand = vi.fn<(command: Command) => Promise<{ ok: boolean }>>(async () => ({ ok: true }));
+    const observed: number[] = [];
+    const setPlayheadTime = useAppStore.getState().setPlayheadTime;
     useAppStore.setState({
       project,
       selectedIds: [project.modules[0].id],
       snapshot: null,
       notify: notifySpy,
-      sendCommand: vi.fn(async () => ({ ok: true })),
+      sendCommand,
+      setPlayheadTime: (time) => {
+        observed.push(time);
+        setPlayheadTime(time);
+      },
     });
 
     let capturedProc: { onaudioprocess?: (ev: { inputBuffer: { numberOfChannels: number; getChannelData: (ch: number) => Float32Array } }) => void } | null = null;
@@ -492,26 +511,39 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
 
     await vi.waitFor(() => expect(capturedProc?.onaudioprocess).toBeTypeOf('function'));
 
-    // Feed 25fps LTC frames at 00:00:02:10 (2.40s) -> 60fps timeline output must show 00:00:02:24 (not 00:00:02:10!).
     let phase = 1;
-    for (const frameNum of [8, 9, 10]) {
-      vi.advanceTimersByTime(40);
-      const enc = encodeSmpteBiphaseFrame(0, 0, 2, frameNum, 48000, 25, phase);
+    const feed = (second: number, frame: number, delay = 40) => {
+      vi.advanceTimersByTime(delay);
+      const enc = encodeSmpteBiphaseFrame(0, 0, second, frame, 48000, 25, phase);
       phase = enc.endPhase;
-      const buf =
-        frameNum === 10
-          ? Float32Array.from([...enc.samples, ...new Float32Array(24).fill(-phase * 0.8)])
-          : enc.samples;
       capturedProc!.onaudioprocess!({
         inputBuffer: {
           numberOfChannels: 1,
-          getChannelData: () => buf,
+          getChannelData: () => enc.samples,
         },
       });
-    }
+    };
+    // The final transition completing frame 09 arrives at the beginning of frame 10.
+    for (const frame of [7, 8, 9, 10]) feed(2, frame);
 
     const out = collectNodes(hookRuntime.lastTree).find((n) => n.type === 'output');
     expect(extractText(out)).toBe('00:00:02:24');
+    expect(observed.every((time, i) => i === 0 || time >= observed[i - 1])).toBe(true);
+
+    // Delayed audio delivery crosses P2 in freewheel. The encoded LTC labels still increase by one frame.
+    feed(2, 11, 120);
+    vi.advanceTimersByTime(20);
+    for (const frame of [12, 13, 14, 15]) feed(2, frame);
+    const commands = sendCommand.mock.calls.map(([command]) => command);
+    const targets = commands.flatMap((command) => command.type === 'move' ? [command.target] : []);
+    expect(observed).toEqual([...observed].sort((a, b) => a - b));
+    expect(targets).toEqual([0.3, 0.5]);
+    expect(commands.at(-1)).toMatchObject({ speed: { unit: 'cms', value: 20 } });
+
+    // A real backward seek in the incoming labels must still move back to the beginning.
+    feed(0, 0);
+    feed(0, 1);
+    expect(useAppStore.getState().playheadTime).toBeCloseTo(0.04);
     hookRuntime.reset();
   });
 });
