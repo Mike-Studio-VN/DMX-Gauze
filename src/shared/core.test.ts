@@ -156,7 +156,7 @@ describe('GauzeCore', () => {
       }
     })
 
-    it('CH2 chỉ đổi khi người dùng nhập: move/lock/estop/stop/khoá module/timeline không đụng CH2', () => {
+    it('CH2 chỉ đổi khi người dùng nhập: move/lock/estop/stop/cấu hình/timeline không đụng CH2', () => {
       const core = new GauzeCore((_cfg, events) => new MockDriver(events), () => now)
       now = 1000
       core.configure(cfgOf(77))

@@ -212,7 +212,7 @@ export type Command =
   | { type: 'lock'; locked: boolean }
   /**
    * Nút Sent (test fine tune): giữ CH1/CH3 như hiện có, CH2 = `ch2` (0–255), CH4 = 77 trong SENT_PULSE_MS rồi về 0 và giữ 0
-   * (tới khi module nhận lệnh move kế tiếp). Không đặt đích mới và KHÔNG bị chặn bởi khoá tổng/khoá module.
+   * (tới khi module nhận lệnh move kế tiếp). Không đặt đích mới và KHÔNG bị chặn bởi khoá tổng.
    */
   | { type: 'sendFine'; id: string; ch2: number }
 
