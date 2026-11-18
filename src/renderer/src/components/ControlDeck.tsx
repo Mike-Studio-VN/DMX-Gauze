@@ -428,9 +428,9 @@ export function ModeButtons(props: {
           const leftFooter = `${b.steps.length} MODULES`
           const rightFooter = b.speedUnit === 'sec' ? `${b.speedValue}S` : `${b.speedValue} CM/S`
           const barIconColor = isBarSelected
-            ? 'text-[var(--on-acc)] hover:bg-black/15'
+            ? 'text-[#f3f7ff] hover:bg-white/15'
             : isPrevSelected
-              ? 'text-[var(--on-acc)] hover:bg-black/15'
+              ? 'text-[#dce9ff] hover:bg-white/15'
               : 'text-white/75 hover:bg-white/10'
 
           return (
@@ -502,9 +502,9 @@ export function ModeButtons(props: {
                       aria-label={`Xoá nút ${b.name}`}
                       className={`cursor-pointer rounded p-1.5 opacity-0 transition group-hover:opacity-100 ${
                         isBarSelected
-                          ? 'text-[var(--on-acc)] hover:bg-black/15'
+                          ? 'text-[#f3f7ff] hover:bg-white/15'
                           : isPrevSelected
-                            ? 'text-[var(--on-acc)] hover:bg-black/15'
+                            ? 'text-[#dce9ff] hover:bg-white/15'
                             : 'text-white/75 hover:bg-danger/30 hover:text-danger'
                       }`}
                     >
@@ -524,7 +524,7 @@ export function ModeButtons(props: {
                     <span
                       title={centerSummary}
                       className={`min-w-0 truncate text-[10.5px] font-medium ${
-                        isBodyActive ? 'font-semibold text-[var(--acc-hi)]' : 'text-[var(--t3)]'
+                        isBodyActive ? 'font-semibold text-[#c9dcfa]' : 'text-[var(--t3)]'
                       }`}
                     >
                       {centerSummary}
@@ -537,13 +537,13 @@ export function ModeButtons(props: {
                     aria-valuenow={isBodyActive ? cueProgressPct : undefined}
                     data-cue-progress={isBodyActive ? cueProgressPct : undefined}
                     className={`relative flex w-full items-center justify-between gap-1 overflow-hidden px-2.5 py-1.5 text-[10px] font-semibold tracking-[0.1em] uppercase tabular-nums ${
-                      isBodyActive ? 'bg-[var(--s1)]/90 text-[var(--t1)]' : 'bg-black/60 text-[#D7CFC7]'
+                      isBodyActive ? 'bg-[#091529]/85 text-[#eff5ff]' : 'bg-black/60 text-[#D7CFC7]'
                     }`}
                   >
                     {isBodyActive && (
                       <div
                         aria-hidden="true"
-                        className="pointer-events-none absolute inset-y-0 left-0 bg-gradient-to-r from-[#7a3d12] to-[#b8561a] transition-[width] duration-75 ease-out"
+                        className="pointer-events-none absolute inset-y-0 left-0 bg-gradient-to-r from-[#2860ba] to-[#448af4] transition-[width] duration-75 ease-out"
                         style={{ width: `${cueProgressPct}%` }}
                       />
                     )}
