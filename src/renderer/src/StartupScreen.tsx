@@ -7,7 +7,7 @@ import './startup.css'
 const projectActions = [
   { id: 'recent', label: 'Mở project gần đây', subtitle: 'Bản tự động lưu gần nhất', Icon: FolderClock },
   { id: 'new', label: 'Tạo project mới', subtitle: 'Bắt đầu với một màn', Icon: Plus },
-  { id: 'open', label: 'Mở file project', subtitle: 'Chọn file JSON trên máy', Icon: FolderOpen },
+  { id: 'open', label: 'Mở file project', subtitle: 'Chọn file .mikdmx trên máy', Icon: FolderOpen },
 ] as const
 
 const windowControls = [

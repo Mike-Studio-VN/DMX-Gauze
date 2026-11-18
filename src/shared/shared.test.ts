@@ -3,7 +3,7 @@ import { autoAssign, conflictMap, nextFree, validateAddress } from './addressing
 import { buildArtDmx, buildArtPoll, buildArtPollReply, parseArtPollReply, portAddress } from './artnet'
 import { ch1Range, ch1ToPos, ch3ToCms, cmsToCh3, durationToCh3, posToCh1, snapPos } from './convert'
 import { LtcDecoder } from './ltc'
-import { DEFAULT_PROJECT_NAME, PROJECT_NAME_MAX, createDefaultProject, normalizeProject, projectFileName } from './preset'
+import { DEFAULT_PROJECT_NAME, PROJECT_NAME_MAX, createDefaultProject, ensureProjectExt, normalizeProject, projectFileName } from './preset'
 import { formatTc, parseTc, tcToFrames } from './timecode'
 import { analyzeClipSpeeds } from './timeline'
 
@@ -1095,8 +1095,18 @@ describe('tên project', () => {
   })
 
   it('tên file mặc định cho Save As an toàn', () => {
-    expect(projectFileName('Sân khấu A')).toBe('Sân khấu A.json')
-    expect(projectFileName('a/b:c*?.')).toBe('a_b_c__.json')
-    expect(projectFileName(undefined)).toBe(`${DEFAULT_PROJECT_NAME}.json`)
+    expect(projectFileName('Sân khấu A')).toBe('Sân khấu A.mikdmx')
+    expect(projectFileName('a/b:c*?.')).toBe('a_b_c__.mikdmx')
+    expect(projectFileName(undefined)).toBe(`${DEFAULT_PROJECT_NAME}.mikdmx`)
+  })
+})
+
+describe('ensureProjectExt', () => {
+  it('adds, keeps or converts to .mikdmx without doubling', () => {
+    expect(ensureProjectExt('a')).toBe('a.mikdmx')
+    expect(ensureProjectExt('a.mikdmx')).toBe('a.mikdmx')
+    expect(ensureProjectExt('a.MIKDMX')).toBe('a.mikdmx')
+    expect(ensureProjectExt('a.json')).toBe('a.mikdmx')
+    expect(ensureProjectExt('a.b')).toBe('a.b.mikdmx')
   })
 })

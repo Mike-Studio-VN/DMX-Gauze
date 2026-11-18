@@ -1,7 +1,7 @@
 import type { AppInfo, GauzeBridge, ProjectFileResult, SaveFileResult, SnapshotDto } from '@shared/api'
 import { GauzeCore } from '@shared/core'
 import { MockDriver } from '@shared/drivers'
-import { createDefaultProject, normalizeProject } from '@shared/preset'
+import { createDefaultProject, ensureProjectExt, normalizeProject } from '@shared/preset'
 import type { Command, CoreConfig, Project } from '@shared/types'
 
 const STORAGE_KEY = 'dmx-gauze-project-v1'
@@ -65,7 +65,7 @@ export function createWebBridge(): GauzeBridge {
       try {
         const handle = await picker({
           suggestedName,
-          types: [{ description: 'DMX Gauze Project', accept: { 'application/json': ['.json'] } }],
+          types: [{ description: 'DMX Gauze Project', accept: { 'application/json': ['.mikdmx'] } }],
         })
         await writeToHandle(handle, json)
         webFileHandle = handle
@@ -117,7 +117,7 @@ export function createWebBridge(): GauzeBridge {
       return new Promise((resolve, reject) => {
         const input = document.createElement('input')
         input.type = 'file'
-        input.accept = '.json,application/json'
+        input.accept = '.mikdmx,.json,application/json'
         input.onchange = async () => {
           const f = input.files?.[0]
           if (!f) return resolve(null)
@@ -145,7 +145,7 @@ export function createWebBridge(): GauzeBridge {
         return { saved: true, filePath: webFileName }
       }
       persistLocal(json)
-      const targetName = webFileName ?? 'dmx-gauze-project.json'
+      const targetName = ensureProjectExt(webFileName ?? 'dmx-gauze-project.mikdmx')
       webFileName = targetName
       triggerDownload(json, targetName)
       return { saved: true, filePath: targetName }
@@ -154,11 +154,11 @@ export function createWebBridge(): GauzeBridge {
       const validated = normalizeProject(project)
       const json = JSON.stringify(validated, null, 2)
       persistLocal(json)
-      return saveViaPickerOrDownload(json, webFileName ?? 'dmx-gauze-project.json')
+      return saveViaPickerOrDownload(json, ensureProjectExt(webFileName ?? 'dmx-gauze-project.mikdmx'))
     },
     async exportProject(project: Project): Promise<boolean> {
       const validated = normalizeProject(project)
-      triggerDownload(JSON.stringify(validated, null, 2), 'dmx-gauze-export.json')
+      triggerDownload(JSON.stringify(validated, null, 2), 'dmx-gauze-export.mikdmx')
       return true
     },
     async configure(cfg: CoreConfig): Promise<void> {

@@ -160,7 +160,7 @@ describe('Electron project choice at startup', () => {
     state.openDialog.mockResolvedValueOnce({ canceled: true, filePaths: [] })
     await expect(invoke(picker, 'startup:choose', 'open')).resolves.toBe(false)
 
-    const filePath = join(state.userData, 'cue.json')
+    const filePath = join(state.userData, 'cue.mikdmx')
     await writeFile(filePath, '{}')
     state.openDialog.mockResolvedValueOnce({ canceled: false, filePaths: [filePath] })
     await expect(invoke(picker, 'startup:choose', 'open')).rejects.toThrow()
