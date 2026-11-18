@@ -187,6 +187,8 @@ export interface Snapshot {
   frame: Uint8Array
   /** Override đang phát theo module id → [CH1..CH4] đã gửi. */
   overrides?: Record<string, number[]>
+  /** Id module đang bị khoá riêng. */
+  moduleLocks?: string[]
 }
 
 export interface CoreConfig {
@@ -204,6 +206,8 @@ export type Command =
   /** Manual override: phát đúng 4 giá trị CH1..CH4 cho module (kể cả khi khoá toàn cục) cho tới khi xoá. */
   | { type: 'override'; id: string; values: [number, number, number, number] }
   | { type: 'clearOverride'; id: string }
+  /** Khoá theo module: ép CH4=0, đóng băng và chặn Sent cho module đó (không vượt được khoá toàn cục). */
+  | { type: 'lockModule'; id: string; locked: boolean }
 
 export interface CommandResult {
   ok: boolean

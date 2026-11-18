@@ -112,6 +112,31 @@ describe('GauzeCore', () => {
       }
     })
 
+    it('khoá theo module: (toàn cục tắt, module mở → gửi), (module khoá → không gửi, CH4=0), (toàn cục bật → không gửi dù module mở)', () => {
+      const core = setup()
+      try {
+        core.command({ type: 'lock', locked: false })
+        expect(core.command({ type: 'override', id: 'm-a', values: [1, 2, 3, 77] }).ok).toBe(true)
+
+        core.command({ type: 'lockModule', id: 'm-a', locked: true })
+        core.tick()
+        expect(core.snapshot().moduleLocks).toEqual(['m-a'])
+        expect(core.snapshot().overrides).toEqual({})
+        expect(core.snapshot().frame[3]).toBe(0)
+        expect(core.snapshot().frame[7]).toBe(77) // module khác không bị ảnh hưởng
+        expect(core.command({ type: 'override', id: 'm-a', values: [1, 2, 3, 77] }).ok).toBe(false)
+        expect(core.command({ type: 'move', ids: ['m-a'], target: 0.3, speed: { unit: 'default' } }).warnings?.length).toBe(1)
+        expect(core.snapshot().modules['m-a'].target).toBe(0)
+
+        core.command({ type: 'lockModule', id: 'm-a', locked: false })
+        core.command({ type: 'lock', locked: true })
+        expect(core.command({ type: 'override', id: 'm-a', values: [1, 2, 3, 77] }).ok).toBe(false)
+        expect(core.snapshot().overrides).toEqual({})
+      } finally {
+        core.stop()
+      }
+    })
+
     it('bật khoá khi đang có override → override bị xoá, CH4 về 0', () => {
       const core = setup()
       try {

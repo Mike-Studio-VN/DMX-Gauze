@@ -2205,6 +2205,7 @@ export function PropertiesPanel(props: {
         live={[ch1, ch2, ch3, ch4]}
         sent={snapshot?.overrides?.[single.id] ?? null}
         globalLocked={!!snapshot?.locked}
+        moduleLocked={!!snapshot?.moduleLocks?.includes(single.id)}
         maxSpeedCms={single.maxSpeedCms}
       />
     </div>
@@ -2217,12 +2218,14 @@ function ChannelMonitor({
   live,
   sent,
   globalLocked,
+  moduleLocked,
   maxSpeedCms,
 }: {
   moduleId: string
   live: number[]
   sent: number[] | null
   globalLocked: boolean
+  moduleLocked: boolean
   maxSpeedCms: number
 }) {
   const [draft, setDraft] = useState<(string | null)[]>([null, null, null, null])
@@ -2233,6 +2236,7 @@ function ChannelMonitor({
   const dirty = draft.some((d) => d !== null) && (!sent || parsed.some((n, i) => n !== sent[i]))
   const send = async () => {
     if (globalLocked) return setErr('Đang khoá – tắt khoá để gửi.')
+    if (moduleLocked) return setErr('Module đang khoá – mở khoá module để gửi.')
     if (!valid) return setErr('Mỗi kênh phải là số nguyên 0–255.')
     const res = await getBridge().command({ type: 'override', id: moduleId, values: parsed as [number, number, number, number] })
     setErr(res.ok ? null : (res.message ?? 'Gửi thất bại'))
@@ -2269,7 +2273,20 @@ function ChannelMonitor({
           >
             Sent
           </button>
-          {globalLocked ? <Lock size={11} className="text-warn" /> : <Unlock size={11} className="text-ok" />}
+          <button
+            type="button"
+            onClick={() => void getBridge().command({ type: 'lockModule', id: moduleId, locked: !moduleLocked })}
+            title={
+              moduleLocked
+                ? 'Khoá module này (CH4=0, đóng băng, chặn Sent) — bấm để mở'
+                : 'Module đang mở — bấm để khoá riêng module này. Không vượt được khoá toàn cục.'
+            }
+            aria-label={moduleLocked ? 'Mở khoá module' : 'Khoá module'}
+            aria-pressed={moduleLocked}
+            className="cursor-pointer rounded p-0.5 hover:bg-white/10"
+          >
+            {moduleLocked ? <Lock size={12} className="text-warn" /> : <Unlock size={12} className="text-ok" />}
+          </button>
         </span>
       </div>
 
@@ -2297,7 +2314,7 @@ function ChannelMonitor({
       {globalLocked && (
         <p className="flex items-start gap-1 text-[10.5px] text-warn">
           <AlertTriangle size={11} className="mt-px shrink-0" />
-          Đang khoá – tắt khoá để gửi (Sent bị chặn, không phát DMX).
+          Đang khoá toàn cục – tắt khoá để gửi (Sent bị chặn; mở khoá module không vượt được khoá toàn cục).
         </p>
       )}
       {err && <p className="text-[10.5px] text-danger">{err}</p>}

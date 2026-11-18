@@ -43,6 +43,8 @@ export class GauzeCore {
   private rateWindowStart = 0
   private measuredHz = 0
   private frame = new Uint8Array(DMX_UNIVERSE_SIZE)
+  /** Khoá theo module (runtime, không lưu vào project). */
+  private moduleLocks = new Set<string>()
   private overrides = new Map<string, number[]>()
   private sendHz: number = DEFAULT_DMX_TRANSPORT_HZ
   private stopFrameLoop: (() => void) | null = null
@@ -75,6 +77,7 @@ export class GauzeCore {
     }
     for (const id of [...this.states.keys()]) if (!this.modules.has(id)) this.states.delete(id)
     for (const id of [...this.overrides.keys()]) if (!this.modules.has(id)) this.overrides.delete(id)
+    for (const id of [...this.moduleLocks]) if (!this.modules.has(id)) this.moduleLocks.delete(id)
     // Áp lại giới hạn min/max cho mục tiêu hiện có.
     for (const [id, st] of this.states) {
       const [lo, hi] = limits(this.modules.get(id)!)
@@ -202,6 +205,14 @@ export class GauzeCore {
         return this.move(cmd)
       case 'override':
         return this.setOverride(cmd.id, cmd.values)
+      case 'lockModule':
+        if (!this.modules.has(cmd.id)) return { ok: false, message: 'Không tìm thấy module.' }
+        if (cmd.locked) {
+          this.moduleLocks.add(cmd.id)
+          this.hold(cmd.id)
+          this.overrides.delete(cmd.id)
+        } else this.moduleLocks.delete(cmd.id)
+        return { ok: true }
       case 'clearOverride':
         this.overrides.delete(cmd.id)
         return { ok: true }
@@ -212,6 +223,7 @@ export class GauzeCore {
     const m = this.modules.get(id)
     if (!m) return { ok: false, message: 'Không tìm thấy module.' }
     if (this.locked) return { ok: false, message: 'Đang khoá – tắt khoá để gửi.' }
+    if (this.moduleLocks.has(id)) return { ok: false, message: 'Module đang khoá – mở khoá module để gửi.' }
     if (values.length !== CHANNELS_PER_MODULE || values.some((v) => !Number.isInteger(v) || v < 0 || v > 255)) {
       return { ok: false, message: 'Giá trị DMX phải là số nguyên 0–255.' }
     }
@@ -242,6 +254,10 @@ export class GauzeCore {
       const m = this.modules.get(id)
       const st = this.states.get(id)
       if (!m || !st) continue
+      if (this.moduleLocks.has(id)) {
+        warnings.push(`${m.name}: module đang khoá, bỏ qua.`)
+        continue
+      }
       const [lo, hi] = limits(m)
       let target: number
       switch (cmd.target) {
@@ -298,7 +314,7 @@ export class GauzeCore {
     for (const [id, st] of this.states) {
       const m = this.modules.get(id)!
       const diff = st.target - st.pos
-      if (this.locked || Math.abs(diff) < 1e-6) {
+      if (this.locked || this.moduleLocks.has(id) || Math.abs(diff) < 1e-6) {
         st.moving = false
         continue
       }
@@ -324,7 +340,7 @@ export class GauzeCore {
       this.frame[a + CH.POSITION] = coarse
       this.frame[a + CH.FINE] = fine
       this.frame[a + CH.SPEED] = st.ch3
-      this.frame[a + CH.LOCK] = lockVal
+      this.frame[a + CH.LOCK] = this.moduleLocks.has(m.id) ? 0 : lockVal
       const ov = this.overrides.get(m.id)
       if (ov) for (let i = 0; i < CHANNELS_PER_MODULE; i++) this.frame[a + i] = ov[i]
     }
@@ -393,6 +409,7 @@ export class GauzeCore {
       status: this.status(),
       frame: this.frame.slice(),
       overrides: Object.fromEntries([...this.overrides]),
+      moduleLocks: [...this.moduleLocks],
     }
   }
 }
