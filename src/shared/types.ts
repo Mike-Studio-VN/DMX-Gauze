@@ -18,6 +18,7 @@ export interface OutputSettings {
   net: number
   subnet: number
   universe: number
+  /** Tần số phát frame DMX đã chọn cho dự án. */
   sendHz: number
   /** sACN E1.31: Universe 1–63999, mức ưu tiên 0–200, multicast 239.255.x.y. */
   sacnUniverse?: number

@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import { ARTNET_PORT, isLoopbackTarget, isValidIPv4 } from '@shared/dmx'
+import { DMX_TRANSPORT_RATES } from '@shared/dmxTransport'
 import { KINET_PORT, SACN_PORT, sacnMulticastIp } from '@shared/protocols'
 import {
   FPS_OPTIONS,
@@ -26,6 +27,11 @@ import type { DriverId, Fps, LtcFps } from '@shared/types'
 import { getBridge } from '../services/bridge'
 import { type SettingsTab, useAppStore } from '../store/useAppStore'
 import { KilnSelect, type KilnSelectOption } from './KilnSelect'
+
+const dmxRateOptions = DMX_TRANSPORT_RATES.map((hz) => ({
+  value: String(hz),
+  label: `${hz} FPS · ${Number((1000 / hz).toFixed(2))} ms/frame`,
+}))
 
 export function SettingsModal(props: {
   overrideState?: Partial<ReturnType<typeof useAppStore.getState>>
@@ -257,7 +263,7 @@ export function SettingsModal(props: {
 
             <div className="mt-auto px-3 pb-1 text-[9.5px] leading-relaxed font-medium tracking-wider text-muted uppercase">
               DMX GAUZE ENGINE
-              <br />v{info?.version ?? '1.0.2'} · {info?.runtime ?? 'web'}
+              <br />v{info?.version ?? '1.0.3'} · {info?.runtime ?? 'web'}
             </div>
           </nav>
 
@@ -331,23 +337,17 @@ export function SettingsModal(props: {
                   <div className="flex flex-col gap-1.5">
                     <div className="flex min-h-[18px] items-center justify-between gap-2">
                       <span className="text-[11px] leading-4 text-[#C2B3A4]">Tần số phát frame DMX</span>
-                      {out.sendHz !== 25 && (
-                        <button
-                          type="button"
-                          onClick={() => updateOutputSettings({ sendHz: 25 })}
-                          className="cursor-pointer rounded-full bg-brand/20 px-2 py-0.5 text-[10px] leading-none font-semibold text-[#FFB26B] hover:bg-brand/30"
-                        >
-                          Đồng bộ file 25 Hz
-                        </button>
-                      )}
+                      <span className="rounded-full bg-brand/20 px-2 py-0.5 text-[10px] leading-none font-semibold text-[#FFB26B]">
+                        Đồng bộ file {out.sendHz} Hz
+                      </span>
                     </div>
-                    <div
-                      title="Tần số phát frame DMX cố định ở 25 Hz (40 ms/frame) để đồng bộ chuyển động motor ổn định"
-                      className="kiln-field flex h-9 items-center justify-between px-3 text-xs tabular-nums"
-                    >
-                      <span className="font-semibold text-fg">25 Hz</span>
-                      <span className="text-[11px] text-muted">Cố định · 40 ms/frame</span>
-                    </div>
+                    <KilnSelect
+                      ariaLabel="Tần số phát frame DMX"
+                      value={String(out.sendHz)}
+                      options={dmxRateOptions}
+                      onChange={(val) => updateOutputSettings({ sendHz: Number(val) })}
+                      tabular
+                    />
                   </div>
                 </div>
 
@@ -672,7 +672,7 @@ export function SettingsModal(props: {
                           : out.driver === 'kinet'
                             ? 'Chưa nhận được KiNET PollReply. Kiểm tra IP thiết bị hoặc gửi trực tiếp tới IP PSU.'
                             : isLoopbackTarget(out.ip)
-                              ? 'Đích localhost: app gửi ArtDmx qua cổng động và không bind 6454 để tránh tranh receiver cục bộ. Trạng thái discovery không xác định (không đồng nghĩa receiver offline); chỉ nhận ArtPollReply chuẩn 6454 khi receiver chạy cổng khác 6454, hoặc nhận phản hồi bổ sung qua cổng nguồn động.'
+                              ? 'Chưa nhận được phản hồi Art-Net.'
                               : 'Chưa nhận được ArtPollReply nào. Kiểm tra cùng subnet hoặc firewall nếu dùng thiết bị thật.'}
                     </div>
                   ) : (

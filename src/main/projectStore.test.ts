@@ -215,6 +215,15 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
     }
   });
 
+  it.each([25, 30, 40, 50, 60, 45])('persists a configured DMX rate of %i Hz', async (sendHz) => {
+    const project = createDefaultProject();
+    project.settings.output.sendHz = sendHz;
+    await saveProjectToDisk(project);
+    const { project: loaded } = await loadSavedProject();
+    expect(loaded.settings.output.sendHz).toBe(sendHz === 45 ? 25 : sendHz);
+    expect(loaded.settings.timeline.fps).toBe(project.settings.timeline.fps);
+  });
+
   it('migrates legacy v1.0.0 sACN/KiNET 6454 -> 5568/6038 while preserving custom ports across v1.0.0 and schemaVersion 2', async () => {
     const autosavePath = path.join(electronState.userDataDir, 'project.json');
 

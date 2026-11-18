@@ -459,8 +459,8 @@ describe('Core + Async Driver integration cleanup & drain tests', () => {
       };
       const out2: OutputSettings = {
         ...out1,
-        serialPort: 'com7', // same COM port case-insensitively on Windows with sendHz 40 -> 30
-        sendHz: 30,
+        serialPort: 'com7', // same COM port case-insensitively on Windows
+        enttecMk2Port: 2,
       };
       const lo = makeMod('lo', 1);
 
@@ -472,7 +472,7 @@ describe('Core + Async Driver integration cleanup & drain tests', () => {
       nowMs += 25;
       core.tick();
 
-      // Reconfigure onto same COM7 (sendHz 40 -> 30): old process receives zeros + stdin.end(), stays alive momentarily.
+      // Reconfigure the DMX output on the same COM7: old process receives zeros + stdin.end(), stays alive momentarily.
       core.configure({ modules: [lo], output: out2, lockValue: 77 });
       await new Promise((r) => setTimeout(r, 15));
 
@@ -599,8 +599,7 @@ describe('Core + Async Driver integration cleanup & drain tests', () => {
     kinetSock.pendingSends.splice(0).forEach((s) => s.cb(null));
     kinetCustom.stop();
 
-    // 5) Startup warning persistence: GauzeCore.configure() calls start() then poll() synchronously BEFORE
-    //    async sock.bind(0) callback resolves; active loopback discovery warning must NOT be cleared by ready callback!
+    // 5) Standard loopback discovery sends from the ephemeral socket without a warning.
     mocks.udp.reset();
     const core = new GauzeCore((cfg, driverEv) => new ArtNetDriver(cfg, driverEv));
     core.configure({
@@ -615,7 +614,7 @@ describe('Core + Async Driver integration cleanup & drain tests', () => {
       core.pollNow();
       expect(coreSock.pendingSends.length).toBeGreaterThanOrEqual(1);
     });
-    expect(core.snapshot().status.warning).toContain('Đích localhost:6454');
+    expect(core.snapshot().status.warning).toBeNull();
     coreSock.pendingSends.splice(0).forEach((s) => s.cb(null));
     core.stop();
   });
