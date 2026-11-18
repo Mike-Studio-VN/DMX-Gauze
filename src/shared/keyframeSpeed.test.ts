@@ -39,7 +39,7 @@ describe('resolveKeyframeSpeed', () => {
     expect(resolveKeyframeSpeed({ speedMode: 'manual', manualSpeedCms: 30 }, 100, 0, 120).tooSlow).toBe(true)
   })
   it('CH3 qua hàm convert hiện có', () => {
-    expect(cmsToCh3(resolveKeyframeSpeed({ speedMode: 'manual', manualSpeedCms: 60 }, 100, 2, 120).cms)).toBe(128)
+    expect(cmsToCh3(resolveKeyframeSpeed({ speedMode: 'manual', manualSpeedCms: 60 }, 100, 2, 120).cms, 120)).toBe(128)
   })
 })
 
@@ -122,5 +122,16 @@ describe('project cũ & CH2 tĩnh', () => {
     const raw = JSON.parse(JSON.stringify(p))
     raw.modules[0].ch2Fine = 256
     expect(() => normalizeProject(raw)).toThrow(/ch2Fine/)
+  })
+})
+
+describe('project cũ giữ maxSpeedCms đã lưu', () => {
+  it('maxSpeedCms 80 / 200 không bị kẹp 120 khi đọc', () => {
+    const p = createDefaultProject()
+    p.modules[0].maxSpeedCms = 80
+    p.modules[1].maxSpeedCms = 200
+    const back = normalizeProject(JSON.parse(JSON.stringify(normalizeProject(p))))
+    expect(back.modules[0].maxSpeedCms).toBe(80)
+    expect(back.modules[1].maxSpeedCms).toBe(200)
   })
 })

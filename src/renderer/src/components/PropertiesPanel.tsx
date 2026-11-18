@@ -19,7 +19,7 @@ import {
 import { getBridge } from '../services/bridge'
 import { layerLoopAddress } from '@shared/addressing'
 import { ch3ToCms, clamp, cmsToCh3, speedCap } from '@shared/convert'
-import { CH, H2_MAX_SPEED_CMS, SENT_CH4_PULSE_VALUE, SENT_PULSE_MS, addressRange } from '@shared/dmx'
+import { CH, SENT_CH4_PULSE_VALUE, SENT_PULSE_MS, addressRange } from '@shared/dmx'
 import { defaultLayerTransform, defaultModuleTransform } from '@shared/preset'
 import {
   computeModuleBasePositions,
@@ -891,7 +891,7 @@ function MomentEditor({
                 </div>
                 <div className="text-[10.5px] text-muted tabular-nums">
                   {speedUnit === 'cms' ? (secs !== null ? `≈ ${secs.toFixed(2)} s cho ${distCm.toFixed(1)} cm` : 'Quãng đường = 0') : `≈ ${r.cms.toFixed(1)} cm/s`}
-                  {' · '}CH3 {cmsToCh3(r.cms)} (255 = {H2_MAX_SPEED_CMS} cm/s; hãng khuyên CH3=100 ≈ 47 cm/s)
+                  {' · '}CH3 {cmsToCh3(r.cms, cap)} (255 = {cap} cm/s; khuyến nghị CH3=100 ≈ {((100 / 255) * cap).toFixed(1)} cm/s)
                 </div>
                 {speedUnit === 'sec' && secs === null && (
                   <p className="text-[10.5px] text-muted">Quãng đường = 0: không đổi được sang giây, nhập theo cm/s.</p>
@@ -2037,7 +2037,7 @@ export function PropertiesPanel(props: {
         <div className="grid grid-cols-2 gap-2 border-t border-line pt-3">
           {renderNumField('maxSpeedCms', 'Tốc độ max (cm/s)', commonMaxSpd, {
             min: '10',
-            max: '120',
+            max: '500',
             onCommit: (v) => updateModulesBatch(selectedIdsList, { maxSpeedCms: v }),
           })}
           {renderNumField('defaultSpeed', 'CH3 mặc định', commonDefSpd, {
@@ -2166,7 +2166,7 @@ export function PropertiesPanel(props: {
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
             DMX (Uni {project.settings.output.universe})
-            <span title="Mỗi module chiếm 4 kênh liên tiếp: vị trí 8-bit (0 → Dài max), fine tĩnh, tốc độ (255 = 120 cm/s), khoá 77">
+            <span title="Mỗi module chiếm 4 kênh liên tiếp: vị trí 8-bit (0 → Dài max), fine tĩnh, tốc độ (255 = Tốc độ max của module), khoá 77">
               <HelpCircle size={12} className="text-muted" />
             </span>
           </span>
@@ -2313,14 +2313,14 @@ export function PropertiesPanel(props: {
         <label className="space-y-1">
           <span className="flex items-center gap-1 text-[11px] text-[#C2B3A4]">
             Tốc độ max (cm/s)
-            <span title="Vận tốc tối đa motor theo spec (H2 = 120 cm/s). Timeline đối chiếu thông số này để cảnh báo nếu quá nhanh.">
+            <span title="Vận tốc tối đa của module (mặc định H2 = 120 cm/s). Ứng với CH3 = 255; Timeline đối chiếu thông số này để cảnh báo nếu quá nhanh.">
               <HelpCircle size={11} />
             </span>
           </span>
           <input
             type="number"
             min="10"
-            max="120"
+            max="500"
             value={single.maxSpeedCms}
             onChange={(e) => updateModule(single.id, { maxSpeedCms: Number(e.target.value) || 120 }, `mod-spd-${single.id}`)}
             className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
@@ -2330,7 +2330,7 @@ export function PropertiesPanel(props: {
         <label className="space-y-1">
           <span className="flex items-center gap-1 text-[11px] text-[#C2B3A4]">
             CH3 mặc định
-            <span title="CH3 0–255 tuyến tính, 255 = 120 cm/s. Hãng khuyên chạy CH3=100 ≈ 47 cm/s (100/255×120).">
+            <span title="CH3 0–255 tuyến tính, 255 = Tốc độ max của module (cm/s). Khuyến nghị CH3=100 ≈ 100/255 × Tốc độ max.">
               <HelpCircle size={11} />
             </span>
           </span>
@@ -2342,7 +2342,7 @@ export function PropertiesPanel(props: {
             onChange={(e) => updateModule(single.id, { defaultSpeed: Number(e.target.value) || 100 }, `mod-ch3-${single.id}`)}
             className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
-          <span className="text-[10px] text-muted tabular-nums">= {ch3ToCms(single.defaultSpeed).toFixed(1)} cm/s (hãng khuyên CH3=100 ≈ 47 cm/s)</span>
+          <span className="text-[10px] text-muted tabular-nums">= {ch3ToCms(single.defaultSpeed, single.maxSpeedCms).toFixed(1)} cm/s (255 = {single.maxSpeedCms} cm/s; khuyến nghị CH3=100 ≈ {((100 / 255) * single.maxSpeedCms).toFixed(1)} cm/s)</span>
         </label>
       </div>
 
@@ -2351,6 +2351,7 @@ export function PropertiesPanel(props: {
         moduleId={single.id}
         moduleName={single.name}
         live={[ch1, ch2, ch3, ch4]}
+        maxSpeedCms={single.maxSpeedCms}
         onPersistCh2={(v) => updateModule(single.id, { ch2Fine: v })}
       />
     </div>
@@ -2365,11 +2366,13 @@ function ChannelMonitor({
   moduleId,
   moduleName,
   live,
+  maxSpeedCms,
   onPersistCh2,
 }: {
   moduleId: string
   moduleName: string
   live: number[]
+  maxSpeedCms: number
   onPersistCh2: (ch2: number) => void
 }) {
   const [draft, setDraft] = useState<string | null>(null)
@@ -2403,7 +2406,7 @@ function ChannelMonitor({
   const cells: Array<{ label: string; value: string; title: string; editable?: boolean }> = [
     { label: 'CH1 Pos', value: String(live[0]), title: 'CH1: vị trí 0–255 (0 → chiều dài tối đa), kẹp theo min–max; Sent không đổi' },
     { label: 'CH2 Fine', value: shown, title: 'CH2: fine tĩnh 0–255, chỉ đổi khi bạn nhập / bấm Sent', editable: true },
-    { label: 'CH3 Spd', value: String(live[2]), title: `CH3: tốc độ (${ch3ToCms(live[2]).toFixed(0)} cm/s; 255 = ${H2_MAX_SPEED_CMS} cm/s)` },
+    { label: 'CH3 Spd', value: String(live[2]), title: `CH3: tốc độ (${ch3ToCms(live[2], maxSpeedCms).toFixed(0)} cm/s; 255 = ${maxSpeedCms} cm/s)` },
     { label: 'CH4 Lock', value: String(live[3]), title: `CH4: khoá an toàn. Sent phát ${SENT_CH4_PULSE_VALUE} trong ${SENT_PULSE_MS} ms rồi tự về 0` },
   ]
   return (

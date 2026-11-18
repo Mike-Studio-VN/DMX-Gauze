@@ -79,6 +79,29 @@ describe('GauzeCore', () => {
     }
   })
 
+  it('CH3 theo maxSpeedCms của từng module (255 = max của module)', () => {
+    const project = createDefaultProject()
+    const base = { ...project.modules[0], length: 1, minHeight: 0, maxHeight: 1 }
+    const modules = [
+      { ...base, id: 'm-80', startAddress: 1, maxSpeedCms: 80 },
+      { ...base, id: 'm-200', startAddress: 5, maxSpeedCms: 200 },
+    ]
+    const core = new GauzeCore((_cfg, events) => new MockDriver(events))
+    try {
+      core.configure({ modules, output: project.settings.output, lockValue: LOCK_VALUE })
+      core.command({ type: 'lock', locked: false })
+      core.command({ type: 'move', ids: ['m-80', 'm-200'], target: 1, speed: { unit: 'cms', value: 40 } })
+      core.tick()
+      const f = core.snapshot().frame
+      expect(f[2]).toBe(128) // 40/80×255
+      expect(f[6]).toBe(51) // 40/200×255 = 51
+      core.command({ type: 'move', ids: ['m-80'], target: 0.5, speed: { unit: 'cms', value: 500 } })
+      expect(core.snapshot().modules['m-80'].ch3).toBe(255) // kẹp ở max của module
+    } finally {
+      core.stop()
+    }
+  })
+
   describe('Sent (test fine tune)', () => {
     const cfgOf = (ch2Fine?: number) => {
       const project = createDefaultProject()
