@@ -18,6 +18,7 @@ import {
   computeSharedManualWaveLevel,
   resolveCueButtonBaselines,
 } from '@shared/convert'
+import { DEFAULT_MOTION_SPEED_CMS, defaultCueSpeedCms } from '@shared/timeline'
 import type { CueButton, SpeedUnit } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 import { TimelineEditor } from './TimelineEditor'
@@ -137,6 +138,9 @@ function ManualProgressButton({
   const etaText = movePct >= 100 ? '0s' : `${Math.max(1, Math.ceil(etaSec))}s`
   const isUp = dir === 'up'
   const isRunning = phase === 'run'
+  const statusText = isRunning
+    ? `${isUp ? 'Đang chạy lên' : 'Đang chạy xuống'} · ${wavePct}% · ${etaText}`
+    : isUp ? 'Chạm để chạy lên' : 'Chạm để chạy xuống'
 
   const backColor = isUp ? 'rgba(42, 92, 168, 0.56)' : 'rgba(164, 60, 8, 0.42)'
   const frontColor = isUp ? 'rgba(68, 138, 244, 0.70)' : 'rgba(202, 82, 12, 0.56)'
@@ -149,6 +153,7 @@ function ManualProgressButton({
       aria-label={`${label} (${speedText} ${unitLabel})`}
       onClick={onClick}
       data-state={isRunning || waveMoving ? 'run' : 'idle'}
+      data-active={isRunning || undefined}
       data-wave-pct={wavePct}
       className={`manual-card ${isUp ? 'manual-card-up' : 'manual-card-down'}`}
     >
@@ -161,46 +166,22 @@ function ManualProgressButton({
       />
 
       <div className="relative z-10 flex items-start justify-between gap-2">
-        <div>
-          <div className={`text-[15px] leading-tight font-bold ${isUp ? 'text-[#EFF5FF]' : 'text-[#1B0F05]'}`}>
-            {label}
-          </div>
-          <div className={`mt-0.5 text-[11px] ${isUp ? 'text-[#92AED0]' : 'text-[#1B0F05]/75'}`}>
-            {isRunning
-              ? `${isUp ? 'Đang chạy lên' : 'Đang chạy xuống'} · ${wavePct}% · ${etaText}`
-              : isUp
-                ? 'Chạm để chạy lên'
-                : 'Chạm để chạy xuống'}
-          </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[15px] leading-tight font-bold">{label}</div>
+          <div className="manual-card-detail mt-0.5 truncate text-[11px]" title={statusText}>{statusText}</div>
         </div>
-        <span
-          className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold tabular-nums ${
-            isUp ? 'bg-white/14 text-[#DCE9FF]' : 'bg-[#1B0F05]/12 text-[#1B0F05]'
-          }`}
-        >
-          {wavePct}%
-        </span>
+        <span className="manual-card-badge">{wavePct}%</span>
       </div>
 
       <div className="relative z-10 flex items-center justify-center py-0.5">
-        <span
-          className={`manual-card-icon-ring ${
-            isUp ? 'bg-[#8EB8FF]/16 text-[#8DBBFF]' : 'bg-[#1B0F05]/10 text-[#1B0F05]'
-          }`}
-        >
+        <span className="manual-card-icon-ring">
           <Icon size={20} strokeWidth={2.2} className="manual-card-arrow" aria-hidden="true" />
         </span>
       </div>
 
-      <div className="relative z-10 flex items-baseline justify-between gap-2">
-        <div className="flex items-baseline gap-1 tabular-nums">
-          <span className={`text-[20px] leading-none font-bold ${isUp ? 'text-[#DCE9FF]' : 'text-[#1B0F05]'}`}>
-            {speedText}
-          </span>
-          <span className={`text-[11px] font-medium ${isUp ? 'text-[#9BB5D6]' : 'text-[#1B0F05]/78'}`}>
-            {unitLabel}
-          </span>
-        </div>
+      <div className="relative z-10 flex min-w-0 items-baseline gap-1 tabular-nums">
+        <span className="min-w-0 truncate text-[20px] leading-none font-bold">{speedText}</span>
+        <span className="manual-card-detail shrink-0 whitespace-nowrap text-[11px] font-medium">{unitLabel}</span>
       </div>
     </button>
   )
@@ -239,26 +220,22 @@ function ManualStopButton({
       />
 
       <div className="relative z-10 flex items-start justify-between gap-2">
-        <div>
-          <div className="text-[15px] leading-tight font-bold text-[#F5B0A8]">Dừng</div>
-          <div className="mt-0.5 text-[11px] whitespace-nowrap text-[#C8827B]">Dừng module chọn</div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[15px] leading-tight font-bold">Dừng</div>
+          <div className="manual-card-detail mt-0.5 truncate text-[11px]" title="Dừng module chọn">Dừng module chọn</div>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <span className="rounded-full bg-[#F08C82]/14 px-2 py-0.5 text-[10.5px] font-bold text-[#F5B0A8] tabular-nums">
-            {wavePct}%
-          </span>
-        </div>
+        <span className="manual-card-badge">{wavePct}%</span>
       </div>
 
       <div className="relative z-10 flex items-center justify-center py-0.5">
-        <span className="manual-card-icon-ring bg-[#FF7A6E]/14">
-          <span className="h-3.5 w-3.5 rounded-[3.5px] bg-[#FF7A6E]" aria-hidden="true" />
+        <span className="manual-card-icon-ring">
+          <span className="h-3.5 w-3.5 rounded-[3.5px] bg-current" aria-hidden="true" />
         </span>
       </div>
 
       <div className="relative z-10 flex items-baseline gap-1 tabular-nums">
-        <span className="text-[20px] leading-none font-bold text-[#EA887E]">0</span>
-        <span className="text-[11px] font-medium text-[#C8827B]">{unitLabel}</span>
+        <span className="text-[20px] leading-none font-bold">0</span>
+        <span className="manual-card-detail shrink-0 whitespace-nowrap text-[11px] font-medium">{unitLabel}</span>
       </div>
     </button>
   )
@@ -315,7 +292,7 @@ export function ModeButtons(props: {
         type: 'move',
         ids: [s.moduleId],
         target: s.position,
-        speed: { unit: b.speedUnit, value: speedVal },
+        speed: { unit: b.speedUnit, value: speedVal, limitCms: b.autoSpeedLimitCms },
       }, { source: 'buttons' })
       if (!res.ok) break
     }
@@ -356,8 +333,9 @@ export function ModeButtons(props: {
         moduleId: m.id,
         position: Number((snapshot?.modules[m.id]?.pos ?? m.minHeight).toFixed(2)),
       })),
-      speedUnit: 'sec',
-      speedValue: 4,
+      speedUnit: 'cms',
+      speedValue: defaultCueSpeedCms(targetMods),
+      autoSpeedLimitCms: DEFAULT_MOTION_SPEED_CMS,
       slotIndex: nextSlot,
       loop: false,
     }
@@ -510,7 +488,7 @@ export function ModeButtons(props: {
                         <Play size={17} fill="currentColor" strokeWidth={2} className="translate-x-[0.5px]" />
                       )}
                     </button>
-                    <span className="truncate font-sans">{b.name}</span>
+                    <span className="min-w-0 truncate font-sans" title={b.name}>{b.name}</span>
                   </div>
                   <div className="flex shrink-0 items-center">
                     <button
@@ -542,9 +520,10 @@ export function ModeButtons(props: {
                   aria-label={`Chạy nút ${b.name}`}
                   className="cue-pad-body cursor-pointer text-left transition-transform active:scale-[0.985]"
                 >
-                  <div className="flex flex-1 items-center justify-center px-2 text-center">
+                  <div className="flex min-h-0 w-full min-w-0 flex-1 items-center justify-center overflow-hidden px-2 text-center">
                     <span
-                      className={`truncate text-[10.5px] font-medium ${
+                      title={centerSummary}
+                      className={`min-w-0 truncate text-[10.5px] font-medium ${
                         isBodyActive ? 'font-semibold text-[var(--acc-hi)]' : 'text-[var(--t3)]'
                       }`}
                     >
@@ -557,7 +536,7 @@ export function ModeButtons(props: {
                     aria-valuemax={isBodyActive ? 100 : undefined}
                     aria-valuenow={isBodyActive ? cueProgressPct : undefined}
                     data-cue-progress={isBodyActive ? cueProgressPct : undefined}
-                    className={`relative flex w-full items-center justify-between overflow-hidden px-2.5 py-1.5 text-[10px] font-semibold tracking-[0.1em] uppercase tabular-nums ${
+                    className={`relative flex w-full items-center justify-between gap-1 overflow-hidden px-2.5 py-1.5 text-[10px] font-semibold tracking-[0.1em] uppercase tabular-nums ${
                       isBodyActive ? 'bg-[var(--s1)]/90 text-[var(--t1)]' : 'bg-black/60 text-[#D7CFC7]'
                     }`}
                   >
@@ -568,8 +547,8 @@ export function ModeButtons(props: {
                         style={{ width: `${cueProgressPct}%` }}
                       />
                     )}
-                    <span className="relative z-10 truncate">{leftFooter}</span>
-                    <span className="relative z-10 shrink-0 tracking-[0.08em]">{rightFooter}</span>
+                    <span className="relative z-10 min-w-0 truncate">{leftFooter}</span>
+                    <span className="relative z-10 min-w-0 truncate tracking-[0.08em]" title={rightFooter}>{rightFooter}</span>
                   </div>
                 </button>
               </div>
@@ -753,8 +732,8 @@ export function ModeManual(props: {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-2">
-        <div className="mx-auto grid w-[84%] min-w-[520px] max-w-[930px] grid-cols-3 gap-4">
+      <div className="flex min-h-0 flex-1 items-center justify-center px-3 py-2 sm:px-6">
+        <div className="mx-auto grid w-full min-w-0 max-w-[930px] grid-cols-3 gap-2 sm:w-[84%] sm:gap-4">
           <ManualProgressButton
             dir="up"
             label="Lên"

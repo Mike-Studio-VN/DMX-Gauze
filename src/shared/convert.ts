@@ -1,42 +1,58 @@
 // Quy đổi mét / tốc độ / giây ⇄ giá trị DMX (xem plan mục 8.2).
-import { HOME_OFFSET_MAX_MM } from './dmx'
 import type { ModuleCfg, Snapshot } from './types'
 
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v))
 }
 
-/** Offset home (mm) kẹp 0..HOME_OFFSET_MAX_MM, làm tròn 0.1 mm. */
-export function normalizeHomeOffsetMm(mm: number): number {
-  return Number.isFinite(mm) ? Math.round(clamp(mm, 0, HOME_OFFSET_MAX_MM) * 10) / 10 : 0
+type PosRange = Pick<ModuleCfg, 'length' | 'minHeight' | 'maxHeight'>
+
+/** Dải CH1 hợp lệ [lo, hi] (0..255) ứng với [minHeight, min(maxHeight,length)]; không vượt ra ngoài khoảng của module. */
+export function ch1Range(m: PosRange): [number, number] {
+  const hiM = Math.min(m.maxHeight, m.length)
+  const loM = Math.min(Math.max(m.minHeight, 0), hiM)
+  const k = m.length > 0 ? 255 / m.length : 0
+  let lo = Math.ceil(loM * k - 1e-9)
+  let hi = Math.floor(hiM * k + 1e-9)
+  if (lo > hi) lo = hi = Math.round(loM * k) // khoảng quá hẹp: không có mã nào nằm gọn bên trong
+  return [clamp(lo, 0, 255), clamp(hi, 0, 255)]
 }
 
-/** mm → bước DMX 16-bit: steps = round(mm / 1000 / length × 65535). 1 bước = length/65535 (≈0.0153 mm với 1 m). */
-export function homeOffsetSteps(mm: number, length: number): number {
-  return length > 0 ? clamp(Math.round((normalizeHomeOffsetMm(mm) / 1000 / length) * 65535), 0, 65535) : 0
+/** Vị trí (m) → CH1 (8-bit): round(pos/length × 255), kẹp trong khoảng min–max của module. */
+export function posToCh1(pos: number, m: PosRange): number {
+  const [lo, hi] = ch1Range(m)
+  const raw = m.length > 0 ? Math.round((pos / m.length) * 255) : 0
+  return clamp(raw, lo, hi)
 }
+
+export function ch1ToPos(ch1: number, length: number): number {
+  return Math.round((ch1 / 255) * length * 1e6) / 1e6 // bỏ nhiễu dấu phẩy động (1.4999999999999998)
+}
+
+/** Vị trí thực tế sau khi kẹp min–max và lượng tử hoá CH1. */
+export function snapPos(pos: number, m: PosRange): number {
+  return ch1ToPos(posToCh1(pos, m), m.length)
+}
+
+/** Tốc độ tối đa của module (cm/s) = "Tốc độ max" người dùng nhập; đồng thời là thang CH3 (255 = maxSpeedCms). */
+export function speedCap(m: Pick<ModuleCfg, 'maxSpeedCms'>): number {
+  return Math.max(1, m.maxSpeedCms)
+}
+
+/** CH3 → tốc độ cm/s (tuyến tính, 255 = maxSpeedCms của module). */
+export function ch3ToCms(ch3: number, maxSpeedCms: number): number {
+  return (ch3 / 255) * Math.max(1, maxSpeedCms)
+}
+
+/** Sai số làm tròn cho phép khi ceil (đơn vị CH3): vd 47.06 cm/s (≈100.0025) với max 120 vẫn ra 100, không nhảy 101. */
+const CH3_CEIL_EPS = 0.01
 
 /**
- * Vị trí (m) → CH1 (coarse) + CH2 (fine). Offset home chỉ áp khi đích = 0 (home);
- * mọi vị trí khác (timeline/cue/wave) giữ nguyên mã hoá 16-bit, không cộng offset.
+ * Tốc độ cm/s → CH3 theo thang của module (255 = maxSpeedCms), làm tròn LÊN (không chậm hơn yêu cầu nên đoạn
+ * không đến muộn), kẹp 1..255 (0 là phanh). Max 120: 47.06 → 100, 60 → 128; max 80: 40 → 128, 80 → 255.
  */
-export function posToDmx(pos: number, length: number, homeOffsetMm = 0): { coarse: number; fine: number } {
-  const v = pos <= 0 ? homeOffsetSteps(homeOffsetMm, length) : Math.round(clamp(length > 0 ? pos / length : 0, 0, 1) * 65535)
-  return { coarse: v >> 8, fine: v & 0xff }
-}
-
-export function dmxToPos(coarse: number, fine: number, length: number): number {
-  return (((coarse << 8) | fine) / 65535) * length
-}
-
-/** CH3 → tốc độ cm/s (tuyến tính, 255 = maxSpeed). */
-export function ch3ToCms(ch3: number, maxSpeedCms: number): number {
-  return (ch3 / 255) * maxSpeedCms
-}
-
-/** Tốc độ cm/s → CH3 (1..255; 0 là phanh nên không dùng khi chạy). */
 export function cmsToCh3(cms: number, maxSpeedCms: number): number {
-  return clamp(Math.ceil((cms / maxSpeedCms) * 255), 1, 255)
+  return clamp(Math.ceil((cms / Math.max(1, maxSpeedCms)) * 255 - CH3_CEIL_EPS), 1, 255)
 }
 
 export interface DurationConv {
@@ -46,12 +62,13 @@ export interface DurationConv {
   tooFast: boolean
 }
 
-/** Quãng đường (m) trong N giây → CH3. */
+/** Quãng đường (m) trong N giây → CH3 theo thang maxSpeedCms của module. Làm tròn LÊN (có sai số epsilon). */
 export function durationToCh3(distM: number, seconds: number, maxSpeedCms: number): DurationConv {
+  const max = Math.max(1, maxSpeedCms)
   const dist = Math.abs(distM)
-  const minSeconds = (dist * 100) / maxSpeedCms
-  const ideal = ((dist * 100) / Math.max(seconds, 0.01) / maxSpeedCms) * 255
-  return { ch3: clamp(Math.ceil(ideal), 1, 255), minSeconds, tooFast: ideal > 255 }
+  const needCms = (dist * 100) / Math.max(seconds, 0.01)
+  const ch3 = clamp(Math.ceil((needCms / max) * 255 - CH3_CEIL_EPS), 1, 255)
+  return { ch3, minSeconds: (dist * 100) / max, tooFast: needCms > max + 1e-6 }
 }
 
 export interface ManualMotionBaseline {

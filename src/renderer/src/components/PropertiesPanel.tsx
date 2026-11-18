@@ -5,22 +5,21 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  Check,
   Eye,
   EyeOff,
   HelpCircle,
   Layers,
   Link2,
-  Lock,
   Plus,
   RotateCcw,
   Trash2,
-  Unlock,
   Waves,
 } from 'lucide-react'
 import { getBridge } from '../services/bridge'
 import { layerLoopAddress } from '@shared/addressing'
-import { ch3ToCms, clamp, homeOffsetSteps, normalizeHomeOffsetMm } from '@shared/convert'
-import { CH, HOME_OFFSET_MAX_MM, addressRange } from '@shared/dmx'
+import { ch3ToCms, clamp, cmsToCh3, speedCap } from '@shared/convert'
+import { CH, SENT_CH4_PULSE_VALUE, SENT_PULSE_MS, addressRange } from '@shared/dmx'
 import { defaultLayerTransform, defaultModuleTransform } from '@shared/preset'
 import {
   computeModuleBasePositions,
@@ -35,6 +34,8 @@ import {
   type LayerMotionPresetId,
   analyzeClipSpeeds,
   buildCurveKeyframes,
+  clipAutoSpeedCms,
+  fitDefaultMotionDuration,
   fullCurvePath,
   heightToPercent,
   insertClipKeyframe,
@@ -42,7 +43,10 @@ import {
   percentToHeight,
   removeClipKeyframe,
   resolveClipBoundsNoOverlap,
+  cmsToSeconds,
   resolveKeyframeSpeed,
+  secondsToCms,
+  segmentDistCm,
   segmentPath,
   updateClipEndTime,
   updateClipKeyframeHeight,
@@ -403,6 +407,7 @@ function MomentEditor({
   onBackToModule,
   onUpdate,
   onDelete,
+  onPresetOverlap,
 }: {
   clip: TimelineClip
   allClips: TimelineClip[]
@@ -412,6 +417,7 @@ function MomentEditor({
   onBackToModule: () => void
   onUpdate: (patch: Partial<TimelineClip>, coalesceKey?: string, syncEdge?: 'start' | 'end') => void
   onDelete: () => void
+  onPresetOverlap: () => void
 }) {
   const sorted = [...clip.keyframes].sort((a, b) => a.offset - b.offset)
   const sameModClips = allClips.filter((c) => c.moduleId === clip.moduleId)
@@ -426,6 +432,7 @@ function MomentEditor({
   const [draftStart, setDraftStart] = useState<{ clipId: string; raw: string } | null>(null)
   const [draftEnd, setDraftEnd] = useState<{ clipId: string; raw: string } | null>(null)
   const [draftTime, setDraftTime] = useState<{ id: string; raw: string } | null>(null)
+  const [speedUnit, setSpeedUnit] = useState<'cms' | 'sec'>('cms')
   const [draftPct, setDraftPct] = useState<{ id: string; raw: string } | null>(null)
 
   const commitStartTime = (rawVal: number) => {
@@ -443,8 +450,10 @@ function MomentEditor({
     onUpdate(patch, `kf-${kfId}`)
   }
 
-  const commitPercent = (kfId: string, rawPct: number) => {
-    const h = percentToHeight(rawPct, mod)
+  const loM = Math.max(0, mod.minHeight)
+  const hiM = Math.min(mod.length, Math.max(loM, mod.maxHeight))
+  const commitHeight = (kfId: string, rawM: number) => {
+    const h = clamp(rawM, loM, hiM)
     const { keyframes, syncEdge } = updateClipKeyframeHeight(clip, kfId, h)
     onUpdate({ keyframes }, `kfh-${kfId}`, syncEdge)
   }
@@ -465,7 +474,17 @@ function MomentEditor({
     }
     const curveMode: 'smooth' | 'linear' =
       presetId === 'triangle' || presetId === 'steps' || presetId === 'hold' ? 'linear' : 'smooth'
-    onUpdate({ keyframes: kfs, curveMode })
+    const fitted = fitDefaultMotionDuration({ ...clip, keyframes: kfs, curveMode }, mod)
+    if (fitted.duration > clip.duration && clip.startTime + fitted.duration > bounds.maxEnd + 1e-6) {
+      onPresetOverlap()
+      return
+    }
+    onUpdate({
+      keyframes: fitted.keyframes,
+      curveMode,
+      duration: fitted.duration,
+      autoSpeedLimitCms: fitted.autoSpeedLimitCms,
+    })
     onSelectKey(kfs[Math.min(1, kfs.length - 1)]?.id ?? null)
   }
 
@@ -594,7 +613,7 @@ function MomentEditor({
               {bad.requiredCms.toFixed(0)} &gt; {bad.maxSpeedCms} cm/s
             </span>
           ) : (
-            <span className="kiln-chip ok">Hợp lệ (≤ {mod.maxSpeedCms} cm/s)</span>
+            <span className="kiln-chip ok">Hợp lệ (≤ {speedCap(mod)} cm/s)</span>
           )}
         </div>
       </div>
@@ -651,11 +670,12 @@ function MomentEditor({
           </div>
         </div>
 
+        <p className="text-[10.5px] text-muted">Độ cao hợp lệ: {loM.toFixed(2)}–{hiM.toFixed(2)} m (nhập mét, tự kẹp)</p>
         <div className="space-y-1.5">
           {sorted.map((kf, idx) => {
             const active = selectedKeyId === kf.id
             const timelineTime = Number((clip.startTime + kf.offset).toFixed(4))
-            const pct = heightToPercent(kf.height, mod)
+            const hM = Number(kf.height.toFixed(3))
             const prevTimelineTime = idx > 0 ? Number((clip.startTime + sorted[idx - 1].offset).toFixed(4)) : bounds.minStart
             const nextTimelineTime =
               idx < sorted.length - 1
@@ -720,26 +740,26 @@ function MomentEditor({
                 <label className="flex min-w-0 flex-1 items-center gap-0.5">
                   <input
                     type="number"
-                    step="1"
-                    min="0"
-                    max="100"
-                    title="Độ cao theo phần trăm hành trình (0–100%)"
-                    value={draftPct?.id === kf.id ? draftPct.raw : pct}
+                    step="0.01"
+                    min={loM}
+                    max={hiM}
+                    title={`Độ cao (m), hợp lệ ${loM.toFixed(2)}–${hiM.toFixed(2)} m`}
+                    value={draftPct?.id === kf.id ? draftPct.raw : hM}
                     onFocus={() => {
                       onSelectKey(kf.id)
-                      setDraftPct({ id: kf.id, raw: String(pct) })
+                      setDraftPct({ id: kf.id, raw: String(hM) })
                     }}
                     onChange={(e) => {
                       const raw = e.target.value
                       setDraftPct({ id: kf.id, raw })
                       if (!raw.trim() || raw.endsWith('.')) return
                       const num = Number(raw)
-                      if (Number.isFinite(num)) commitPercent(kf.id, num)
+                      if (Number.isFinite(num)) commitHeight(kf.id, num)
                     }}
                     onBlur={() => {
                       if (draftPct?.id === kf.id) {
                         const num = Number(draftPct.raw)
-                        if (draftPct.raw.trim() && Number.isFinite(num)) commitPercent(kf.id, num)
+                        if (draftPct.raw.trim() && Number.isFinite(num)) commitHeight(kf.id, num)
                         setDraftPct(null)
                       }
                     }}
@@ -750,7 +770,7 @@ function MomentEditor({
                       active ? 'font-semibold text-[#FFD08A]' : 'text-[#FFB26B]'
                     }`}
                   />
-                  <span className="text-[10px] text-muted">%</span>
+                  <span className="text-[10px] text-muted">m</span>
                 </label>
                 {sorted.length > 2 && (
                   <button
@@ -780,10 +800,17 @@ function MomentEditor({
         if (!next) {
           return <p className="text-[10.5px] text-muted">Điểm cuối: không có đoạn kế tiếp nên không đặt tốc độ.</p>
         }
-        const distCm = Math.abs(next.height - kf.height) * 100
-        const r = resolveKeyframeSpeed(kf, distCm, next.offset - kf.offset, mod.maxSpeedCms)
+        const cap = speedCap(mod)
+        const distCm = segmentDistCm(mod, kf.height, next.height)
+        const dt = next.offset - kf.offset
+        const r = resolveKeyframeSpeed(kf, distCm, dt, cap, clipAutoSpeedCms(mod, clip))
+        const secs = cmsToSeconds(distCm, r.cms)
         const setSpeed = (patch: Partial<ClipKeyframe>) =>
           onUpdate({ keyframes: sorted.map((k) => (k.id === kf.id ? { ...k, ...patch } : k)) }, `kfspd-${kf.id}`)
+        const commitCms = (v: number) => {
+          const nextCms = clamp(v, 1, cap)
+          if (nextCms !== kf.manualSpeedCms) setSpeed({ speedMode: 'manual', manualSpeedCms: nextCms })
+        }
         return (
           <div className="space-y-1.5 border-t border-line pt-2.5">
             <div className="text-[11px] font-semibold tracking-wide text-muted uppercase">
@@ -813,41 +840,94 @@ function MomentEditor({
             {r.mode === 'auto' ? (
               <div className="flex items-center justify-between text-[11px] text-[#C2B3A4]">
                 <span>Tự tính (chỉ đọc)</span>
-                <span className="tabular-nums">{r.autoCms.toFixed(1)} cm/s</span>
+                <span className="tabular-nums">
+                  {r.autoCms.toFixed(1)} cm/s{cmsToSeconds(distCm, r.autoCms) !== null ? ` · ${cmsToSeconds(distCm, r.autoCms)!.toFixed(2)} s` : ''}
+                </span>
               </div>
             ) : (
-              <label className="flex items-center justify-between gap-2 text-[11px] text-[#C2B3A4]">
-                <span>Tốc độ (cm/s, ≤ {mod.maxSpeedCms})</span>
-                <input
-                  key={`${kf.id}-${kf.manualSpeedCms}`}
-                  type="number"
-                  min={1}
-                  max={mod.maxSpeedCms}
-                  step={1}
-                  defaultValue={kf.manualSpeedCms ?? Number(r.autoCms.toFixed(1))}
-                  onBlur={(e) => {
-                    const v = e.currentTarget.valueAsNumber
-                    const next = Number.isFinite(v) ? clamp(v, 1, mod.maxSpeedCms) : (kf.manualSpeedCms ?? r.autoCms)
-                    e.currentTarget.value = String(next)
-                    if (next !== kf.manualSpeedCms) setSpeed({ speedMode: 'manual', manualSpeedCms: next })
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') e.currentTarget.blur()
-                  }}
-                  className="kiln-field h-7 w-24 px-2.5 text-xs tabular-nums"
-                />
-              </label>
+              <div className="space-y-1">
+                <div className="flex items-center justify-between gap-2 text-[11px] text-[#C2B3A4]">
+                  <div className="grid grid-cols-2 gap-0.5 rounded-lg bg-black/30 p-0.5" role="group" aria-label="Đơn vị tốc độ">
+                    {(['cms', 'sec'] as const).map((u) => (
+                      <button
+                        key={u}
+                        type="button"
+                        aria-pressed={speedUnit === u}
+                        onClick={() => setSpeedUnit(u)}
+                        className={`cursor-pointer rounded-md px-2 py-0.5 text-[10.5px] font-semibold ${
+                          speedUnit === u ? 'bg-brand/25 text-[#FFB26B]' : 'text-muted hover:text-fg'
+                        }`}
+                      >
+                        {u === 'cms' ? 'cm/s' : 's'}
+                      </button>
+                    ))}
+                  </div>
+                  {speedUnit === 'cms' || secs === null ? (
+                    <input
+                      key={`${kf.id}-cms-${kf.manualSpeedCms}`}
+                      type="number"
+                      min={1}
+                      max={cap}
+                      step={1}
+                      disabled={speedUnit === 'sec'}
+                      defaultValue={Number(r.cms.toFixed(1))}
+                      onBlur={(e) => {
+                        const v = e.currentTarget.valueAsNumber
+                        const n = Number.isFinite(v) ? clamp(v, 1, cap) : r.cms
+                        e.currentTarget.value = String(n)
+                        commitCms(n)
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') e.currentTarget.blur()
+                      }}
+                      className="kiln-field h-7 w-24 px-2.5 text-xs tabular-nums"
+                    />
+                  ) : (
+                    <input
+                      key={`${kf.id}-sec-${kf.manualSpeedCms}`}
+                      type="number"
+                      min={Number((distCm / cap).toFixed(2))}
+                      max={Number(distCm.toFixed(2))}
+                      step={0.1}
+                      defaultValue={Number(secs.toFixed(2))}
+                      onBlur={(e) => {
+                        const v = e.currentTarget.valueAsNumber
+                        const n = Number.isFinite(v) ? secondsToCms(distCm, v, cap) : null
+                        if (n !== null) commitCms(n)
+                        else e.currentTarget.value = String(Number(secs.toFixed(2)))
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') e.currentTarget.blur()
+                      }}
+                      className="kiln-field h-7 w-24 px-2.5 text-xs tabular-nums"
+                    />
+                  )}
+                </div>
+                <div className="text-[10.5px] text-muted tabular-nums">
+                  {speedUnit === 'cms' ? (secs !== null ? `≈ ${secs.toFixed(2)} s cho ${distCm.toFixed(1)} cm` : 'Quãng đường = 0') : `≈ ${r.cms.toFixed(1)} cm/s`}
+                  {' · '}CH3 {cmsToCh3(r.cms, cap)} (255 = {cap} cm/s; khuyến nghị CH3=100 ≈ {((100 / 255) * cap).toFixed(1)} cm/s)
+                </div>
+                {speedUnit === 'sec' && secs === null && (
+                  <p className="text-[10.5px] text-muted">Quãng đường = 0: không đổi được sang giây, nhập theo cm/s.</p>
+                )}
+              </div>
             )}
             {r.mode === 'manual' && r.tooSlow && (
               <p className="flex items-start gap-1 text-[10.5px] text-warn">
                 <AlertTriangle size={11} className="mt-px shrink-0" />
-                Quá chậm: cần {(distCm / r.cms).toFixed(2)}s, đoạn chỉ có {(next.offset - kf.offset).toFixed(2)}s (auto: {r.autoCms.toFixed(1)} cm/s).
+                Quá chậm: cần {(distCm / r.cms).toFixed(2)}s, đoạn chỉ có {dt.toFixed(2)}s (auto: {r.autoCms.toFixed(1)} cm/s).
               </p>
             )}
-            {r.autoCms >= mod.maxSpeedCms - 1e-3 && distCm / Math.max(0.001, next.offset - kf.offset) > mod.maxSpeedCms + 1e-3 && (
+            {r.mode === 'manual' && r.overMax && (
               <p className="flex items-start gap-1 text-[10.5px] text-warn">
                 <AlertTriangle size={11} className="mt-px shrink-0" />
-                Vượt tốc độ tối đa {mod.maxSpeedCms} cm/s: đoạn này không kịp thời gian.
+                Vượt tối đa {cap} cm/s: đã kẹp.
+              </p>
+            )}
+            {distCm / Math.max(0.001, dt) > cap + 1e-3 && (
+              <p className="flex items-start gap-1 text-[10.5px] text-warn">
+                <AlertTriangle size={11} className="mt-px shrink-0" />
+                Vượt tốc độ tối đa {cap} cm/s: đoạn này không kịp thời gian.
               </p>
             )}
           </div>
@@ -996,7 +1076,9 @@ function CueButtonEditor({
               <button
                 key={unit}
                 type="button"
-                onClick={() => onSave({ ...btn, speedUnit: unit as SpeedUnit })}
+                onClick={() => {
+                  if (btn.speedUnit !== unit) onSave({ ...btn, speedUnit: unit as SpeedUnit, autoSpeedLimitCms: undefined })
+                }}
                 className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${btn.speedUnit === unit ? 'on' : ''}`}
               >
                 {label}
@@ -1011,7 +1093,7 @@ function CueButtonEditor({
             aria-label="Giá trị tốc độ hoặc thời gian nút Cue"
             value={btn.speedValue}
             onChange={(e) =>
-              onSave({ ...btn, speedValue: Math.max(0.1, Number(e.target.value) || 1) }, `cue-spd-${btn.id}`)
+              onSave({ ...btn, speedValue: Math.max(0.1, Number(e.target.value) || 1), autoSpeedLimitCms: undefined }, `cue-spd-${btn.id}`)
             }
             className="kiln-field h-8 w-24 px-3 text-right text-xs tabular-nums"
           />
@@ -1295,7 +1377,7 @@ export function PropertiesPanel(props: {
       const issues = analyzeClipSpeeds(c, m)
       for (const issue of issues) {
         if (!issue.feasible) groupSpeedOver = true
-        const ratio = m.maxSpeedCms > 0 ? issue.requiredCms / m.maxSpeedCms : 0
+        const ratio = speedCap(m) > 0 ? issue.requiredCms / speedCap(m) : 0
         if (ratio > maxGroupSpeedRatio) maxGroupSpeedRatio = ratio
       }
     }
@@ -1480,6 +1562,7 @@ export function PropertiesPanel(props: {
         onBackToModule={() => selectTimelineClip(null)}
         onUpdate={(patch, coalesceKey, syncEdge) => updateClip(activeClip.id, patch, coalesceKey, syncEdge)}
         onDelete={() => deleteClip(activeClip.id)}
+        onPresetOverlap={() => notify('Không đủ chỗ để áp dụng mẫu sóng ở tốc độ Auto mặc định', 'warn')}
       />
     )
   }
@@ -1554,7 +1637,7 @@ export function PropertiesPanel(props: {
 
               <div className="grid grid-cols-2 gap-1.5">
                 <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
-                  <span className="shrink-0 text-[10px] text-muted">Thời lượng</span>
+                  <span className="shrink-0 text-[10px] text-muted">Thời lượng tối thiểu</span>
                   <input
                     type="number"
                     step="0.2"
@@ -1645,7 +1728,7 @@ export function PropertiesPanel(props: {
                     className="kiln-btn col-span-2 h-8 justify-start gap-1.5 px-2.5 text-[11px] text-fg disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     {presetIcon('alternating-wave')}
-                    Thêm cue Sóng so le · {layerPresetDur}s
+                    Thêm cue Sóng so le · ≥ {layerPresetDur}s
                   </button>
                 </div>
               )}
@@ -2013,7 +2096,7 @@ export function PropertiesPanel(props: {
   const frame = snapshot?.frame ?? []
   const ch1 = frame[baseIdx + CH.POSITION] ?? 0
   const ch2 = frame[baseIdx + CH.FINE] ?? 0
-  const homeOffsetMm = single.homeOffsetMm ?? 0
+  const ch2Fine = single.ch2Fine ?? 0
   const ch3 = frame[baseIdx + CH.SPEED] ?? single.defaultSpeed
   const ch4 = frame[baseIdx + CH.LOCK] ?? 0
   const modTf = single.transform ?? defaultModuleTransform()
@@ -2100,7 +2183,7 @@ export function PropertiesPanel(props: {
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
             DMX (Uni {project.settings.output.universe})
-            <span title="Mỗi module chiếm 4 kênh liên tiếp: byte cao vị trí, byte thấp vị trí, tốc độ, khoá 77">
+            <span title="Mỗi module chiếm 4 kênh liên tiếp: vị trí 8-bit (0 → Dài max), fine tĩnh, tốc độ (255 = Tốc độ max của module), khoá 77">
               <HelpCircle size={12} className="text-muted" />
             </span>
           </span>
@@ -2154,32 +2237,29 @@ export function PropertiesPanel(props: {
 
         <label className="block space-y-1">
           <span className="flex items-center gap-1 text-[11px] text-[#C2B3A4]">
-            Fine tune CH2 — home (mm)
-            <span title={`Hiệu chỉnh tĩnh tại vị trí 0 (home), 0–${HOME_OFFSET_MAX_MM} mm, để các module thẳng hàng. Không áp khi chạy timeline/cue/wave. 1 mm = 65535 / (Dài max × 1000) bước DMX 16-bit.`}>
+            Fine tune CH2 (0–255)
+            <span title="CH2 là kênh fine tĩnh: phát nguyên giá trị này, không đổi theo vị trí, timeline, cue, wave, manual hay LTC. Không có công thức mm→CH2 chính thức nên nhập thẳng giá trị DMX. Mặc định 0.">
               <HelpCircle size={11} />
             </span>
           </span>
           <input
-            key={`${single.id}-fine-${homeOffsetMm}`}
+            key={`${single.id}-fine-${ch2Fine}`}
             type="number"
             min={0}
-            max={HOME_OFFSET_MAX_MM}
-            step={0.1}
-            defaultValue={homeOffsetMm}
+            max={255}
+            step={1}
+            defaultValue={ch2Fine}
             onBlur={(e) => {
               const input = e.currentTarget
-              const next = Number.isFinite(input.valueAsNumber) ? normalizeHomeOffsetMm(input.valueAsNumber) : homeOffsetMm
+              const next = Number.isFinite(input.valueAsNumber) ? clamp(Math.round(input.valueAsNumber), 0, 255) : ch2Fine
               input.value = String(next)
-              if (next !== homeOffsetMm) updateModule(single.id, { homeOffsetMm: next })
+              if (next !== ch2Fine) updateModule(single.id, { ch2Fine: next })
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') e.currentTarget.blur()
             }}
             className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
-          <span className="text-[10px] text-muted tabular-nums">
-            = {homeOffsetSteps(homeOffsetMm, single.length)} bước (CH1/CH2 tại home)
-          </span>
         </label>
 
         {addrError && (
@@ -2250,7 +2330,7 @@ export function PropertiesPanel(props: {
         <label className="space-y-1">
           <span className="flex items-center gap-1 text-[11px] text-[#C2B3A4]">
             Tốc độ max (cm/s)
-            <span title="Vận tốc tối đa motor theo spec (H2 = 120 cm/s). Timeline đối chiếu thông số này để cảnh báo nếu quá nhanh.">
+            <span title="Vận tốc tối đa của module (mặc định H2 = 120 cm/s). Ứng với CH3 = 255; Timeline đối chiếu thông số này để cảnh báo nếu quá nhanh.">
               <HelpCircle size={11} />
             </span>
           </span>
@@ -2267,7 +2347,7 @@ export function PropertiesPanel(props: {
         <label className="space-y-1">
           <span className="flex items-center gap-1 text-[11px] text-[#C2B3A4]">
             CH3 mặc định
-            <span title="Giá trị DMX kênh tốc độ mặc định (100 ≈ 47 cm/s)">
+            <span title="CH3 0–255 tuyến tính, 255 = Tốc độ max của module (cm/s). Khuyến nghị CH3=100 ≈ 100/255 × Tốc độ max.">
               <HelpCircle size={11} />
             </span>
           </span>
@@ -2279,131 +2359,122 @@ export function PropertiesPanel(props: {
             onChange={(e) => updateModule(single.id, { defaultSpeed: Number(e.target.value) || 100 }, `mod-ch3-${single.id}`)}
             className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
+          <span className="text-[10px] text-muted tabular-nums">= {ch3ToCms(single.defaultSpeed, single.maxSpeedCms).toFixed(1)} cm/s (255 = {single.maxSpeedCms} cm/s; khuyến nghị CH3=100 ≈ {((100 / 255) * single.maxSpeedCms).toFixed(1)} cm/s)</span>
         </label>
       </div>
 
       <ChannelMonitor
         key={single.id}
         moduleId={single.id}
+        moduleName={single.name}
         live={[ch1, ch2, ch3, ch4]}
-        sent={snapshot?.overrides?.[single.id] ?? null}
-        globalLocked={!!snapshot?.locked}
-        moduleLocked={!!single.locked}
-        onToggleLock={(locked) => updateModule(single.id, { locked: locked || undefined })}
         maxSpeedCms={single.maxSpeedCms}
+        onPersistCh2={(v) => updateModule(single.id, { ch2Fine: v })}
       />
     </div>
   )
 }
 
-/** Giám sát + nhập 4 kênh. Nhập chỉ là bản nháp; "Sent" mới phát (override giữ & refresh theo sendHz). */
+/**
+ * Giám sát 4 kênh. Chỉ CH2 (fine) nhập được; CH1/CH3/CH4 chỉ hiển thị. "Sent" TEST fine tune: lưu CH2 vào module,
+ * gửi xung CH4=77 (SENT_PULSE_MS) rồi CH4 tự về 0; CH1 giữ nguyên, không bị khoá chặn.
+ */
 function ChannelMonitor({
   moduleId,
+  moduleName,
   live,
-  sent,
-  globalLocked,
-  moduleLocked,
-  onToggleLock,
   maxSpeedCms,
+  onPersistCh2,
 }: {
   moduleId: string
+  moduleName: string
   live: number[]
-  sent: number[] | null
-  globalLocked: boolean
-  moduleLocked: boolean
-  onToggleLock: (locked: boolean) => void
   maxSpeedCms: number
+  onPersistCh2: (ch2: number) => void
 }) {
-  const [draft, setDraft] = useState<(string | null)[]>([null, null, null, null])
-  const [err, setErr] = useState<string | null>(null)
-  const shown = live.map((v, i) => draft[i] ?? String(v))
-  const parsed = shown.map((v) => (v.trim() === '' ? NaN : Number(v)))
-  const valid = parsed.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)
-  const dirty = draft.some((d) => d !== null) && (!sent || parsed.some((n, i) => n !== sent[i]))
+  const [draft, setDraft] = useState<string | null>(null)
+  const [phase, setPhase] = useState<'idle' | 'sending' | 'sent'>('idle')
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (resetTimer.current) clearTimeout(resetTimer.current)
+  }, [])
+  const shown = draft ?? String(live[1])
+  const ch2 = shown.trim() === '' ? NaN : Number(shown)
+  const valid = Number.isInteger(ch2) && ch2 >= 0 && ch2 <= 255
+  const notify = useAppStore.getState().notify
   const send = async () => {
-    if (globalLocked) return setErr('Đang khoá – tắt khoá để gửi.')
-    if (moduleLocked) return setErr('Module đang khoá – mở khoá module để gửi.')
-    if (!valid) return setErr('Mỗi kênh phải là số nguyên 0–255.')
-    const res = await getBridge().command({ type: 'override', id: moduleId, values: parsed as [number, number, number, number] })
-    setErr(res.ok ? null : (res.message ?? 'Gửi thất bại'))
-    if (res.ok) setDraft([null, null, null, null])
+    if (!valid || phase === 'sending') return
+    setPhase('sending')
+    onPersistCh2(ch2)
+    try {
+      const res = await getBridge().command({ type: 'sendFine', id: moduleId, ch2 })
+      if (!res.ok) throw new Error(res.message ?? 'Gửi thất bại')
+      setDraft(null)
+      setPhase('sent')
+      notify(`${moduleName}: CH2 = ${ch2}, CH4 77 → 0 (xung ${SENT_PULSE_MS / 1000}s)`, 'success', { title: 'Đã gửi Sent', icon: 'success' })
+    } catch (err) {
+      setPhase('idle')
+      notify((err as Error).message, 'error', { title: 'Sent lỗi', icon: 'error' })
+      return
+    }
+    if (resetTimer.current) clearTimeout(resetTimer.current)
+    resetTimer.current = setTimeout(() => setPhase('idle'), 1400)
   }
-  const labels = ['CH1 Pos', 'CH2 Fine', 'CH3 Spd', 'CH4 Lock']
-  const titles = [
-    'CH1: byte cao vị trí 16-bit',
-    'CH2: byte thấp vị trí 16-bit (raw, chỉ cho override; offset home lưu ở ô Fine tune mm)',
-    `CH3: tốc độ (${ch3ToCms(parsed[2] || 0, maxSpeedCms).toFixed(0)} cm/s)`,
-    'CH4: khoá an toàn (77 = mở, 0 = khoá)',
+  const cells: Array<{ label: string; value: string; title: string; editable?: boolean }> = [
+    { label: 'CH1 Pos', value: String(live[0]), title: 'CH1: vị trí 0–255 (0 → chiều dài tối đa), kẹp theo min–max; Sent không đổi' },
+    { label: 'CH2 Fine', value: shown, title: 'CH2: fine tĩnh 0–255, chỉ đổi khi bạn nhập / bấm Sent', editable: true },
+    { label: 'CH3 Spd', value: String(live[2]), title: `CH3: tốc độ (${ch3ToCms(live[2], maxSpeedCms).toFixed(0)} cm/s; 255 = ${maxSpeedCms} cm/s)` },
+    { label: 'CH4 Lock', value: String(live[3]), title: `CH4: khoá an toàn. Sent phát ${SENT_CH4_PULSE_VALUE} trong ${SENT_PULSE_MS} ms rồi tự về 0` },
   ]
   return (
     <div className="sticky bottom-0 z-10 mt-auto space-y-2 border-t border-line bg-[var(--glass)] pt-2.5 pb-1">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">Giám sát 4 kênh DMX</span>
         <span className="flex items-center gap-1.5 text-[11px] text-[#C2B3A4]">
-          {sent && (
-            <button
-              type="button"
-              onClick={() => void getBridge().command({ type: 'clearOverride', id: moduleId })}
-              title="Xoá override, trở về điều khiển bình thường"
-              className="cursor-pointer rounded-full px-2 py-0.5 text-[10px] font-semibold text-muted shadow-[inset_0_0_0_1px_var(--line)] hover:text-fg"
-            >
-              Xoá
-            </button>
-          )}
           <button
             type="button"
             onClick={() => void send()}
-            disabled={!dirty}
-            title="Gửi 4 giá trị đã nhập ra DMX (giữ & phát lại liên tục)"
-            className="cursor-pointer rounded-full bg-brand/20 px-2 py-0.5 text-[10px] font-semibold text-[#FFB26B] hover:bg-brand/30 disabled:cursor-default disabled:opacity-40"
+            disabled={!valid || phase === 'sending'}
+            title={`Test fine tune: gửi CH2 = ${valid ? ch2 : '?'}, CH4 ${SENT_CH4_PULSE_VALUE} rồi về 0. Không bị khoá chặn, CH1 giữ nguyên.`}
+            aria-live="polite"
+            className={`inline-flex h-5 min-w-[46px] cursor-pointer items-center justify-center gap-1 rounded-full px-2 text-[10px] font-semibold whitespace-nowrap transition-all duration-200 disabled:cursor-default disabled:opacity-40 ${
+              phase === 'sent'
+                ? 'bg-ok/25 text-ok'
+                : phase === 'sending'
+                  ? 'scale-95 animate-pulse bg-brand/35 text-[#FFD08A]'
+                  : 'bg-brand/20 text-[#FFB26B] hover:bg-brand/30'
+            }`}
           >
-            Sent
-          </button>
-          <button
-            type="button"
-            onClick={() => onToggleLock(!moduleLocked)}
-            title={
-              moduleLocked
-                ? 'Khoá module này (CH4=0, đóng băng, chặn Sent) — bấm để mở'
-                : 'Module đang mở — bấm để khoá riêng module này. Không vượt được khoá toàn cục.'
-            }
-            aria-label={moduleLocked ? 'Mở khoá module' : 'Khoá module'}
-            aria-pressed={moduleLocked}
-            className="cursor-pointer rounded p-0.5 hover:bg-white/10"
-          >
-            {moduleLocked ? <Lock size={12} className="text-warn" /> : <Unlock size={12} className="text-ok" />}
+            {phase === 'sent' ? <Check size={11} strokeWidth={3} /> : null}
+            {phase === 'sent' ? 'Đã gửi' : phase === 'sending' ? '…' : 'Sent'}
           </button>
         </span>
       </div>
 
       <div className="grid grid-cols-4 gap-1.5 text-center tabular-nums">
-        {labels.map((label, i) => (
-          <label key={label} className="rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title={titles[i]}>
-            <div className="text-[9.5px] text-muted">{label}</div>
-            <input
-              type="number"
-              min={0}
-              max={255}
-              step={1}
-              value={shown[i]}
-              onChange={(e) => setDraft((d) => d.map((v, j) => (j === i ? e.target.value : (v ?? String(live[j])))))}
-              className="w-full bg-transparent text-center font-semibold text-fg outline-none"
-            />
+        {cells.map((c) => (
+          <label key={c.label} className="min-w-0 rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title={c.title}>
+            <div className="truncate text-[9.5px] text-muted">{c.label}</div>
+            {c.editable ? (
+              <input
+                type="number"
+                min={0}
+                max={255}
+                step={1}
+                value={c.value}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void send()
+                }}
+                className={`w-full bg-transparent text-center font-semibold outline-none ${valid ? 'text-fg' : 'text-danger'}`}
+              />
+            ) : (
+              <div className="font-semibold text-fg">{c.value}</div>
+            )}
           </label>
         ))}
       </div>
-      {(dirty || sent) && (
-        <p className={`text-[10.5px] ${dirty ? 'text-warn' : 'text-ok'}`}>
-          {dirty ? 'Chưa gửi — bấm Sent để phát.' : 'Override đang phát (giữ cho tới khi Xoá).'}
-        </p>
-      )}
-      {globalLocked && (
-        <p className="flex items-start gap-1 text-[10.5px] text-warn">
-          <AlertTriangle size={11} className="mt-px shrink-0" />
-          Đang khoá toàn cục – tắt khoá để gửi (Sent bị chặn; mở khoá module không vượt được khoá toàn cục).
-        </p>
-      )}
-      {err && <p className="text-[10.5px] text-danger">{err}</p>}
+      {!valid && <p className="text-[10.5px] text-danger">CH2 phải là số nguyên 0–255.</p>}
     </div>
   )
 }

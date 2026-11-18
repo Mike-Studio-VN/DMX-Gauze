@@ -1,32 +1,52 @@
 import { describe, expect, it } from 'vitest'
 import { autoAssign, conflictMap, nextFree, validateAddress } from './addressing'
 import { buildArtDmx, buildArtPoll, buildArtPollReply, parseArtPollReply, portAddress } from './artnet'
-import { ch3ToCms, cmsToCh3, dmxToPos, durationToCh3, homeOffsetSteps, posToDmx } from './convert'
+import { ch1Range, ch1ToPos, ch3ToCms, cmsToCh3, durationToCh3, posToCh1, snapPos } from './convert'
 import { LtcDecoder } from './ltc'
 import { DEFAULT_PROJECT_NAME, PROJECT_NAME_MAX, createDefaultProject, normalizeProject, projectFileName } from './preset'
 import { formatTc, parseTc, tcToFrames } from './timecode'
 import { analyzeClipSpeeds } from './timeline'
 
 describe('convert', () => {
-  it('chuyển đổi vị trí 16-bit chính xác với hành trình 1m và 3m', () => {
-    const mid1 = posToDmx(0.5, 1)
-    expect(mid1.coarse).toBe(128)
-    expect(dmxToPos(mid1.coarse, mid1.fine, 1)).toBeCloseTo(0.5, 3)
+  const modA = { length: 4, minHeight: 0.4, maxHeight: 3.6 }
 
-    const mid3 = posToDmx(1.5, 3)
-    expect(mid3.coarse).toBe(128)
-    expect(dmxToPos(mid3.coarse, mid3.fine, 3)).toBeCloseTo(1.5, 3)
-  })
-
-  it('home offset: mm → bước 16-bit, chỉ áp tại target 0', () => {
-    expect(homeOffsetSteps(40, 1)).toBe(2621)
-    expect(homeOffsetSteps(1000, 1)).toBe(2621) // kẹp 40 mm
-    expect(homeOffsetSteps(-5, 1)).toBe(0)
-    expect(posToDmx(0, 1, 40)).toEqual({ coarse: 10, fine: 0x3d })
-    expect(posToDmx(0.5, 1, 40)).toEqual(posToDmx(0.5, 1))
+  it('CH1 8-bit: 0/255 tại min,max, giữa; kẹp ngoài khoảng', () => {
+    const full = { length: 3, minHeight: 0, maxHeight: 3 }
+    expect(posToCh1(0, full)).toBe(0)
+    expect(posToCh1(3, full)).toBe(255)
+    expect(posToCh1(1.5, full)).toBe(128)
+    expect(posToCh1(-1, full)).toBe(0)
+    expect(posToCh1(99, full)).toBe(255)
+    // min/max nhập ở module: CH1 không ra ngoài [ceil(min/L×255), floor(max/L×255)]
+    expect(ch1Range(modA)).toEqual([26, 229])
+    expect(posToCh1(0, modA)).toBe(26)
+    expect(posToCh1(4, modA)).toBe(229)
+    expect(posToCh1(2, modA)).toBe(128)
+    expect(snapPos(0, modA)).toBeGreaterThanOrEqual(0.4)
+    expect(snapPos(4, modA)).toBeLessThanOrEqual(3.6)
+    expect(ch1ToPos(255, 3)).toBe(3)
   });
 
-  it('quy đổi tốc độ H2 120 cm/s và thời gian sang CH3', () => {
+  it('CH3 theo thang của module: max 120 → 100 ≈ 47 cm/s; max 80 → 255 = 80 cm/s, 40 cm/s → 128', () => {
+    expect(ch3ToCms(255, 120)).toBe(120)
+    expect(ch3ToCms(100, 120)).toBeCloseTo(47.06, 2)
+    expect(cmsToCh3(47.06, 120)).toBe(100)
+    expect(cmsToCh3(47, 120)).toBe(100)
+    expect(cmsToCh3(50, 120)).toBe(107) // làm tròn lên: không chậm hơn yêu cầu
+    expect(cmsToCh3(120, 120)).toBe(255)
+    expect(cmsToCh3(999, 120)).toBe(255)
+    expect(durationToCh3(0.470588, 1, 120).ch3).toBe(100) // ceil có epsilon: không thành 101
+    // module khác: 255 = maxSpeedCms của module đó
+    expect(ch3ToCms(255, 80)).toBe(80)
+    expect(cmsToCh3(80, 80)).toBe(255)
+    expect(cmsToCh3(40, 80)).toBe(128)
+    expect(ch3ToCms(100, 80)).toBeCloseTo(31.37, 2)
+    expect(cmsToCh3(200, 200)).toBe(255) // max > 120 cũng đúng thang
+    expect(cmsToCh3(100, 200)).toBe(128)
+    expect(durationToCh3(0.4, 1, 80).ch3).toBe(128)
+  });
+
+  it('quy đổi tốc độ và thời gian sang CH3', () => {
     expect(ch3ToCms(255, 120)).toBeCloseTo(120, 5)
     expect(cmsToCh3(60, 120)).toBe(128)
     expect(cmsToCh3(0, 120)).toBe(1) // không bao giờ trả 0 (phanh)
@@ -44,15 +64,15 @@ describe('convert', () => {
   it('tính tiến độ & ETA cho nút Lên/Xuống ở chế độ Manual', async () => {
     const { computeManualMotionProgress } = await import('./convert')
     const p = createDefaultProject()
-    const m = { ...p.modules[0], id: 'm1', minHeight: 0, maxHeight: 3, length: 3, maxSpeedCms: 100 }
-    // Đang đi xuống từ 0m -> 3m, hiện tại ở 1.5m với ch3=255 (100 cm/s -> còn 1.5s)
+    const m = { ...p.modules[0], id: 'm1', minHeight: 0, maxHeight: 3, length: 3, maxSpeedCms: 120 }
+    // Đang đi xuống từ 0m -> 3m, hiện tại ở 1.5m với ch3=255 (120 cm/s -> còn 1.25s)
     const downRes = computeManualMotionProgress(
       { m1: { start: 0, goal: 3 } },
       [m],
       { modules: { m1: { pos: 1.5, target: 3, ch3: 255, moving: true } } },
     )
     expect(downRes.progress).toBeCloseTo(0.5, 3)
-    expect(downRes.etaSec).toBeCloseTo(1.5, 2)
+    expect(downRes.etaSec).toBeCloseTo(1.25, 2)
     expect(downRes.anyMoving).toBe(true)
     expect(downRes.reached).toBe(false)
 
@@ -571,7 +591,7 @@ describe('timeline -> GauzeCore end-to-end execution', () => {
     const { GauzeCore } = await import('./core')
     const { MockDriver } = await import('./drivers')
     const { CH, LOCK_VALUE } = await import('./dmx')
-    const { dmxToPos } = await import('./convert')
+    const { ch1ToPos } = await import('./convert')
     const { buildTimelineFollowCommands, evaluateModuleTimelineHeight } = await import('./timeline')
 
     let now = 10_000
@@ -585,18 +605,23 @@ describe('timeline -> GauzeCore end-to-end execution', () => {
     core.start()
     core.command({ type: 'lock', locked: false })
 
-    // Giả lập Trước 1 đang thả ở 0.8m (từ chế độ Manual trước đó)
-    core.command({ type: 'move', ids: ['m-front-1'], target: 0.8, speed: { unit: 'cms', value: 120 } })
+    // Giả lập Trước 1 đang lệch 0.4m, đủ để pre-roll 1s về 0 với CH3=100.
+    core.command({ type: 'move', ids: ['m-front-1'], target: 0.4, speed: { unit: 'cms', value: 120 } })
     for (let i = 0; i < 40; i += 1) {
       now += 25
       core.tick()
     }
-    expect(core.snapshot().modules['m-front-1'].pos).toBeCloseTo(0.8, 2)
+    expect(core.snapshot().modules['m-front-1'].pos).toBeCloseTo(0.4, 2)
 
-    // Chạy timeline từ t=0s..8.2s: bước mô phỏng core 20ms, cập nhật follow command mỗi 40ms
+    const [frontClip, backClip] = p.clips!
+    const keyTimes = (clip: typeof frontClip) => clip.keyframes.map(({ offset }) => Math.round((clip.startTime + offset) * 50) * 20)
+    const frontTimes = keyTimes(frontClip)
+    const backTimes = keyTimes(backClip)
+    const checkpoints = new Set([...frontTimes, ...backTimes])
+    // Mô phỏng core mỗi 20ms, cập nhật lệnh Timeline mỗi 40ms.
     const sampled: Record<number, { front: number; back: number }> = {}
     let nextFollowT = 0
-    for (let ms = 0; ms <= 8200; ms += 20) {
+    for (let ms = 0; ms <= Math.max(...checkpoints) + 200; ms += 20) {
       const t = ms / 1000
       if (t + 1e-6 >= nextFollowT) {
         nextFollowT += 0.04
@@ -609,8 +634,9 @@ describe('timeline -> GauzeCore end-to-end execution', () => {
       }
       now += 20
       core.tick()
-      if ([1000, 2000, 3000, 4000, 5000, 6500, 8100].includes(ms)) {
+      if (checkpoints.has(ms)) {
         const s = core.snapshot()
+        expect(ch3ToCms(s.frame[CH.SPEED], p.modules[0].maxSpeedCms)).toBeLessThanOrEqual(50)
         sampled[ms] = {
           front: s.modules['m-front-1'].pos,
           back: s.modules['m-back-1'].pos,
@@ -618,24 +644,14 @@ describe('timeline -> GauzeCore end-to-end execution', () => {
       }
     }
 
-    // 1) Pre-roll đưa Trước 1 từ 0.8m về 0.0m trước khi sóng bắt đầu ở 1s
-    expect(sampled[1000].front).toBeLessThan(0.05)
-    // 2) Trước 1 đi xuống ~0.7m (2s) -> đỉnh 1.0m (3s) -> đi lên ~0.7m (4s) -> về 0.0m (5s)
-    expect(sampled[2000].front).toBeGreaterThan(0.62)
-    expect(sampled[2000].front).toBeLessThan(0.78)
-    expect(sampled[3000].front).toBeGreaterThan(0.95)
-    expect(sampled[4000].front).toBeGreaterThan(0.62)
-    expect(sampled[4000].front).toBeLessThan(0.78)
-    expect(sampled[5000].front).toBeLessThan(0.08)
-
-    // 3) Sau 1 (3m) đi xuống ~2.4m (5s) rồi thu về 0.0m (8s)
-    expect(sampled[5000].back).toBeGreaterThan(2.3)
-    expect(sampled[8100].back).toBeLessThan(0.05)
+    // Kiểm tra pre-roll, các điểm sóng Mượt đã giãn và vị trí chốt.
+    frontTimes.forEach((ms, i) => expect(Math.abs(sampled[ms].front - frontClip.keyframes[i].height)).toBeLessThan(0.08))
+    backTimes.forEach((ms, i) => expect(Math.abs(sampled[ms].back - backClip.keyframes[i].height)).toBeLessThan(0.1))
 
     // 4) Kiểm tra frame DMX thực sự xuất CH4=77 và vị trí khớp chiều dài cuối clip
     const finalSnap = core.snapshot()
     expect(finalSnap.frame[CH.LOCK]).toBe(77)
-    expect(dmxToPos(finalSnap.frame[CH.POSITION], finalSnap.frame[CH.FINE], 1)).toBeCloseTo(0, 2)
+    expect(ch1ToPos(finalSnap.frame[CH.POSITION], 1)).toBeCloseTo(0, 2)
 
     // 5) Đảm bảo đoạn giữ đỉnh phẳng không bị võng vượt biên trong evaluateModuleTimelineHeight
     const holdClip = {
@@ -1035,27 +1051,27 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
 })
 
 describe('project round-trip của trường mới', () => {
-  it('homeOffsetMm + locked + output.sendHz giữ nguyên qua serialize → parse', () => {
+  it('homeOffsetMm giữ nguyên qua serialize → parse; locked cũ bị bỏ qua và không ghi lại', () => {
     const project = createDefaultProject()
     project.modules[0].homeOffsetMm = 12.5
-    project.modules[0].locked = true
+    ;(project.modules[0] as unknown as Record<string, unknown>).locked = true // trường cũ
     project.modules[1].homeOffsetMm = 40
     const back = normalizeProject(JSON.parse(JSON.stringify(normalizeProject(project))))
-    expect(back).toEqual(normalizeProject(project))
-    expect(back.modules[0]).toMatchObject({ homeOffsetMm: 12.5, locked: true })
+    expect(back.modules[0]).toMatchObject({ homeOffsetMm: 12.5 })
+    expect(back.modules.every((m) => !('locked' in m))).toBe(true)
+    expect(JSON.stringify(back)).not.toContain('"locked"')
     expect(back.modules[1].homeOffsetMm).toBe(40)
   })
 
-  it('project cũ không có trường mới vẫn mở được, mặc định: không offset, không khoá', () => {
+  it('project cũ không có trường mới vẫn mở được, mặc định: không offset', () => {
     const project = createDefaultProject()
     const raw = JSON.parse(JSON.stringify(project))
     for (const m of raw.modules) {
       delete m.homeOffsetMm
-      delete m.locked
       m.fineTune = 100 // trường v1.0.4 bị bỏ qua
     }
     const back = normalizeProject(raw)
-    expect(back.modules.every((m) => m.homeOffsetMm === undefined && m.locked === undefined && !('fineTune' in m))).toBe(true)
+    expect(back.modules.every((m) => m.homeOffsetMm === undefined && !('fineTune' in m))).toBe(true)
   })
 })
 

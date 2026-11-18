@@ -1,8 +1,9 @@
 import { autoAssign } from './addressing'
-import { ARTNET_PORT, DEFAULT_SPEED, DEFAULT_TARGET_IP, HOME_OFFSET_MAX_MM, H2_MAX_SPEED_CMS, LOCK_VALUE } from './dmx'
+import { ARTNET_PORT, DEFAULT_SPEED, DEFAULT_TARGET_IP, H2_MAX_SPEED_CMS, LOCK_VALUE } from './dmx'
 import { DEFAULT_DMX_TRANSPORT_HZ, normalizeDmxTransportRate } from './dmxTransport'
 import { KINET_PORT, SACN_PORT, defaultPortForDriver } from './protocols'
 import { FPS_OPTIONS, LTC_FPS_OPTIONS } from './timecode'
+import { DEFAULT_MOTION_SPEED_CMS, defaultCueSpeedCms, defaultMotionSpeedCms, fitDefaultMotionDuration, roundUpMotionDuration, segmentDistCm } from './timeline'
 
 export const CURRENT_SCHEMA_VERSION = 2
 import type {
@@ -234,11 +235,12 @@ export function normalizeProject(raw: unknown): Project {
       maxHeight: Math.min(length, maxHeight),
       startAddress: reqFinite(item.startAddress, `modules[${idx}].startAddress`, 1, 509, true),
       maxSpeedCms: reqFinite(item.maxSpeedCms, `modules[${idx}].maxSpeedCms`, 1, 10000),
-      // fineTune (±255 bước, v1.0.4) bị bỏ qua: định nghĩa cũ không đổi được sang mm.
+      // fineTune (±255 bước, v1.0.4) bị bỏ qua. homeOffsetMm (v1.0.5–1.0.7) được giữ nguyên nhưng không còn tác dụng.
+      ...(item.ch2Fine === undefined ? {} : { ch2Fine: reqFinite(item.ch2Fine, `modules[${idx}].ch2Fine`, 0, 255, true) }),
       ...(item.homeOffsetMm === undefined
         ? {}
-        : { homeOffsetMm: reqFinite(item.homeOffsetMm, `modules[${idx}].homeOffsetMm`, 0, HOME_OFFSET_MAX_MM) }),
-      ...(reqOptionalBool(item.locked, `modules[${idx}].locked`, false) ? { locked: true } : {}),
+        : { homeOffsetMm: reqFinite(item.homeOffsetMm, `modules[${idx}].homeOffsetMm`, 0, 40) }),
+      // `locked` (khoá theo module, v1.0.5–1.0.8) đã bỏ: giá trị trong file cũ bị bỏ qua, không ghi lại.
       defaultSpeed: reqFinite(item.defaultSpeed, `modules[${idx}].defaultSpeed`, 1, 255, true),
     }
   })
@@ -267,6 +269,9 @@ export function normalizeProject(raw: unknown): Project {
         steps,
         speedUnit: b.speedUnit,
         speedValue: reqFinite(b.speedValue, `buttons[${idx}].speedValue`, 0.01),
+        ...(b.autoSpeedLimitCms === undefined ? {} : {
+          autoSpeedLimitCms: reqFinite(b.autoSpeedLimitCms, `buttons[${idx}].autoSpeedLimitCms`, 1, DEFAULT_MOTION_SPEED_CMS),
+        }),
         ...(b.slotIndex !== undefined
           ? { slotIndex: reqFinite(b.slotIndex, `buttons[${idx}].slotIndex`, 0, 128, true) }
           : {}),
@@ -321,6 +326,9 @@ export function normalizeProject(raw: unknown): Project {
         startTime: reqFinite(c.startTime, `clips[${idx}].startTime`, 0),
         duration,
         curveMode: c.curveMode,
+        ...(c.autoSpeedLimitCms === undefined ? {} : {
+          autoSpeedLimitCms: reqFinite(c.autoSpeedLimitCms, `clips[${idx}].autoSpeedLimitCms`, 1, H2_MAX_SPEED_CMS),
+        }),
         keyframes,
       }
     })
@@ -429,6 +437,10 @@ export function createDefaultProject(): Project {
   ]
 
   const modules = autoAssign(layers, [...frontModules, backModule])
+  const fullTravelSeconds = Math.max(...modules.map((mod) =>
+    segmentDistCm(mod, mod.minHeight, mod.maxHeight) / defaultMotionSpeedCms(mod),
+  ))
+  const fullTravelDuration = roundUpMotionDuration(fullTravelSeconds)
 
   const defaultClips: TimelineClip[] = [
     {
@@ -474,7 +486,8 @@ export function createDefaultProject(): Project {
         name: 'Hạ tất cả',
         steps: modules.map((m) => ({ moduleId: m.id, position: m.maxHeight })),
         speedUnit: 'sec',
-        speedValue: 4,
+        speedValue: fullTravelDuration,
+        autoSpeedLimitCms: DEFAULT_MOTION_SPEED_CMS,
       },
       {
         id: 'cue-wave',
@@ -484,18 +497,20 @@ export function createDefaultProject(): Project {
           position: Number((0.2 + 0.8 * Math.sin((i / 11) * Math.PI)).toFixed(2)),
         })),
         speedUnit: 'cms',
-        speedValue: 60,
+        speedValue: defaultCueSpeedCms(frontModules),
+        autoSpeedLimitCms: DEFAULT_MOTION_SPEED_CMS,
       },
       {
         id: 'cue-home',
         name: 'Về 0 toàn bộ',
         steps: modules.map((m) => ({ moduleId: m.id, position: 0 })),
         speedUnit: 'sec',
-        speedValue: 3,
+        speedValue: fullTravelDuration,
+        autoSpeedLimitCms: DEFAULT_MOTION_SPEED_CMS,
       },
     ],
     keys: [],
-    clips: defaultClips,
+    clips: defaultClips.map((clip) => fitDefaultMotionDuration(clip, modules.find((mod) => mod.id === clip.moduleId)!)),
     settings: {
       output: {
         driver: 'mock',

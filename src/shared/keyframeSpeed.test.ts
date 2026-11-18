@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { cmsToCh3 } from './convert'
 import { createDefaultProject, normalizeProject } from './preset'
-import { LinearFollowPlanner, planTimelineFollow, resolveKeyframeSpeed } from './timeline'
+import { LinearFollowPlanner, cmsToSeconds, planTimelineFollow, resolveKeyframeSpeed, secondsToCms, segmentDistCm } from './timeline'
 import type { ModuleCfg, TimelineClip } from './types'
 
 const mod: ModuleCfg = {
@@ -45,7 +45,7 @@ describe('resolveKeyframeSpeed', () => {
 
 describe('planner theo mode', () => {
   it('Thẳng: auto giữ nguyên (100cm/2s = 50), manual thay bằng giá trị nhập, một lệnh mỗi đoạn', () => {
-    expect(move(clipOf('linear'), 0).speed).toBeCloseTo(50, 1)
+    expect(move(clipOf('linear'), 0).speed).toBeCloseTo(50.2, 1) // quãng 1 m lượng tử hoá CH1 (4 m/255) = 100.39 cm
     const m = move(clipOf('linear', { speedMode: 'manual', manualSpeedCms: 80 }), 0)
     expect(m.speed).toBe(80)
     expect(m.warnings).toEqual([])
@@ -86,5 +86,52 @@ describe('lưu/đọc keyframe speed', () => {
     expect(() => normalizeProject(p)).toThrow(/speedMode/)
     p.clips = [clipOf('linear', { speedMode: 'manual' })]
     expect(() => normalizeProject(p)).toThrow(/manualSpeedCms/)
+  })
+})
+
+describe('đổi s ⇄ cm/s theo quãng đường thực tế', () => {
+  it('hai chiều cho giá trị tương đương, quãng 0 không chia cho 0', () => {
+    expect(cmsToSeconds(100, 50)).toBe(2)
+    expect(secondsToCms(100, 2, 120)).toBe(50)
+    const cms = 37.5
+    expect(secondsToCms(80, cmsToSeconds(80, cms)!, 120)).toBeCloseTo(cms, 10)
+    expect(secondsToCms(100, 0.1, 120)).toBe(120) // kẹp trần
+    expect(secondsToCms(100, 1000, 120)).toBe(1) // kẹp sàn
+    expect(cmsToSeconds(0, 50)).toBeNull()
+    expect(secondsToCms(0, 2, 120)).toBeNull()
+    expect(secondsToCms(100, 0, 120)).toBeNull()
+  })
+
+  it('quãng đường dùng độ cao đã kẹp min–max và lượng tử hoá CH1', () => {
+    const m = { length: 2.55, minHeight: 0.5, maxHeight: 2 }
+    expect(segmentDistCm(m, 0, 99)).toBeCloseTo(150, 6) // 0→0.5, 99→2.0
+    expect(segmentDistCm(m, 1, 1)).toBe(0)
+    expect(segmentDistCm({ length: 4, minHeight: 0, maxHeight: 4 }, 0, 1)).toBeCloseTo(100.39, 2) // 64×4/255 m
+  })
+})
+
+describe('project cũ & CH2 tĩnh', () => {
+  it('ch2Fine round-trip, mặc định không có field; homeOffsetMm cũ được giữ nguyên (không mất dữ liệu)', () => {
+    const p = createDefaultProject()
+    p.modules[0].ch2Fine = 200
+    p.modules[1].homeOffsetMm = 12.5 // dữ liệu v1.0.5–1.0.7
+    const back = normalizeProject(JSON.parse(JSON.stringify(normalizeProject(p))))
+    expect(back.modules[0].ch2Fine).toBe(200)
+    expect(back.modules[1].homeOffsetMm).toBe(12.5)
+    expect(back.modules[2]?.ch2Fine).toBeUndefined()
+    const raw = JSON.parse(JSON.stringify(p))
+    raw.modules[0].ch2Fine = 256
+    expect(() => normalizeProject(raw)).toThrow(/ch2Fine/)
+  })
+})
+
+describe('project cũ giữ maxSpeedCms đã lưu', () => {
+  it('maxSpeedCms 80 / 200 không bị kẹp 120 khi đọc', () => {
+    const p = createDefaultProject()
+    p.modules[0].maxSpeedCms = 80
+    p.modules[1].maxSpeedCms = 200
+    const back = normalizeProject(JSON.parse(JSON.stringify(normalizeProject(p))))
+    expect(back.modules[0].maxSpeedCms).toBe(80)
+    expect(back.modules[1].maxSpeedCms).toBe(200)
   })
 })

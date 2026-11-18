@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { autoAssign, layerLoopAddress, nextFree, orderedModules, validateAddress } from '@shared/addressing'
 import type { AppInfo, SnapshotDto } from '@shared/api'
-import { clamp, normalizeHomeOffsetMm } from '@shared/convert'
+import { clamp } from '@shared/convert'
 import { DEFAULT_SPEED, H2_MAX_SPEED_CMS, isValidStartAddress, rangesOverlap } from '@shared/dmx'
 import { resolveOutputSettingsPatch } from '@shared/protocols'
 import {
@@ -13,6 +13,7 @@ import {
   buildMultiClipShiftPatch,
   buildPresetPatchForClips,
   buildTimingPatchForSelectedClips,
+  defaultMotionDuration,
   resolveClipStartNoOverlap,
   syncModuleClipsContinuity,
 } from '@shared/timeline'
@@ -992,7 +993,7 @@ export const useAppStore = create<AppState>((set, get) => {
         merged.maxHeight = Math.min(merged.length, Math.max(0, merged.maxHeight))
         merged.minHeight = Math.min(merged.maxHeight, Math.max(0, merged.minHeight))
         merged.maxSpeedCms = Math.min(10000, Math.max(10, merged.maxSpeedCms))
-        if (merged.homeOffsetMm !== undefined) merged.homeOffsetMm = normalizeHomeOffsetMm(merged.homeOffsetMm)
+        if (merged.ch2Fine !== undefined) merged.ch2Fine = Math.min(255, Math.max(0, Math.round(merged.ch2Fine) || 0))
         merged.defaultSpeed = Math.min(255, Math.max(1, Math.round(merged.defaultSpeed)))
         return merged
       })
@@ -1274,21 +1275,31 @@ export const useAppStore = create<AppState>((set, get) => {
       const { project } = get()
       const existing = project.clips ?? []
       const sameMod = existing.filter((c) => c.moduleId === clip.moduleId).sort((a, b) => a.startTime - b.startTime)
-      const safeStart = resolveClipStartNoOverlap(sameMod, clip.duration, clip.startTime)
-      const prev = [...sameMod].reverse().find((c) => c.startTime + c.duration <= safeStart + 1e-3)
-      const next = sameMod.find((c) => c.startTime >= safeStart + clip.duration - 1e-3)
-      const kfs = [...clip.keyframes].sort((a, b) => a.offset - b.offset)
-      if (kfs.length > 0 && prev && prev.keyframes.length > 0) {
-        const prevSorted = [...prev.keyframes].sort((a, b) => a.offset - b.offset)
-        kfs[0] = { ...kfs[0], height: prevSorted[prevSorted.length - 1].height }
-      }
-      if (kfs.length > 1 && next && next.keyframes.length > 0) {
-        const nextSorted = [...next.keyframes].sort((a, b) => a.offset - b.offset)
-        kfs[kfs.length - 1] = { ...kfs[kfs.length - 1], height: nextSorted[0].height }
-      }
-      const nextClip: TimelineClip = { ...clip, startTime: safeStart, keyframes: kfs }
-      let clips = syncModuleClipsContinuity([...existing, nextClip], clip.moduleId)
       const layer = project.layers.find((l) => l.id === clip.layerId)
+      const affected = project.modules.filter((m) => m.id === clip.moduleId || (layer?.syncLayer && m.layerId === layer.id))
+      const points = [...clip.keyframes].sort((a, b) => a.offset - b.offset)
+      let duration = clip.duration
+      let nextClip: TimelineClip
+      for (;;) {
+        const startTime = resolveClipStartNoOverlap(sameMod, duration, clip.startTime)
+        const prev = [...sameMod].reverse().find((c) => c.startTime + c.duration <= startTime + 1e-3)
+        const next = sameMod.find((c) => c.startTime >= startTime + duration - 1e-3)
+        const keyframes = points.map((k) => ({ ...k, offset: duration === clip.duration ? k.offset : k.offset / clip.duration * duration }))
+        if (keyframes.length > 0 && prev && prev.keyframes.length > 0) {
+          const prevSorted = [...prev.keyframes].sort((a, b) => a.offset - b.offset)
+          keyframes[0].height = prevSorted[prevSorted.length - 1].height
+        }
+        if (keyframes.length > 1 && next && next.keyframes.length > 0) {
+          const nextSorted = [...next.keyframes].sort((a, b) => a.offset - b.offset)
+          keyframes[keyframes.length - 1].height = nextSorted[0].height
+        }
+        nextClip = { ...clip, startTime, duration, keyframes }
+        if (clip.autoSpeedLimitCms === undefined) break
+        const required = Math.max(duration, ...affected.map((mod) => defaultMotionDuration(nextClip, mod)))
+        if (required <= duration) break
+        duration = required
+      }
+      let clips = syncModuleClipsContinuity([...existing, nextClip], clip.moduleId)
       if (layer?.syncLayer) {
         clips = mirrorLayerClips(clips, project.modules, layer.id, clip.moduleId)
       }
@@ -1360,7 +1371,10 @@ export const useAppStore = create<AppState>((set, get) => {
     applyPresetToSelectedClips(opts) {
       const { project, selectedClipIds } = get()
       const nextClips = buildPresetPatchForClips(project.clips ?? [], project.modules, selectedClipIds, opts)
-      if (!nextClips) return false
+      if (!nextClips) {
+        if (opts.presetId) get().notify('Không đủ chỗ để áp dụng mẫu sóng ở tốc độ Auto mặc định', 'warn')
+        return false
+      }
       applyProject({ ...project, clips: nextClips })
       return true
     },
@@ -1487,7 +1501,7 @@ export const useAppStore = create<AppState>((set, get) => {
         },
       )
       const label = LAYER_MOTION_PRESETS.find((p) => p.id === presetId)?.label ?? presetId
-      get().notify(`Đã tạo ${created.length} moment "${label}" tại ${created[0].startTime.toFixed(2)}s`, 'info')
+      get().notify(`Đã tạo ${created.length} moment "${label}" dài ${created[0].duration}s tại ${created[0].startTime.toFixed(2)}s`, 'info')
       return created.length
     },
 
