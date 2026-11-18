@@ -37,6 +37,7 @@ import {
   analyzeClipSpeeds,
   analyzeTimeline,
   buildCurveKeyframes,
+  DEFAULT_MOTION_SPEED_CMS,
   computeMarqueeSelectedClipIds,
   fullCurvePath,
   heightToPercent,
@@ -587,6 +588,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       startTime: Math.max(0, Number(startSec.toFixed(4))),
       duration: dur,
       curveMode: 'smooth',
+      autoSpeedLimitCms: DEFAULT_MOTION_SPEED_CMS,
       keyframes,
     }
     addClip(clip)

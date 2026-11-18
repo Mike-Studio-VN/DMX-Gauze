@@ -143,6 +143,37 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     vi.unstubAllGlobals();
   });
 
+  it('extends a newly inserted default moment after it inherits neighbouring heights', async () => {
+    setupBrowserEnv();
+    vi.useFakeTimers();
+    const previous = useAppStore.getState();
+    try {
+      const { DEFAULT_MOTION_SPEED_CMS } = await import('@shared/timeline');
+      const project = createDefaultProject();
+      const mod = project.modules.at(-1)!;
+      const makeHold = (id: string, startTime: number, height: number): TimelineClip => ({
+        id, moduleId: mod.id, layerId: mod.layerId, startTime, duration: 1,
+        keyframes: [{ id: `${id}-hold`, offset: 0, height }],
+      });
+      const before = makeHold('before', 0, 3);
+      const after = makeHold('after', 10, 0);
+      useAppStore.setState({ project: { ...project, clips: [before, after] } });
+      useAppStore.getState().addClip({
+        ...makeHold('inserted', 2, 0), duration: 4, autoSpeedLimitCms: DEFAULT_MOTION_SPEED_CMS,
+        keyframes: [{ id: 'in', offset: 0, height: 0 }, { id: 'out', offset: 4, height: 0 }],
+      });
+      const clips = useAppStore.getState().project.clips!;
+      expect(clips.find((clip) => clip.id === 'inserted')).toMatchObject({
+        startTime: 2, duration: 6.5,
+        keyframes: [{ offset: 0, height: 3 }, { offset: 6.5, height: 0 }],
+      });
+      expect(clips.filter((clip) => clip.id !== 'inserted')).toEqual([before, after]);
+    } finally {
+      useAppStore.setState(previous);
+      vi.useRealTimers();
+    }
+  });
+
   it('creates alternating-wave cues only in Timeline and releases their targets on mode changes', async () => {
     setupBrowserEnv();
     vi.useFakeTimers();
@@ -518,8 +549,8 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
       expect(useAppStore.getState().applyLayerMotionPreset('layer-empty', 'all-up')).toBe(0);
       expect(useAppStore.getState().applyLayerMotionPreset('layer-a', 'all-up', { duration: Number.NaN })).toBe(0);
 
-      // Apply 'all-down' at playhead 10s with duration 4s:
-      // 1) Common forward base moves BOTH m-long and m-short together to 14..18 (never backward to 6..10!).
+      // The requested 4s grows to 6.5s for the 3m module, so the existing clip at 20..22
+      // moves the common available window to 22..28.5 for both modules.
       // 2) Old clips (existingAtHead & existingFuture height 0.7) remain 100% untouched.
       // 3) syncLayer & dmxLoop are resolved so mixed lengths reach independent targets (3m vs 1m).
       const countDown = useAppStore.getState().applyLayerMotionPreset('layer-a', 'all-down', { duration: 4 });
@@ -537,19 +568,21 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
 
       const longDown = clips.find((c) => c.moduleId === 'm-long' && c.id !== 'existing-head')!;
       const shortDown = clips.find((c) => c.moduleId === 'm-short' && c.id !== 'existing-future')!;
-      expect(longDown.startTime).toBe(14);
-      expect(shortDown.startTime).toBe(14);
+      expect(longDown.startTime).toBe(22);
+      expect(shortDown.startTime).toBe(22);
+      expect(longDown.duration).toBe(6.5);
+      expect(shortDown.duration).toBe(6.5);
       expect(longDown.keyframes.map((k) => k.height)).toEqual([0, 3]);
       expect(shortDown.keyframes.map((k) => k.height)).toEqual([0, 1]);
 
-      // Real follow -> store.sendCommand -> GauzeCore verification at end of all-down (t=18s):
+      // Real follow -> store.sendCommand -> GauzeCore verification at the end of all-down.
       core.configure({
         modules: state.project.modules,
         output: state.project.settings.output,
         lockValue: state.project.settings.lockValue,
       });
       core.command({ type: 'lock', locked: false });
-      const cmds = buildTimelineFollowCommands(state.project.modules, clips, [], 18, 0, core.snapshot());
+      const cmds = buildTimelineFollowCommands(state.project.modules, clips, [], 28.5, 0, core.snapshot());
       for (const cmd of cmds) {
         await useAppStore.getState().sendCommand(cmd, { quietWarnings: true });
       }
@@ -654,7 +687,7 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     }
   });
 
-  it('Marquee multi-clip selection and atomic group wave preset preserve timings, per-module limits, unselected clips, and undo history', async () => {
+  it('Marquee multi-clip selection and atomic group wave preset preserve starts, limits, unselected clips, and undo history', async () => {
     vi.useFakeTimers();
     try {
       const { computeMarqueeSelectedClipIds } = await import('@shared/timeline');
@@ -730,6 +763,12 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
       useAppStore.getState().selectTimelineClips(['c1', 'c2']);
       expect(useAppStore.getState().selectedClipIds).toEqual(['c1', 'c2']);
 
+      const before = useAppStore.getState().project;
+      expect(useAppStore.getState().applyPresetToSelectedClips({ presetId: 'sine' })).toBe(false);
+      expect(useAppStore.getState().project).toBe(before);
+      const laterUnselected = { ...clipUnselected, startTime: 30 };
+      useAppStore.setState({ project: { ...before, clips: [clip1, clip2, laterUnselected] } });
+
       // Apply 'sine' wave preset atomically across both selected clips
       const applied = useAppStore.getState().applyPresetToSelectedClips({ presetId: 'sine' });
       expect(applied).toBe(true);
@@ -744,17 +783,17 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
       const next2 = nextClips.find((c) => c.id === 'c2')!;
       const nextUn = nextClips.find((c) => c.id === 'c-unselected')!;
 
-      // Preserves individual startTime, duration, moduleId, and scales 0-100% per module's own [lo, hi]
+      // Preserves start times and fits durations to the selected curve and each module's travel.
       expect(next1.startTime).toBe(1);
-      expect(next1.duration).toBe(4);
+      expect(next1.duration).toBeGreaterThan(4);
       expect(Math.max(...next1.keyframes.map((k) => k.height))).toBeCloseTo(2.5, 2);
 
       expect(next2.startTime).toBe(2.5);
-      expect(next2.duration).toBe(6);
+      expect(next2.duration).toBeGreaterThan(6);
       expect(Math.max(...next2.keyframes.map((k) => k.height))).toBeCloseTo(1.4, 2); // clamped to mShort.length=1.4!
 
       // Unselected clip untouched
-      expect(nextUn).toEqual(clipUnselected);
+      expect(nextUn).toEqual(laterUnselected);
 
       // Deleting c1 prunes selectedClipIds cleanly
       useAppStore.getState().deleteClip('c1');
@@ -1290,7 +1329,7 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     expect(customHtml).not.toContain('Tạo nút Cue ở ô');
     expect(customHtml).toContain('Tạo Cue');
     expect(customHtml).toContain(`${project.buttons[0].steps.length} MODULES`);
-    expect(customHtml).toContain('4S');
+    expect(customHtml).toContain('6.5S');
     // Không còn chỉnh Layer/Module ở ControlDeck (panel timeline/custom) nữa
     expect(customHtml).not.toContain('Cả layer (m):');
 
