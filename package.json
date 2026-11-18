@@ -1,7 +1,7 @@
 {
   "name": "dmx-gauze",
   "productName": "DMX Gauze",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Điều khiển màn gauze qua DMX (Art-Net)",
   "private": true,
   "main": "out/main/index.js",
