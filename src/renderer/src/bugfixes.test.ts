@@ -1098,6 +1098,21 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     expect(modHtml).toContain('placeholder="—"');
   });
 
+  it('renameProject trims, falls back to default and marks dirty', () => {
+    vi.useFakeTimers();
+    try {
+      setupBrowserEnv();
+      useAppStore.setState({ project: createDefaultProject(), dirty: false });
+      useAppStore.getState().renameProject('  Show   A ');
+      expect(useAppStore.getState().project.name).toBe('Show A');
+      expect(useAppStore.getState().dirty).toBe(true);
+      useAppStore.getState().renameProject('   ');
+      expect(useAppStore.getState().project.name).toBe('DMX Gauze Stage');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('renders a home offset (mm) field for a selected module and updates its value through the store', () => {
     vi.useFakeTimers();
     try {
