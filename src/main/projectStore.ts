@@ -2,7 +2,7 @@ import { app, dialog, type BrowserWindow, type OpenDialogOptions } from 'electro
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { ProjectFileResult, SaveFileResult } from '@shared/api'
-import { createDefaultProject, normalizeProject, projectFileName } from '@shared/preset'
+import { createDefaultProject, ensureProjectExt, normalizeProject, projectFileName } from '@shared/preset'
 import type { Project } from '@shared/types'
 
 let currentFilePath: string | null = null
@@ -79,7 +79,10 @@ export async function openProjectDialog(parent?: BrowserWindow): Promise<Project
   const options: OpenDialogOptions = {
     title: 'Mở dự án DMX Gauze',
     properties: ['openFile'],
-    filters: [{ name: 'DMX Gauze Project', extensions: ['json'] }],
+    filters: [
+      { name: 'DMX Gauze Project', extensions: ['mikdmx'] },
+      { name: 'Project cũ (.json)', extensions: ['json'] },
+    ],
   }
   const res = await (parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options))
   if (res.canceled || !res.filePaths[0]) return null
@@ -96,11 +99,11 @@ export async function saveProjectAsDialog(project: Project): Promise<SaveFileRes
   const json = serializeProject(project)
   const res = await dialog.showSaveDialog({
     title: 'Lưu dự án DMX Gauze thành...',
-    defaultPath: currentFilePath ?? projectFileName(project.name),
-    filters: [{ name: 'DMX Gauze Project', extensions: ['json'] }],
+    defaultPath: currentFilePath ? ensureProjectExt(currentFilePath) : projectFileName(project.name),
+    filters: [{ name: 'DMX Gauze Project', extensions: ['mikdmx'] }],
   })
   if (res.canceled || !res.filePath) return { saved: false, filePath: currentFilePath }
-  const targetPath = res.filePath
+  const targetPath = ensureProjectExt(res.filePath)
   await atomicWriteText(targetPath, json)
   currentFilePath = targetPath
   await syncAutosaveCache(json)
@@ -109,7 +112,8 @@ export async function saveProjectAsDialog(project: Project): Promise<SaveFileRes
 
 export async function saveProjectFile(project: Project): Promise<SaveFileResult> {
   const json = serializeProject(project)
-  if (!currentFilePath) return saveProjectAsDialog(project)
+  // File .json cũ không bị ghi đè: Save chuyển sang Save As để lưu thành .mikdmx.
+  if (!currentFilePath || !/\.mikdmx$/i.test(currentFilePath)) return saveProjectAsDialog(project)
   await atomicWriteText(currentFilePath, json)
   await syncAutosaveCache(json)
   return { saved: true, filePath: currentFilePath }
@@ -119,10 +123,10 @@ export async function exportProjectDialog(project: Project): Promise<boolean> {
   const json = serializeProject(project)
   const res = await dialog.showSaveDialog({
     title: 'Xuất file dự án DMX Gauze',
-    defaultPath: 'dmx-gauze-export.json',
-    filters: [{ name: 'DMX Gauze Project', extensions: ['json'] }],
+    defaultPath: 'dmx-gauze-export.mikdmx',
+    filters: [{ name: 'DMX Gauze Project', extensions: ['mikdmx'] }],
   })
   if (res.canceled || !res.filePath) return false
-  await atomicWriteText(res.filePath, json)
+  await atomicWriteText(ensureProjectExt(res.filePath), json)
   return true
 }

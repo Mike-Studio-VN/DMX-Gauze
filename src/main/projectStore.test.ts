@@ -134,7 +134,7 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
   it('preserves previous currentFilePath when Save As fails and saves subsequent Save to old path', async () => {
     const valid = createDefaultProject();
     valid.modules[0].name = 'Old Saved Scene';
-    const oldPath = path.join(electronState.userDataDir, 'old.json');
+    const oldPath = path.join(electronState.userDataDir, 'old.mikdmx');
     electronState.saveDialogResult = { canceled: false, filePath: oldPath };
 
     const resOld = await saveProjectAsDialog(valid);
@@ -144,7 +144,7 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
     // Make Save As destination fail deterministically (regular file acting as parent directory).
     const blockerFile = path.join(electronState.userDataDir, 'blocker');
     await fs.writeFile(blockerFile, 'not-a-directory', 'utf8');
-    const badPath = path.join(blockerFile, 'bad.json');
+    const badPath = path.join(blockerFile, 'bad.mikdmx');
 
     const editedBeforeFail = createDefaultProject();
     editedBeforeFail.modules[0].name = 'Failed SaveAs Attempt';
@@ -156,7 +156,7 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
     const autosavePath = path.join(electronState.userDataDir, 'project.json');
     expect(await fs.readFile(autosavePath, 'utf8')).toContain('Old Saved Scene');
 
-    // Subsequent Save (without Save As) must still target old.json, NOT bad.json!
+    // Subsequent Save (without Save As) must still target old.mikdmx, NOT bad.mikdmx!
     const nextEdit = createDefaultProject();
     nextEdit.modules[0].name = 'Updated Old Scene';
     const resFollowUpSave = await saveProjectFile(nextEdit);
@@ -167,14 +167,14 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
   it('validates explicit saveAs, saveFile, and exportProject calls before mutating files or paths', async () => {
     const valid = createDefaultProject();
     valid.modules[0].name = 'Valid Baseline';
-    const oldPath = path.join(electronState.userDataDir, 'baseline.json');
+    const oldPath = path.join(electronState.userDataDir, 'baseline.mikdmx');
     electronState.saveDialogResult = { canceled: false, filePath: oldPath };
     await saveProjectAsDialog(valid);
     const oldBefore = await fs.readFile(oldPath, 'utf8');
 
     const invalidIncomplete = { version: 1, layers: [], modules: [] } as unknown as Project;
-    const exportTarget = path.join(electronState.userDataDir, 'exported.json');
-    const saveAsTarget = path.join(electronState.userDataDir, 'should-not-exist.json');
+    const exportTarget = path.join(electronState.userDataDir, 'exported.mikdmx');
+    const saveAsTarget = path.join(electronState.userDataDir, 'should-not-exist.mikdmx');
 
     electronState.saveDialogResult = { canceled: false, filePath: saveAsTarget };
     await expect(saveProjectAsDialog(invalidIncomplete)).rejects.toThrow();
@@ -200,7 +200,7 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
 
     const oldProject = createDefaultProject();
     oldProject.modules[0].name = 'Old Scene';
-    const oldPath = path.join(filesDir, 'old.json');
+    const oldPath = path.join(filesDir, 'old.mikdmx');
     electronState.saveDialogResult = { canceled: false, filePath: oldPath };
     expect(await saveProjectAsDialog(oldProject)).toEqual({ saved: true, filePath: oldPath });
 
@@ -213,7 +213,7 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
     try {
       const newProject = createDefaultProject();
       newProject.modules[0].name = 'Saved New Scene';
-      const newPath = path.join(filesDir, 'new.json');
+      const newPath = path.join(filesDir, 'new.mikdmx');
       electronState.saveDialogResult = { canceled: false, filePath: newPath };
 
       const saveAsRes = await saveProjectAsDialog(newProject);
@@ -311,5 +311,58 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
     await fs.writeFile(autosavePath, JSON.stringify(savedCustomReceiver, null, 2), 'utf8');
     const loadedCustomReceiver = await loadSavedProject();
     expect(loadedCustomReceiver.project.settings.output.port).toBe(6038);
+  });
+
+  it('Save As appends .mikdmx without doubling, converts legacy .json, and offers the .mikdmx filter', async () => {
+    const project = createDefaultProject();
+    const { dialog } = await import('electron');
+    const dir = electronState.userDataDir;
+    for (const [typed, expected] of [
+      ['plain', 'plain.mikdmx'],
+      ['a.mikdmx', 'a.mikdmx'],
+      ['B.MIKDMX', 'B.mikdmx'],
+      ['legacy.json', 'legacy.mikdmx'],
+    ]) {
+      electronState.saveDialogResult = { canceled: false, filePath: path.join(dir, typed) };
+      const res = await saveProjectAsDialog(project);
+      expect(res).toEqual({ saved: true, filePath: path.join(dir, expected) });
+      expect(JSON.parse(await fs.readFile(path.join(dir, expected), 'utf8')).version).toBe(1);
+    }
+    const opts = vi.mocked(dialog.showSaveDialog).mock.calls[0][0] as { filters: { extensions: string[] }[]; defaultPath: string };
+    expect(opts.filters[0].extensions).toEqual(['mikdmx']);
+    expect(opts.defaultPath.endsWith('.mikdmx')).toBe(true);
+  });
+
+  it('opens both .mikdmx and legacy .json; Save on a legacy .json never overwrites it', async () => {
+    const dir = electronState.userDataDir;
+    const project = createDefaultProject();
+    project.modules[0].name = 'Legacy Scene';
+    const legacy = path.join(dir, 'legacy-open.json');
+    const modern = path.join(dir, 'modern-open.mikdmx');
+    await fs.writeFile(legacy, JSON.stringify(project), 'utf8');
+    await fs.writeFile(modern, JSON.stringify(project), 'utf8');
+
+    electronState.openDialogResult = { canceled: false, filePaths: [modern] };
+    expect((await openProjectDialog())?.project.modules[0].name).toBe('Legacy Scene');
+
+    electronState.openDialogResult = { canceled: false, filePaths: [legacy] };
+    const opened = await openProjectDialog();
+    expect(opened?.filePath).toBe(legacy);
+    const { dialog } = await import('electron');
+    const openOpts = vi.mocked(dialog.showOpenDialog).mock.calls.at(-1)![0] as { filters: { extensions: string[] }[] };
+    expect(openOpts.filters.map((f) => f.extensions)).toEqual([['mikdmx'], ['json']]);
+
+    const before = await fs.readFile(legacy, 'utf8');
+    electronState.saveDialogResult = { canceled: false, filePath: path.join(dir, 'legacy-open') };
+    const res = await saveProjectFile(createDefaultProject());
+    expect(res).toEqual({ saved: true, filePath: path.join(dir, 'legacy-open.mikdmx') });
+    expect(await fs.readFile(legacy, 'utf8')).toBe(before);
+  });
+
+  it('Export appends .mikdmx too', async () => {
+    const target = path.join(electronState.userDataDir, 'exp');
+    electronState.saveDialogResult = { canceled: false, filePath: target };
+    expect(await exportProjectDialog(createDefaultProject())).toBe(true);
+    await expect(fs.stat(`${target}.mikdmx`)).resolves.toBeTruthy();
   });
 });

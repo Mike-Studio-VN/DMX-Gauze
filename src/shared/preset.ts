@@ -202,7 +202,15 @@ export function normalizeProjectName(v: unknown): string {
 export function projectFileName(name: string | undefined): string {
   // eslint-disable-next-line no-control-regex
   const base = normalizeProjectName(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/[. ]+$/, '')
-  return `${base || DEFAULT_PROJECT_NAME}.json`
+  return `${base || DEFAULT_PROJECT_NAME}${PROJECT_FILE_EXT}`
+}
+
+/** Đuôi file project do người dùng lưu; nội dung vẫn là JSON. File .json cũ vẫn mở được. */
+export const PROJECT_FILE_EXT = '.mikdmx'
+
+/** Đảm bảo tên/đường dẫn kết thúc bằng .mikdmx: thêm nếu thiếu, đổi .json cũ, không nhân đôi đuôi. */
+export function ensureProjectExt(path: string): string {
+  return `${path.replace(/\.(json|mikdmx)$/i, '')}${PROJECT_FILE_EXT}`
 }
 
 export function normalizeProject(raw: unknown): Project {
