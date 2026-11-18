@@ -16,8 +16,6 @@ import type {
 
 const NODE_TIMEOUT_MS = 6000
 const POLL_EVERY_MS = 2500
-// Nhỏ hơn chu kỳ tick (40 ms) để mọi tick đều phát snapshot, dù setInterval lệch vài ms.
-const SNAPSHOT_EVERY_MS = 35
 export const DMX_TRANSPORT_HZ = 25
 
 function limits(m: ModuleCfg): [number, number] {
@@ -48,7 +46,6 @@ export class GauzeCore {
   private timer: ReturnType<typeof setInterval> | null = null
   private lastTick = 0
   private lastPoll = 0
-  private lastSnap = 0
   private flushLen = 2
   private lastSentRoute: { net: number; subUni: number } | null = null
   private listeners = new Set<(s: Snapshot) => void>()
@@ -258,11 +255,9 @@ export class GauzeCore {
     this.buildFrame()
     this.sendFrame(now)
     if (now - this.lastPoll >= POLL_EVERY_MS) this.pollNow()
-    if (now - this.lastSnap >= SNAPSHOT_EVERY_MS) {
-      this.lastSnap = now
-      const s = this.snapshot()
-      for (const l of this.listeners) l(s)
-    }
+    // Mỗi tick (đã cố định 25 Hz) phát đúng một snapshot, không throttle thêm để tick bù không bị bỏ.
+    const s = this.snapshot()
+    for (const l of this.listeners) l(s)
   }
 
   private simulate(dt: number): void {
