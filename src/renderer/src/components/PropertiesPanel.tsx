@@ -2205,7 +2205,8 @@ export function PropertiesPanel(props: {
         live={[ch1, ch2, ch3, ch4]}
         sent={snapshot?.overrides?.[single.id] ?? null}
         globalLocked={!!snapshot?.locked}
-        moduleLocked={!!snapshot?.moduleLocks?.includes(single.id)}
+        moduleLocked={!!single.locked}
+        onToggleLock={(locked) => updateModule(single.id, { locked: locked || undefined })}
         maxSpeedCms={single.maxSpeedCms}
       />
     </div>
@@ -2219,6 +2220,7 @@ function ChannelMonitor({
   sent,
   globalLocked,
   moduleLocked,
+  onToggleLock,
   maxSpeedCms,
 }: {
   moduleId: string
@@ -2226,6 +2228,7 @@ function ChannelMonitor({
   sent: number[] | null
   globalLocked: boolean
   moduleLocked: boolean
+  onToggleLock: (locked: boolean) => void
   maxSpeedCms: number
 }) {
   const [draft, setDraft] = useState<(string | null)[]>([null, null, null, null])
@@ -2275,7 +2278,7 @@ function ChannelMonitor({
           </button>
           <button
             type="button"
-            onClick={() => void getBridge().command({ type: 'lockModule', id: moduleId, locked: !moduleLocked })}
+            onClick={() => onToggleLock(!moduleLocked)}
             title={
               moduleLocked
                 ? 'Khoá module này (CH4=0, đóng băng, chặn Sent) — bấm để mở'

@@ -43,7 +43,7 @@ export class GauzeCore {
   private rateWindowStart = 0
   private measuredHz = 0
   private frame = new Uint8Array(DMX_UNIVERSE_SIZE)
-  /** Khoá theo module (runtime, không lưu vào project). */
+  /** Khoá theo module, nạp từ ModuleCfg.locked mỗi lần configure. */
   private moduleLocks = new Set<string>()
   private overrides = new Map<string, number[]>()
   private sendHz: number = DEFAULT_DMX_TRANSPORT_HZ
@@ -70,6 +70,7 @@ export class GauzeCore {
       this.lastSentRoute ??
       (this.cfg ? { net: this.cfg.output.net, subUni: (this.cfg.output.subnet << 4) | this.cfg.output.universe } : null)
 
+    const wasLocked = this.moduleLocks
     this.cfg = cfg
     this.modules = new Map(cfg.modules.map((m) => [m.id, m]))
     for (const m of cfg.modules) {
@@ -77,7 +78,11 @@ export class GauzeCore {
     }
     for (const id of [...this.states.keys()]) if (!this.modules.has(id)) this.states.delete(id)
     for (const id of [...this.overrides.keys()]) if (!this.modules.has(id)) this.overrides.delete(id)
-    for (const id of [...this.moduleLocks]) if (!this.modules.has(id)) this.moduleLocks.delete(id)
+    this.moduleLocks = new Set(cfg.modules.filter((m) => m.locked).map((m) => m.id))
+    for (const id of this.moduleLocks) {
+      if (!wasLocked.has(id)) this.hold(id) // vừa khoá: đứng yên, huỷ override
+      this.overrides.delete(id)
+    }
     // Áp lại giới hạn min/max cho mục tiêu hiện có.
     for (const [id, st] of this.states) {
       const [lo, hi] = limits(this.modules.get(id)!)
@@ -205,14 +210,6 @@ export class GauzeCore {
         return this.move(cmd)
       case 'override':
         return this.setOverride(cmd.id, cmd.values)
-      case 'lockModule':
-        if (!this.modules.has(cmd.id)) return { ok: false, message: 'Không tìm thấy module.' }
-        if (cmd.locked) {
-          this.moduleLocks.add(cmd.id)
-          this.hold(cmd.id)
-          this.overrides.delete(cmd.id)
-        } else this.moduleLocks.delete(cmd.id)
-        return { ok: true }
       case 'clearOverride':
         this.overrides.delete(cmd.id)
         return { ok: true }

@@ -112,13 +112,21 @@ describe('GauzeCore', () => {
       }
     })
 
-    it('khoá theo module: (toàn cục tắt, module mở → gửi), (module khoá → không gửi, CH4=0), (toàn cục bật → không gửi dù module mở)', () => {
+    it('khoá theo module (ModuleCfg.locked): (toàn cục tắt, module mở → gửi), (module khoá → không gửi, CH4=0), (toàn cục bật → không gửi dù module mở)', () => {
       const core = setup()
+      const cfgOf = (lockedA: boolean) => {
+        const project = createDefaultProject()
+        const modules = [
+          { ...project.modules[0], id: 'm-a', startAddress: 1, length: 1, minHeight: 0, maxHeight: 0.5, locked: lockedA },
+          { ...project.modules[0], id: 'm-b', startAddress: 5, length: 1, minHeight: 0, maxHeight: 0.5 },
+        ]
+        return { modules, output: project.settings.output, lockValue: LOCK_VALUE }
+      }
       try {
         core.command({ type: 'lock', locked: false })
         expect(core.command({ type: 'override', id: 'm-a', values: [1, 2, 3, 77] }).ok).toBe(true)
 
-        core.command({ type: 'lockModule', id: 'm-a', locked: true })
+        core.configure(cfgOf(true))
         core.tick()
         expect(core.snapshot().moduleLocks).toEqual(['m-a'])
         expect(core.snapshot().overrides).toEqual({})
@@ -128,7 +136,7 @@ describe('GauzeCore', () => {
         expect(core.command({ type: 'move', ids: ['m-a'], target: 0.3, speed: { unit: 'default' } }).warnings?.length).toBe(1)
         expect(core.snapshot().modules['m-a'].target).toBe(0)
 
-        core.command({ type: 'lockModule', id: 'm-a', locked: false })
+        core.configure(cfgOf(false))
         core.command({ type: 'lock', locked: true })
         expect(core.command({ type: 'override', id: 'm-a', values: [1, 2, 3, 77] }).ok).toBe(false)
         expect(core.snapshot().overrides).toEqual({})

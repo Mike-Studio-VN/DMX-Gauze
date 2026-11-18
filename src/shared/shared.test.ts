@@ -3,7 +3,7 @@ import { autoAssign, conflictMap, nextFree, validateAddress } from './addressing
 import { buildArtDmx, buildArtPoll, buildArtPollReply, parseArtPollReply, portAddress } from './artnet'
 import { ch3ToCms, cmsToCh3, dmxToPos, durationToCh3, homeOffsetSteps, posToDmx } from './convert'
 import { LtcDecoder } from './ltc'
-import { createDefaultProject } from './preset'
+import { createDefaultProject, normalizeProject } from './preset'
 import { formatTc, parseTc } from './timecode'
 import { analyzeClipSpeeds } from './timeline'
 
@@ -1024,5 +1024,30 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
     expect(sacnOut.sacnUniverse).toBe(filledArtNet.settings.output.universe + 1)
     const backToArtNet = resolveOutputSettingsPatch(sacnOut, { driver: 'artnet' })
     expect(backToArtNet.port).toBe(6454)
+  })
+})
+
+describe('project round-trip của trường mới', () => {
+  it('homeOffsetMm + locked + output.sendHz giữ nguyên qua serialize → parse', () => {
+    const project = createDefaultProject()
+    project.modules[0].homeOffsetMm = 12.5
+    project.modules[0].locked = true
+    project.modules[1].homeOffsetMm = 40
+    const back = normalizeProject(JSON.parse(JSON.stringify(normalizeProject(project))))
+    expect(back).toEqual(normalizeProject(project))
+    expect(back.modules[0]).toMatchObject({ homeOffsetMm: 12.5, locked: true })
+    expect(back.modules[1].homeOffsetMm).toBe(40)
+  })
+
+  it('project cũ không có trường mới vẫn mở được, mặc định: không offset, không khoá', () => {
+    const project = createDefaultProject()
+    const raw = JSON.parse(JSON.stringify(project))
+    for (const m of raw.modules) {
+      delete m.homeOffsetMm
+      delete m.locked
+      m.fineTune = 100 // trường v1.0.4 bị bỏ qua
+    }
+    const back = normalizeProject(raw)
+    expect(back.modules.every((m) => m.homeOffsetMm === undefined && m.locked === undefined && !('fineTune' in m))).toBe(true)
   })
 })

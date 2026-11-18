@@ -216,6 +216,7 @@ export function normalizeProject(raw: unknown): Project {
       ...(item.homeOffsetMm === undefined
         ? {}
         : { homeOffsetMm: reqFinite(item.homeOffsetMm, `modules[${idx}].homeOffsetMm`, 0, HOME_OFFSET_MAX_MM) }),
+      ...(reqOptionalBool(item.locked, `modules[${idx}].locked`, false) ? { locked: true } : {}),
       defaultSpeed: reqFinite(item.defaultSpeed, `modules[${idx}].defaultSpeed`, 1, 255, true),
     }
   })
