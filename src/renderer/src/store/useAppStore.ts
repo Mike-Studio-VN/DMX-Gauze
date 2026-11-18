@@ -7,6 +7,7 @@ import { resolveOutputSettingsPatch } from '@shared/protocols'
 import {
   type CurvePresetId,
   LAYER_MOTION_PRESETS,
+  type LayerMotionOptions,
   type LayerMotionPresetId,
   buildLayerMotionClips,
   buildMultiClipShiftPatch,
@@ -249,7 +250,7 @@ interface AppState {
   applyLayerMotionPreset: (
     layerId: string,
     presetId: LayerMotionPresetId,
-    opts?: { duration?: number; staggerSec?: number },
+    opts?: LayerMotionOptions,
   ) => number
   copySelection: () => void
   pasteSelection: (atTime?: number) => void
@@ -1379,6 +1380,11 @@ export const useAppStore = create<AppState>((set, get) => {
         get().notify('Thời lượng hoặc độ lệch sóng không hợp lệ', 'warn')
         return 0
       }
+      const amplitudeCm = opts?.amplitudeCm
+      if (presetId === 'alternating-wave' && amplitudeCm !== undefined && (!Number.isFinite(amplitudeCm) || amplitudeCm < 0)) {
+        get().notify('Biên độ sóng so le không hợp lệ', 'warn')
+        return 0
+      }
       const created = buildLayerMotionClips({
         layerId,
         modules: project.modules,
@@ -1387,6 +1393,8 @@ export const useAppStore = create<AppState>((set, get) => {
         startTime: playheadTime,
         duration,
         staggerSec,
+        amplitudeCm,
+        firstUp: opts?.firstUp,
       })
       if (created.length === 0) {
         get().notify('Layer chưa có module nào để tạo hiệu ứng', 'warn')
