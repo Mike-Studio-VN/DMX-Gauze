@@ -71,6 +71,7 @@ export type SpeedUnit = 'cms' | 'sec'
 export interface SpeedSpec {
   unit: SpeedUnit
   value: number
+  limitCms?: number
 }
 
 export interface CueStep {
@@ -84,6 +85,8 @@ export interface CueButton {
   steps: CueStep[]
   speedUnit: SpeedUnit
   speedValue: number
+  /** Trần tốc độ tự động của cue mặc định, bỏ khi người dùng đặt tốc độ riêng. */
+  autoSpeedLimitCms?: number
   /** Vị trí ô (0-based) trong lưới Cue Custom. */
   slotIndex?: number
   /** Hiển thị / đánh dấu lặp (LOOP) trên nút cue. */
@@ -119,6 +122,8 @@ export interface TimelineClip {
   duration: number
   /** Dạng đường cong hiển thị: mượt (spline) hoặc thẳng (linear). */
   curveMode?: 'smooth' | 'linear'
+  /** Giới hạn tốc độ Auto của moment mới (cm/s). */
+  autoSpeedLimitCms?: number
   keyframes: ClipKeyframe[]
 }
 

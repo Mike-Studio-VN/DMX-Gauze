@@ -3,6 +3,7 @@ import { ARTNET_PORT, CH, CHANNELS_PER_MODULE, DMX_UNIVERSE_SIZE, SENT_CH4_PULSE
 import { ch3ToCms, clamp, cmsToCh3, durationToCh3, posToCh1, snapPos } from './convert'
 import { DEFAULT_DMX_TRANSPORT_HZ, normalizeDmxTransportRate, startDmxFrameLoop } from './dmxTransport'
 import type { DriverFactory, DriverEvents, OutputDriver } from './drivers'
+import { defaultMotionSpeedCh3 } from './timeline'
 import type {
   Command,
   CommandResult,
@@ -269,7 +270,8 @@ export class GauzeCore {
         if (c.tooFast && Math.abs(dist) > 1e-4) warnings.push(`${m.name}: cần tối thiểu ${c.minSeconds.toFixed(1)} s`)
       }
       st.target = clamped
-      st.ch3 = ch3
+      const speedLimit = cmd.speed.unit === 'default' ? undefined : cmd.speed.limitCms
+      st.ch3 = speedLimit === undefined ? ch3 : Math.min(ch3, defaultMotionSpeedCh3(m, speedLimit))
     }
     return { ok: true, warnings: warnings.length ? warnings : undefined }
   }
