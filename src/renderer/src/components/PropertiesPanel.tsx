@@ -42,13 +42,14 @@ import {
   percentToHeight,
   removeClipKeyframe,
   resolveClipBoundsNoOverlap,
+  resolveKeyframeSpeed,
   segmentPath,
   updateClipEndTime,
   updateClipKeyframeHeight,
   updateClipKeyframeTimelineTime,
   updateClipStartTime,
 } from '@shared/timeline'
-import type { CueButton, Layer, ModuleCfg, SpeedUnit, TimelineClip, Transform3D } from '@shared/types'
+import type { ClipKeyframe, CueButton, Layer, ModuleCfg, SpeedUnit, TimelineClip, Transform3D } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 
 function TransformEditor({
@@ -770,6 +771,88 @@ function MomentEditor({
           })}
         </div>
       </div>
+
+      {(() => {
+        const idx = sorted.findIndex((k) => k.id === selectedKeyId)
+        if (idx < 0) return null
+        const kf = sorted[idx]
+        const next = sorted[idx + 1]
+        if (!next) {
+          return <p className="text-[10.5px] text-muted">Điểm cuối: không có đoạn kế tiếp nên không đặt tốc độ.</p>
+        }
+        const distCm = Math.abs(next.height - kf.height) * 100
+        const r = resolveKeyframeSpeed(kf, distCm, next.offset - kf.offset, mod.maxSpeedCms)
+        const setSpeed = (patch: Partial<ClipKeyframe>) =>
+          onUpdate({ keyframes: sorted.map((k) => (k.id === kf.id ? { ...k, ...patch } : k)) }, `kfspd-${kf.id}`)
+        return (
+          <div className="space-y-1.5 border-t border-line pt-2.5">
+            <div className="text-[11px] font-semibold tracking-wide text-muted uppercase">
+              Tốc độ đoạn P{idx + 1} → P{idx + 2}
+            </div>
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-black/30 p-0.5 shadow-[inset_0_0_0_1px_var(--line)]" role="group" aria-label="Chế độ tốc độ">
+              {(['auto', 'manual'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  aria-pressed={r.mode === m}
+                  onClick={() =>
+                    setSpeed(
+                      m === 'auto'
+                        ? { speedMode: undefined, manualSpeedCms: undefined }
+                        : { speedMode: 'manual', manualSpeedCms: Number(r.autoCms.toFixed(1)) },
+                    )
+                  }
+                  className={`cursor-pointer rounded-[10px] py-1 text-[11px] font-semibold capitalize transition ${
+                    r.mode === m ? 'bg-brand/25 text-[#FFB26B]' : 'text-muted hover:text-fg'
+                  }`}
+                >
+                  {m === 'auto' ? 'Auto' : 'Manual'}
+                </button>
+              ))}
+            </div>
+            {r.mode === 'auto' ? (
+              <div className="flex items-center justify-between text-[11px] text-[#C2B3A4]">
+                <span>Tự tính (chỉ đọc)</span>
+                <span className="tabular-nums">{r.autoCms.toFixed(1)} cm/s</span>
+              </div>
+            ) : (
+              <label className="flex items-center justify-between gap-2 text-[11px] text-[#C2B3A4]">
+                <span>Tốc độ (cm/s, ≤ {mod.maxSpeedCms})</span>
+                <input
+                  key={`${kf.id}-${kf.manualSpeedCms}`}
+                  type="number"
+                  min={1}
+                  max={mod.maxSpeedCms}
+                  step={1}
+                  defaultValue={kf.manualSpeedCms ?? Number(r.autoCms.toFixed(1))}
+                  onBlur={(e) => {
+                    const v = e.currentTarget.valueAsNumber
+                    const next = Number.isFinite(v) ? clamp(v, 1, mod.maxSpeedCms) : (kf.manualSpeedCms ?? r.autoCms)
+                    e.currentTarget.value = String(next)
+                    if (next !== kf.manualSpeedCms) setSpeed({ speedMode: 'manual', manualSpeedCms: next })
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.currentTarget.blur()
+                  }}
+                  className="kiln-field h-7 w-24 px-2.5 text-xs tabular-nums"
+                />
+              </label>
+            )}
+            {r.mode === 'manual' && r.tooSlow && (
+              <p className="flex items-start gap-1 text-[10.5px] text-warn">
+                <AlertTriangle size={11} className="mt-px shrink-0" />
+                Quá chậm: cần {(distCm / r.cms).toFixed(2)}s, đoạn chỉ có {(next.offset - kf.offset).toFixed(2)}s (auto: {r.autoCms.toFixed(1)} cm/s).
+              </p>
+            )}
+            {r.autoCms >= mod.maxSpeedCms - 1e-3 && distCm / Math.max(0.001, next.offset - kf.offset) > mod.maxSpeedCms + 1e-3 && (
+              <p className="flex items-start gap-1 text-[10.5px] text-warn">
+                <AlertTriangle size={11} className="mt-px shrink-0" />
+                Vượt tốc độ tối đa {mod.maxSpeedCms} cm/s: đoạn này không kịp thời gian.
+              </p>
+            )}
+          </div>
+        )
+      })()}
     </div>
   )
 }

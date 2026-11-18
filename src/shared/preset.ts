@@ -173,6 +173,12 @@ export function defaultModuleTransform(): Transform3D {
   return { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }
 }
 
+function parseKeyframeSpeed(kf: Record<string, unknown>, label: string): Pick<ClipKeyframe, 'speedMode' | 'manualSpeedCms'> {
+  if (kf.speedMode === undefined || kf.speedMode === 'auto') return {}
+  if (kf.speedMode !== 'manual') failProject(`${label}.speedMode phải là 'auto' hoặc 'manual'`)
+  return { speedMode: 'manual', manualSpeedCms: reqFinite(kf.manualSpeedCms, `${label}.manualSpeedCms`, 0, 10000) }
+}
+
 export const PROJECT_NAME_MAX = 80
 export const DEFAULT_PROJECT_NAME = 'DMX Gauze Stage'
 
@@ -305,6 +311,7 @@ export function normalizeProject(raw: unknown): Project {
           id: reqString(kf.id, `clips[${idx}].keyframes[${kIdx}].id`, false),
           offset: Math.min(duration, reqFinite(kf.offset, `clips[${idx}].keyframes[${kIdx}].offset`, 0, duration + 0.05)),
           height: reqFinite(kf.height, `clips[${idx}].keyframes[${kIdx}].height`, 0),
+          ...parseKeyframeSpeed(kf, `clips[${idx}].keyframes[${kIdx}]`),
         }
       })
       return {
