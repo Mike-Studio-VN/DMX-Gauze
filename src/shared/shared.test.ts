@@ -1047,27 +1047,27 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
 })
 
 describe('project round-trip của trường mới', () => {
-  it('homeOffsetMm + locked + output.sendHz giữ nguyên qua serialize → parse', () => {
+  it('homeOffsetMm giữ nguyên qua serialize → parse; locked cũ bị bỏ qua và không ghi lại', () => {
     const project = createDefaultProject()
     project.modules[0].homeOffsetMm = 12.5
-    project.modules[0].locked = true
+    ;(project.modules[0] as unknown as Record<string, unknown>).locked = true // trường cũ
     project.modules[1].homeOffsetMm = 40
     const back = normalizeProject(JSON.parse(JSON.stringify(normalizeProject(project))))
-    expect(back).toEqual(normalizeProject(project))
-    expect(back.modules[0]).toMatchObject({ homeOffsetMm: 12.5, locked: true })
+    expect(back.modules[0]).toMatchObject({ homeOffsetMm: 12.5 })
+    expect(back.modules.every((m) => !('locked' in m))).toBe(true)
+    expect(JSON.stringify(back)).not.toContain('"locked"')
     expect(back.modules[1].homeOffsetMm).toBe(40)
   })
 
-  it('project cũ không có trường mới vẫn mở được, mặc định: không offset, không khoá', () => {
+  it('project cũ không có trường mới vẫn mở được, mặc định: không offset', () => {
     const project = createDefaultProject()
     const raw = JSON.parse(JSON.stringify(project))
     for (const m of raw.modules) {
       delete m.homeOffsetMm
-      delete m.locked
       m.fineTune = 100 // trường v1.0.4 bị bỏ qua
     }
     const back = normalizeProject(raw)
-    expect(back.modules.every((m) => m.homeOffsetMm === undefined && m.locked === undefined && !('fineTune' in m))).toBe(true)
+    expect(back.modules.every((m) => m.homeOffsetMm === undefined && !('fineTune' in m))).toBe(true)
   })
 })
 

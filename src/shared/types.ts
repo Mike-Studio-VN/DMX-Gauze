@@ -63,8 +63,6 @@ export interface ModuleCfg {
   ch2Fine?: number
   /** @deprecated v1.0.5–1.0.7 (mm, mã hoá 16-bit cũ). Chỉ giữ lại trong file để không mất dữ liệu, không còn tác dụng. */
   homeOffsetMm?: number
-  /** Khoá riêng module: CH4=0, đóng băng, chặn Sent (lưu trong project; không vượt được khoá toàn cục). */
-  locked?: boolean
   /** Giá trị CH3 mặc định. */
   defaultSpeed: number
 }
@@ -198,8 +196,6 @@ export interface Snapshot {
   /** Override đang phát theo module id → [CH1..CH4] đã gửi. */
   /** Module đang trong xung Sent (CH4=77). */
   pulsing?: string[]
-  /** Id module đang bị khoá riêng. */
-  moduleLocks?: string[]
 }
 
 export interface CoreConfig {
@@ -216,7 +212,7 @@ export type Command =
   | { type: 'lock'; locked: boolean }
   /**
    * Nút Sent (test fine tune): giữ CH1/CH3 như hiện có, CH2 = `ch2` (0–255), CH4 = 77 trong SENT_PULSE_MS rồi về 0 và giữ 0
-   * (tới khi module nhận lệnh move kế tiếp). Không đặt đích mới và KHÔNG bị chặn bởi khoá tổng/khoá module.
+   * (tới khi module nhận lệnh move kế tiếp). Không đặt đích mới và KHÔNG bị chặn bởi khoá tổng.
    */
   | { type: 'sendFine'; id: string; ch2: number }
 
