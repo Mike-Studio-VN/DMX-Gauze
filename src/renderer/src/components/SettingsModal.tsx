@@ -257,7 +257,7 @@ export function SettingsModal(props: {
 
             <div className="mt-auto px-3 pb-1 text-[9.5px] leading-relaxed font-medium tracking-wider text-muted uppercase">
               DMX GAUZE ENGINE
-              <br />v{info?.version ?? '1.0.2'} · {info?.runtime ?? 'web'}
+              <br />v{info?.version ?? '1.0.3'} · {info?.runtime ?? 'web'}
             </div>
           </nav>
 
@@ -672,7 +672,7 @@ export function SettingsModal(props: {
                           : out.driver === 'kinet'
                             ? 'Chưa nhận được KiNET PollReply. Kiểm tra IP thiết bị hoặc gửi trực tiếp tới IP PSU.'
                             : isLoopbackTarget(out.ip)
-                              ? 'Đích localhost: app gửi ArtDmx qua cổng động và không bind 6454 để tránh tranh receiver cục bộ. Trạng thái discovery không xác định (không đồng nghĩa receiver offline); chỉ nhận ArtPollReply chuẩn 6454 khi receiver chạy cổng khác 6454, hoặc nhận phản hồi bổ sung qua cổng nguồn động.'
+                              ? 'Chưa nhận được phản hồi Art-Net.'
                               : 'Chưa nhận được ArtPollReply nào. Kiểm tra cùng subnet hoặc firewall nếu dùng thiết bị thật.'}
                     </div>
                   ) : (

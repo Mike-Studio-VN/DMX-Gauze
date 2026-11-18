@@ -599,8 +599,7 @@ describe('Core + Async Driver integration cleanup & drain tests', () => {
     kinetSock.pendingSends.splice(0).forEach((s) => s.cb(null));
     kinetCustom.stop();
 
-    // 5) Startup warning persistence: GauzeCore.configure() calls start() then poll() synchronously BEFORE
-    //    async sock.bind(0) callback resolves; active loopback discovery warning must NOT be cleared by ready callback!
+    // 5) Standard loopback discovery sends from the ephemeral socket without a warning.
     mocks.udp.reset();
     const core = new GauzeCore((cfg, driverEv) => new ArtNetDriver(cfg, driverEv));
     core.configure({
@@ -615,7 +614,7 @@ describe('Core + Async Driver integration cleanup & drain tests', () => {
       core.pollNow();
       expect(coreSock.pendingSends.length).toBeGreaterThanOrEqual(1);
     });
-    expect(core.snapshot().status.warning).toContain('Đích localhost:6454');
+    expect(core.snapshot().status.warning).toBeNull();
     coreSock.pendingSends.splice(0).forEach((s) => s.cb(null));
     core.stop();
   });
