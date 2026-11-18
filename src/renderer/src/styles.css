@@ -251,6 +251,34 @@ input[type='number']::-webkit-outer-spin-button {
   outline: none;
   box-shadow: none;
 }
+.kiln-field:is(input:not([type='checkbox'], [type='range']), textarea):not(:disabled, [readonly]),
+.kiln-field input:not([type='checkbox'], [type='range'], :disabled, [readonly]) {
+  cursor: text;
+}
+.kiln-readout,
+.kiln-field:is(:disabled, [readonly]),
+.kiln-field:has(> input:is(:disabled, [readonly])) {
+  background: transparent;
+  box-shadow: none;
+  color: var(--t2);
+  outline: none;
+  opacity: 1;
+}
+.kiln-readout,
+input:is(:disabled, [readonly]),
+textarea:is(:disabled, [readonly]),
+.kiln-field:has(> input:is(:disabled, [readonly])) {
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.kiln-field > input:is(:disabled, [readonly]) {
+  color: inherit;
+}
+input[readonly],
+textarea[readonly] {
+  pointer-events: none;
+}
 
 /* Layer & Tree rows */
 .kiln-layer {
@@ -397,7 +425,6 @@ input[type='number']::-webkit-outer-spin-button {
   white-space: nowrap;
 }
 .timeline-timecode output {
-  color: #ffc45c;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 20px;
   font-weight: 650;

@@ -906,7 +906,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
             </button>
           )}
 
-          <output>{formatTc(time, fps)}</output>
+          <output className="kiln-readout">{formatTc(time, fps)}</output>
 
           <button
             type="button"

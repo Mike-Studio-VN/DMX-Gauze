@@ -654,7 +654,7 @@ export function SettingsModal(props: {
                 )}
 
                 <div className="rounded-xl bg-black/30 p-3 shadow-[inset_0_0_0_1px_var(--line)]">
-                  <div className="mb-1.5 text-[11px] font-medium text-muted">
+                  <div className="kiln-readout mb-1.5 text-[11px] font-medium">
                     Thiết bị / Node DMX phản hồi realtime ({nodes.length})
                   </div>
                   {snapshot?.status.warning && (
@@ -679,11 +679,11 @@ export function SettingsModal(props: {
                     <div className="space-y-1.5">
                       {nodes.map((n) => (
                         <div key={n.ip} className="flex items-center justify-between rounded-xl bg-white/[0.04] px-3 py-1.5">
-                          <span className="font-medium text-fg">
+                          <span className="kiln-readout font-medium">
                             {n.name} <span className="text-[10px] text-muted">· {n.longName}</span>
                           </span>
                           <div className="flex items-center gap-2">
-                            <span className="font-mono text-info">{n.ip}</span>
+                            <span className="kiln-readout font-mono">{n.ip}</span>
                             {isNetworkDriver && (
                               <button type="button" onClick={() => applyIp(n.ip)} className="kiln-chip acc cursor-pointer">
                                 Chọn IP này
@@ -759,7 +759,7 @@ export function SettingsModal(props: {
                       <div className="font-semibold">Timeline {tl.fps} fps không khớp chuẩn LTC SMPTE</div>
                       <div className="text-[#E7D4B5]">
                         LTC In hỗ trợ 24 / 25 / 29.97 / 30 fps và đang dùng{' '}
-                        <strong>{effectiveLtcFps} fps</strong>.
+                        <strong className="kiln-readout">{effectiveLtcFps} fps</strong>.
                       </div>
                     </div>
                   </div>
@@ -898,7 +898,7 @@ export function SettingsModal(props: {
                 <div className="space-y-2 rounded-xl bg-white/[0.03] px-3.5 py-3 shadow-[inset_0_0_0_1px_var(--line)]">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-medium text-[#C2B3A4]">Thời gian tự ẩn</span>
-                    <span className="text-[11px] text-muted tabular-nums">
+                    <span className="kiln-readout text-[11px] tabular-nums">
                       {(notificationSettings.durationMs / 1000).toFixed(1)}s
                     </span>
                   </div>
