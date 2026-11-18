@@ -1208,6 +1208,9 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     expect(manualHtml).toContain('Chạm để chạy lên');
     expect(manualHtml).toContain('Dừng module chọn');
     expect(manualHtml).toContain('Chạm để chạy xuống');
+    expect(manualHtml.match(/class="manual-card-badge"/g)).toHaveLength(3);
+    expect(manualHtml).toContain('manual-card-detail mt-0.5 truncate');
+    expect(manualHtml).not.toContain('data-active="true"');
     expect(manualHtml).toContain('manual-wave-fill-body');
     // Cả 3 nút đều chia sẻ cùng 1 data-wave-pct="62" khi đang dừng giữa chừng
     const pctMatches = manualHtml.match(/data-wave-pct="62"/g) ?? [];
@@ -1233,7 +1236,8 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
   it('ModeButtons renders 4-col Cue Pad grid and CueButton layer/module editing moves to PropertiesPanel', () => {
     setupBrowserEnv();
     const project = createDefaultProject();
-    project.buttons[0] = { ...project.buttons[0], loop: true, slotIndex: 0 };
+    const longCueName = 'Sóng lớp trước cho toàn bộ module sân khấu';
+    project.buttons[0] = { ...project.buttons[0], name: longCueName, loop: true, slotIndex: 0 };
 
     const modId = project.buttons[0].steps[0].moduleId;
     useAppStore.setState({
@@ -1256,6 +1260,7 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
       React.createElement(ModeButtons, { overrideState: useAppStore.getState() }),
     );
     expect(customHtml).toContain('cue-pad-slot');
+    expect(customHtml).toContain(`class="min-w-0 truncate font-sans" title="${longCueName}"`);
     // Cue cũ đang chạy giữ viền xanh + body xanh đậm nhưng bar xanh tối hơn (cue-pad-prev)
     expect(customHtml).toContain('cue-pad group active cue-pad-prev');
     // Slider bar chiều cao bằng nền text module (role="progressbar" bọc dải footer MODULES) & chạy theo tiến trình thực tế (65%)
