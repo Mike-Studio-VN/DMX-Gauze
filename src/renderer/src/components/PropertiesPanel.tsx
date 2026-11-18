@@ -17,9 +17,10 @@ import {
   Unlock,
   Waves,
 } from 'lucide-react'
+import { getBridge } from '../services/bridge'
 import { layerLoopAddress } from '@shared/addressing'
-import { ch3ToCms, clamp, normalizeDmxFineTune } from '@shared/convert'
-import { CH, DMX_FINE_TUNE_LIMIT, addressRange } from '@shared/dmx'
+import { ch3ToCms, clamp, homeOffsetSteps, normalizeHomeOffsetMm } from '@shared/convert'
+import { CH, HOME_OFFSET_MAX_MM, addressRange } from '@shared/dmx'
 import { defaultLayerTransform, defaultModuleTransform } from '@shared/preset'
 import {
   computeModuleBasePositions,
@@ -1924,13 +1925,12 @@ export function PropertiesPanel(props: {
     )
   }
 
-  const st = snapshot?.modules[single.id]
   const [chStart, chEnd] = addressRange(single.startAddress)
   const baseIdx = single.startAddress - 1
   const frame = snapshot?.frame ?? []
   const ch1 = frame[baseIdx + CH.POSITION] ?? 0
   const ch2 = frame[baseIdx + CH.FINE] ?? 0
-  const fineTune = single.fineTune ?? 0
+  const homeOffsetMm = single.homeOffsetMm ?? 0
   const ch3 = frame[baseIdx + CH.SPEED] ?? single.defaultSpeed
   const ch4 = frame[baseIdx + CH.LOCK] ?? 0
   const modTf = single.transform ?? defaultModuleTransform()
@@ -2071,29 +2071,32 @@ export function PropertiesPanel(props: {
 
         <label className="block space-y-1">
           <span className="flex items-center gap-1 text-[11px] text-[#C2B3A4]">
-            Fine tune CH2 (bước DMX)
-            <span title="Cộng độ lệch có dấu vào vị trí DMX 16-bit. 1 đơn vị = 1 bước CH2, mặc định 0.">
+            Fine tune CH2 — home (mm)
+            <span title={`Hiệu chỉnh tĩnh tại vị trí 0 (home), 0–${HOME_OFFSET_MAX_MM} mm, để các module thẳng hàng. Không áp khi chạy timeline/cue/wave. 1 mm = 65535 / (Dài max × 1000) bước DMX 16-bit.`}>
               <HelpCircle size={11} />
             </span>
           </span>
           <input
-            key={`${single.id}-fine-${fineTune}`}
+            key={`${single.id}-fine-${homeOffsetMm}`}
             type="number"
-            min={-DMX_FINE_TUNE_LIMIT}
-            max={DMX_FINE_TUNE_LIMIT}
-            step={1}
-            defaultValue={fineTune}
+            min={0}
+            max={HOME_OFFSET_MAX_MM}
+            step={0.1}
+            defaultValue={homeOffsetMm}
             onBlur={(e) => {
               const input = e.currentTarget
-              const next = Number.isFinite(input.valueAsNumber) ? normalizeDmxFineTune(input.valueAsNumber) : fineTune
+              const next = Number.isFinite(input.valueAsNumber) ? normalizeHomeOffsetMm(input.valueAsNumber) : homeOffsetMm
               input.value = String(next)
-              if (next !== fineTune) updateModule(single.id, { fineTune: next })
+              if (next !== homeOffsetMm) updateModule(single.id, { homeOffsetMm: next })
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') e.currentTarget.blur()
             }}
             className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
+          <span className="text-[10px] text-muted tabular-nums">
+            = {homeOffsetSteps(homeOffsetMm, single.length)} bước (CH1/CH2 tại home)
+          </span>
         </label>
 
         {addrError && (
@@ -2196,37 +2199,128 @@ export function PropertiesPanel(props: {
         </label>
       </div>
 
-      {/* Giám sát 4 kênh DMX */}
-      <div className="mt-auto space-y-2 border-t border-line pt-2.5">
-        <div className="flex items-center justify-between">
-          <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">Giám sát 4 kênh DMX</span>
-          <span className="flex items-center gap-1 text-[11px] text-[#C2B3A4] tabular-nums">
-            {snapshot?.locked ? <Lock size={11} className="text-warn" /> : <Unlock size={11} className="text-ok" />}
-            {(st?.pos ?? 0).toFixed(2)}m → {(st?.target ?? 0).toFixed(2)}m
-          </span>
-        </div>
+      <ChannelMonitor
+        key={single.id}
+        moduleId={single.id}
+        live={[ch1, ch2, ch3, ch4]}
+        sent={snapshot?.overrides?.[single.id] ?? null}
+        globalLocked={!!snapshot?.locked}
+        moduleLocked={!!single.locked}
+        onToggleLock={(locked) => updateModule(single.id, { locked: locked || undefined })}
+        maxSpeedCms={single.maxSpeedCms}
+      />
+    </div>
+  )
+}
 
-        <div className="grid grid-cols-4 gap-1.5 text-center tabular-nums">
-          <div className="rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title="CH1: Byte cao của vị trí DMX 16-bit (0–255)">
-            <div className="text-[9.5px] text-muted">CH1 Pos</div>
-            <div className="font-semibold text-fg">{ch1}</div>
-          </div>
-          <div className="rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title="CH2: Byte thấp của vị trí DMX 16-bit (0–255)">
-            <div className="text-[9.5px] text-muted">CH2 Fine</div>
-            <div className="font-semibold text-fg">{ch2}</div>
-          </div>
-          <div className="rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title={`CH3: Tốc độ (${ch3ToCms(ch3, single.maxSpeedCms).toFixed(0)} cm/s)`}>
-            <div className="text-[9.5px] text-muted">CH3 Spd</div>
-            <div className="font-semibold text-[#FFB26B]">{ch3}</div>
-          </div>
-          <div className="rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title="CH4: Safe lock (77 = mở khoá, 0 = khoá)">
-            <div className="text-[9.5px] text-muted">CH4 Lock</div>
-            <div className={`font-semibold ${ch4 === project.settings.lockValue ? 'text-ok' : 'text-warn'}`}>
-              {ch4}
-            </div>
-          </div>
-        </div>
+/** Giám sát + nhập 4 kênh. Nhập chỉ là bản nháp; "Sent" mới phát (override giữ & refresh theo sendHz). */
+function ChannelMonitor({
+  moduleId,
+  live,
+  sent,
+  globalLocked,
+  moduleLocked,
+  onToggleLock,
+  maxSpeedCms,
+}: {
+  moduleId: string
+  live: number[]
+  sent: number[] | null
+  globalLocked: boolean
+  moduleLocked: boolean
+  onToggleLock: (locked: boolean) => void
+  maxSpeedCms: number
+}) {
+  const [draft, setDraft] = useState<(string | null)[]>([null, null, null, null])
+  const [err, setErr] = useState<string | null>(null)
+  const shown = live.map((v, i) => draft[i] ?? String(v))
+  const parsed = shown.map((v) => (v.trim() === '' ? NaN : Number(v)))
+  const valid = parsed.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)
+  const dirty = draft.some((d) => d !== null) && (!sent || parsed.some((n, i) => n !== sent[i]))
+  const send = async () => {
+    if (globalLocked) return setErr('Đang khoá – tắt khoá để gửi.')
+    if (moduleLocked) return setErr('Module đang khoá – mở khoá module để gửi.')
+    if (!valid) return setErr('Mỗi kênh phải là số nguyên 0–255.')
+    const res = await getBridge().command({ type: 'override', id: moduleId, values: parsed as [number, number, number, number] })
+    setErr(res.ok ? null : (res.message ?? 'Gửi thất bại'))
+    if (res.ok) setDraft([null, null, null, null])
+  }
+  const labels = ['CH1 Pos', 'CH2 Fine', 'CH3 Spd', 'CH4 Lock']
+  const titles = [
+    'CH1: byte cao vị trí 16-bit',
+    'CH2: byte thấp vị trí 16-bit (raw, chỉ cho override; offset home lưu ở ô Fine tune mm)',
+    `CH3: tốc độ (${ch3ToCms(parsed[2] || 0, maxSpeedCms).toFixed(0)} cm/s)`,
+    'CH4: khoá an toàn (77 = mở, 0 = khoá)',
+  ]
+  return (
+    <div className="mt-auto space-y-2 border-t border-line pt-2.5">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-semibold tracking-wide text-muted uppercase">Giám sát 4 kênh DMX</span>
+        <span className="flex items-center gap-1.5 text-[11px] text-[#C2B3A4]">
+          {sent && (
+            <button
+              type="button"
+              onClick={() => void getBridge().command({ type: 'clearOverride', id: moduleId })}
+              title="Xoá override, trở về điều khiển bình thường"
+              className="cursor-pointer rounded-full px-2 py-0.5 text-[10px] font-semibold text-muted shadow-[inset_0_0_0_1px_var(--line)] hover:text-fg"
+            >
+              Xoá
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void send()}
+            disabled={!dirty}
+            title="Gửi 4 giá trị đã nhập ra DMX (giữ & phát lại liên tục)"
+            className="cursor-pointer rounded-full bg-brand/20 px-2 py-0.5 text-[10px] font-semibold text-[#FFB26B] hover:bg-brand/30 disabled:cursor-default disabled:opacity-40"
+          >
+            Sent
+          </button>
+          <button
+            type="button"
+            onClick={() => onToggleLock(!moduleLocked)}
+            title={
+              moduleLocked
+                ? 'Khoá module này (CH4=0, đóng băng, chặn Sent) — bấm để mở'
+                : 'Module đang mở — bấm để khoá riêng module này. Không vượt được khoá toàn cục.'
+            }
+            aria-label={moduleLocked ? 'Mở khoá module' : 'Khoá module'}
+            aria-pressed={moduleLocked}
+            className="cursor-pointer rounded p-0.5 hover:bg-white/10"
+          >
+            {moduleLocked ? <Lock size={12} className="text-warn" /> : <Unlock size={12} className="text-ok" />}
+          </button>
+        </span>
       </div>
+
+      <div className="grid grid-cols-4 gap-1.5 text-center tabular-nums">
+        {labels.map((label, i) => (
+          <label key={label} className="rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title={titles[i]}>
+            <div className="text-[9.5px] text-muted">{label}</div>
+            <input
+              type="number"
+              min={0}
+              max={255}
+              step={1}
+              value={shown[i]}
+              onChange={(e) => setDraft((d) => d.map((v, j) => (j === i ? e.target.value : (v ?? String(live[j])))))}
+              className="w-full bg-transparent text-center font-semibold text-fg outline-none"
+            />
+          </label>
+        ))}
+      </div>
+      {(dirty || sent) && (
+        <p className={`text-[10.5px] ${dirty ? 'text-warn' : 'text-ok'}`}>
+          {dirty ? 'Chưa gửi — bấm Sent để phát.' : 'Override đang phát (giữ cho tới khi Xoá).'}
+        </p>
+      )}
+      {globalLocked && (
+        <p className="flex items-start gap-1 text-[10.5px] text-warn">
+          <AlertTriangle size={11} className="mt-px shrink-0" />
+          Đang khoá toàn cục – tắt khoá để gửi (Sent bị chặn; mở khoá module không vượt được khoá toàn cục).
+        </p>
+      )}
+      {err && <p className="text-[10.5px] text-danger">{err}</p>}
     </div>
   )
 }

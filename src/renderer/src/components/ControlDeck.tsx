@@ -401,7 +401,7 @@ export function ModeButtons(props: {
                 key={`empty-slot-${slotIdx}`}
                 {...slotDragProps}
                 className={`cue-pad-slot rounded-[12px] transition ${
-                  isDropTarget ? 'ring-2 ring-[#5a96ff] ring-offset-1 ring-offset-[#0a0706]' : ''
+                  isDropTarget ? 'ring-2 ring-[var(--acc)] ring-offset-1 ring-offset-[#0a0706]' : ''
                 }`}
               >
                 <div aria-hidden="true" className="cue-pad cue-pad-empty text-left">
@@ -444,9 +444,9 @@ export function ModeButtons(props: {
           const leftFooter = `${b.steps.length} MODULES`
           const rightFooter = b.speedUnit === 'sec' ? `${b.speedValue}S` : `${b.speedValue} CM/S`
           const barIconColor = isBarSelected
-            ? 'text-[#f3f7ff] hover:bg-white/15'
+            ? 'text-[var(--on-acc)] hover:bg-black/15'
             : isPrevSelected
-              ? 'text-[#dce9ff] hover:bg-white/15'
+              ? 'text-[var(--on-acc)] hover:bg-black/15'
               : 'text-white/75 hover:bg-white/10'
 
           return (
@@ -454,7 +454,7 @@ export function ModeButtons(props: {
               key={b.id}
               {...slotDragProps}
               className={`cue-pad-slot rounded-[12px] transition ${
-                isDropTarget ? 'ring-2 ring-[#5a96ff] ring-offset-1 ring-offset-[#0a0706]' : ''
+                isDropTarget ? 'ring-2 ring-[var(--acc)] ring-offset-1 ring-offset-[#0a0706]' : ''
               }`}
             >
               <div
@@ -518,9 +518,9 @@ export function ModeButtons(props: {
                       aria-label={`Xoá nút ${b.name}`}
                       className={`cursor-pointer rounded p-1.5 opacity-0 transition group-hover:opacity-100 ${
                         isBarSelected
-                          ? 'text-[#f3f7ff] hover:bg-white/15'
+                          ? 'text-[var(--on-acc)] hover:bg-black/15'
                           : isPrevSelected
-                            ? 'text-[#dce9ff] hover:bg-white/15'
+                            ? 'text-[var(--on-acc)] hover:bg-black/15'
                             : 'text-white/75 hover:bg-danger/30 hover:text-danger'
                       }`}
                     >
@@ -539,7 +539,7 @@ export function ModeButtons(props: {
                   <div className="flex flex-1 items-center justify-center px-2 text-center">
                     <span
                       className={`truncate text-[10.5px] font-medium ${
-                        isBodyActive ? 'font-semibold text-[#c9dcfa]' : 'text-white/45'
+                        isBodyActive ? 'font-semibold text-[var(--acc-hi)]' : 'text-[var(--t3)]'
                       }`}
                     >
                       {centerSummary}
@@ -552,13 +552,13 @@ export function ModeButtons(props: {
                     aria-valuenow={isBodyActive ? cueProgressPct : undefined}
                     data-cue-progress={isBodyActive ? cueProgressPct : undefined}
                     className={`relative flex w-full items-center justify-between overflow-hidden px-2.5 py-1.5 text-[10px] font-semibold tracking-[0.1em] uppercase tabular-nums ${
-                      isBodyActive ? 'bg-[#091529]/85 text-[#eff5ff]' : 'bg-black/60 text-[#D7CFC7]'
+                      isBodyActive ? 'bg-[var(--s1)]/90 text-[var(--t1)]' : 'bg-black/60 text-[#D7CFC7]'
                     }`}
                   >
                     {isBodyActive && (
                       <div
                         aria-hidden="true"
-                        className="pointer-events-none absolute inset-y-0 left-0 bg-gradient-to-r from-[#2860ba] to-[#448af4] transition-[width] duration-75 ease-out"
+                        className="pointer-events-none absolute inset-y-0 left-0 bg-gradient-to-r from-[#7a3d12] to-[#b8561a] transition-[width] duration-75 ease-out"
                         style={{ width: `${cueProgressPct}%` }}
                       />
                     )}

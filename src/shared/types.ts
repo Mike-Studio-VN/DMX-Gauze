@@ -59,8 +59,10 @@ export interface ModuleCfg {
   startAddress: number
   /** Tốc độ tối đa motor (cm/s) ứng với CH3 = 255. */
   maxSpeedCms: number
-  /** Độ lệch vị trí DMX có dấu, tính theo bước CH2. Mặc định 0. */
-  fineTune?: number
+  /** Hiệu chỉnh tĩnh tại home (vị trí 0), mm, 0..40. Không áp khi chạy timeline/cue/wave. */
+  homeOffsetMm?: number
+  /** Khoá riêng module: CH4=0, đóng băng, chặn Sent (lưu trong project; không vượt được khoá toàn cục). */
+  locked?: boolean
   /** Giá trị CH3 mặc định. */
   defaultSpeed: number
 }
@@ -185,6 +187,10 @@ export interface Snapshot {
   locked: boolean
   status: ConnectionStatus
   frame: Uint8Array
+  /** Override đang phát theo module id → [CH1..CH4] đã gửi. */
+  overrides?: Record<string, number[]>
+  /** Id module đang bị khoá riêng. */
+  moduleLocks?: string[]
 }
 
 export interface CoreConfig {
@@ -199,6 +205,9 @@ export type Command =
   | { type: 'stop'; ids: string[] | 'all' }
   | { type: 'estop' }
   | { type: 'lock'; locked: boolean }
+  /** Manual override: phát đúng 4 giá trị CH1..CH4 cho module (kể cả khi khoá toàn cục) cho tới khi xoá. */
+  | { type: 'override'; id: string; values: [number, number, number, number] }
+  | { type: 'clearOverride'; id: string }
 
 export interface CommandResult {
   ok: boolean

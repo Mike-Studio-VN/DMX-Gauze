@@ -603,7 +603,7 @@ input[type='number']::-webkit-outer-spin-button {
   outline-offset: 2px;
 }
 .manual-card-up {
-  background: linear-gradient(180deg, #162944 0%, #0f1d33 100%);
+  background: linear-gradient(180deg, #3a2112 0%, #26160c 100%);
   color: #edf4ff;
   box-shadow:
     inset 0 0 0 1px rgba(120, 170, 255, 0.38),
@@ -745,8 +745,8 @@ input[type='number']::-webkit-outer-spin-button {
   width: 100%;
   height: 100%;
   border-radius: 12px;
-  background: #0a0908;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: var(--s1);
+  border: 1px solid var(--line2);
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
@@ -756,13 +756,13 @@ input[type='number']::-webkit-outer-spin-button {
     box-shadow 160ms ease;
 }
 .cue-pad:hover {
-  border-color: rgba(255, 255, 255, 0.26);
+  border-color: rgba(255, 206, 160, 0.34);
 }
 .cue-pad.active {
-  border: 1.5px solid #5a96ff;
+  border: 1.5px solid var(--acc);
   box-shadow:
-    0 0 0 1px rgba(90, 150, 255, 0.34),
-    0 12px 24px -16px rgba(45, 115, 235, 0.55);
+    0 0 0 1px var(--acc-t2),
+    0 12px 24px -16px rgba(224, 106, 20, 0.55);
 }
 .cue-pad-bar {
   display: flex;
@@ -771,8 +771,8 @@ input[type='number']::-webkit-outer-spin-button {
   gap: 8px;
   height: 48px;
   padding: 0 12px;
-  background: #272a34;
-  color: #dfe3ec;
+  background: var(--s4);
+  color: var(--t1);
   font-family: 'Inter Variable', Inter, sans-serif;
   font-size: 14.5px;
   font-weight: 650;
@@ -783,15 +783,15 @@ input[type='number']::-webkit-outer-spin-button {
 }
 .cue-pad.bar-selected .cue-pad-bar,
 .cue-pad.active:not(.cue-pad-prev) .cue-pad-bar {
-  background: #448af4;
-  color: #f3f7ff;
+  background: var(--acc);
+  color: var(--on-acc);
 }
 .cue-pad.active.cue-pad-prev .cue-pad-bar {
-  background: #285499;
-  color: #dce9ff;
+  background: var(--acc-lo);
+  color: var(--on-acc);
 }
 .cue-pad-empty .cue-pad-bar {
-  background: #20222a;
+  background: var(--s3);
 }
 .cue-pad-body {
   position: relative;
@@ -803,14 +803,14 @@ input[type='number']::-webkit-outer-spin-button {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  background: radial-gradient(circle at 50% 42%, rgba(255, 200, 150, 0.06), transparent 65%), #0a0908;
+  background: radial-gradient(circle at 50% 42%, rgba(255, 200, 150, 0.06), transparent 65%), var(--s1);
   transition: background 140ms ease;
 }
 .cue-pad.active .cue-pad-body {
-  background: linear-gradient(180deg, #162944 0%, #0f1d33 100%);
+  background: linear-gradient(180deg, #3a2112 0%, #26160c 100%);
 }
 .cue-pad-empty .cue-pad-body {
-  background: #0a0908;
+  background: var(--s2);
 }
 
 ::-webkit-scrollbar {

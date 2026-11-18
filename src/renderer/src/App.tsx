@@ -641,7 +641,7 @@ export function App() {
         <div
           role="status"
           aria-live={toast.kind === 'error' ? 'assertive' : 'polite'}
-          className="fixed right-5 bottom-8 z-50 flex w-[340px] max-w-[calc(100vw-2.5rem)] items-center gap-3 rounded-[18px] bg-[#16100C]/95 px-3.5 py-2.5 shadow-[0_14px_34px_rgba(0,0,0,0.6),inset_0_0_0_1px_rgba(255,206,160,0.14)] backdrop-blur-md"
+          className="fixed top-16 right-5 z-50 flex w-[340px] max-w-[calc(100vw-2.5rem)] items-center gap-3 rounded-[18px] bg-[#16100C]/95 px-3.5 py-2.5 shadow-[0_14px_34px_rgba(0,0,0,0.6),inset_0_0_0_1px_rgba(255,206,160,0.14)] backdrop-blur-md"
         >
           <span
             aria-hidden="true"

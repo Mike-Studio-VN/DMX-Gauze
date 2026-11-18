@@ -1,6 +1,7 @@
 // Hằng số theo spec màn gauze 4 kênh (đã chốt với người dùng 17/11).
 export const CHANNELS_PER_MODULE = 4
-export const DMX_FINE_TUNE_LIMIT = 255
+/** Hiệu chỉnh tĩnh tại vị trí 0 (home): 0..+40 mm (DMX 16-bit không có giá trị âm dưới 0). */
+export const HOME_OFFSET_MAX_MM = 40
 export const CH = { POSITION: 0, FINE: 1, SPEED: 2, LOCK: 3 } as const
 export const LOCK_VALUE = 77
 export const DEFAULT_SPEED = 100

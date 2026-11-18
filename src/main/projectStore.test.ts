@@ -114,21 +114,21 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
     expect(loaded.project.settings).toEqual(valid.settings);
   });
 
-  it('preserves signed Fine tune per module alongside legacy modules without calibration', async () => {
+  it('preserves home offset (mm) per module alongside legacy modules without calibration', async () => {
     const project = createDefaultProject();
-    project.modules[0].fineTune = -255;
-    project.modules[1].fineTune = 255;
+    project.modules[0].homeOffsetMm = 0;
+    project.modules[1].homeOffsetMm = 40;
     await saveProjectToDisk(project);
 
     const { project: loaded } = await loadSavedProject();
     expect(loaded.schemaVersion).toBe(project.schemaVersion);
-    expect(loaded.modules.slice(0, 3).map((module) => module.fineTune)).toEqual([-255, 255, undefined]);
+    expect(loaded.modules.slice(0, 3).map((module) => module.homeOffsetMm)).toEqual([0, 40, undefined]);
   });
 
-  it.each([-256, 256, 0.5])('rejects invalid Fine tune in project JSON (%i)', (fineTune) => {
+  it.each([-1, 40.5, 255])('rejects invalid home offset in project JSON (%i)', (mm) => {
     const project = createDefaultProject();
-    project.modules[0].fineTune = fineTune;
-    expect(() => parseProjectJson(JSON.stringify(project))).toThrow(/fineTune/);
+    project.modules[0].homeOffsetMm = mm;
+    expect(() => parseProjectJson(JSON.stringify(project))).toThrow(/homeOffsetMm/);
   });
 
   it('preserves previous currentFilePath when Save As fails and saves subsequent Save to old path', async () => {

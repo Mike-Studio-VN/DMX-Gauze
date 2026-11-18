@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { autoAssign, conflictMap, nextFree, validateAddress } from './addressing'
 import { buildArtDmx, buildArtPoll, buildArtPollReply, parseArtPollReply, portAddress } from './artnet'
-import { ch3ToCms, cmsToCh3, dmxToPos, durationToCh3, posToDmx } from './convert'
+import { ch3ToCms, cmsToCh3, dmxToPos, durationToCh3, homeOffsetSteps, posToDmx } from './convert'
 import { LtcDecoder } from './ltc'
-import { createDefaultProject } from './preset'
+import { createDefaultProject, normalizeProject } from './preset'
 import { formatTc, parseTc } from './timecode'
 import { analyzeClipSpeeds } from './timeline'
 
@@ -18,14 +18,13 @@ describe('convert', () => {
     expect(dmxToPos(mid3.coarse, mid3.fine, 3)).toBeCloseTo(1.5, 3)
   })
 
-  it.each([
-    { base: 0x12ff, offset: 1, coarse: 0x13, fine: 0x00 },
-    { base: 0x1300, offset: -1, coarse: 0x12, fine: 0xff },
-    { base: 1, offset: -255, coarse: 0x00, fine: 0x00 },
-    { base: 65534, offset: 255, coarse: 0xff, fine: 0xff },
-  ])('applies $offset to the full DMX position $base before splitting bytes', ({ base, offset, coarse, fine }) => {
-    expect(posToDmx(base / 65535, 1, offset)).toEqual({ coarse, fine })
-  })
+  it('home offset: mm → bước 16-bit, chỉ áp tại target 0', () => {
+    expect(homeOffsetSteps(40, 1)).toBe(2621)
+    expect(homeOffsetSteps(1000, 1)).toBe(2621) // kẹp 40 mm
+    expect(homeOffsetSteps(-5, 1)).toBe(0)
+    expect(posToDmx(0, 1, 40)).toEqual({ coarse: 10, fine: 0x3d })
+    expect(posToDmx(0.5, 1, 40)).toEqual(posToDmx(0.5, 1))
+  });
 
   it('quy đổi tốc độ H2 120 cm/s và thời gian sang CH3', () => {
     expect(ch3ToCms(255, 120)).toBeCloseTo(120, 5)
@@ -1025,5 +1024,30 @@ describe('regression tests: project validation, curve agreement & LTC freewheel'
     expect(sacnOut.sacnUniverse).toBe(filledArtNet.settings.output.universe + 1)
     const backToArtNet = resolveOutputSettingsPatch(sacnOut, { driver: 'artnet' })
     expect(backToArtNet.port).toBe(6454)
+  })
+})
+
+describe('project round-trip của trường mới', () => {
+  it('homeOffsetMm + locked + output.sendHz giữ nguyên qua serialize → parse', () => {
+    const project = createDefaultProject()
+    project.modules[0].homeOffsetMm = 12.5
+    project.modules[0].locked = true
+    project.modules[1].homeOffsetMm = 40
+    const back = normalizeProject(JSON.parse(JSON.stringify(normalizeProject(project))))
+    expect(back).toEqual(normalizeProject(project))
+    expect(back.modules[0]).toMatchObject({ homeOffsetMm: 12.5, locked: true })
+    expect(back.modules[1].homeOffsetMm).toBe(40)
+  })
+
+  it('project cũ không có trường mới vẫn mở được, mặc định: không offset, không khoá', () => {
+    const project = createDefaultProject()
+    const raw = JSON.parse(JSON.stringify(project))
+    for (const m of raw.modules) {
+      delete m.homeOffsetMm
+      delete m.locked
+      m.fineTune = 100 // trường v1.0.4 bị bỏ qua
+    }
+    const back = normalizeProject(raw)
+    expect(back.modules.every((m) => m.homeOffsetMm === undefined && m.locked === undefined && !('fineTune' in m))).toBe(true)
   })
 })
