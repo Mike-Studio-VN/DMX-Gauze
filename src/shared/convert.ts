@@ -1,5 +1,4 @@
 // Quy đổi mét / tốc độ / giây ⇄ giá trị DMX (xem plan mục 8.2).
-import { H2_MAX_SPEED_CMS } from './dmx'
 import type { ModuleCfg, Snapshot } from './types'
 
 export function clamp(v: number, lo: number, hi: number): number {
@@ -35,25 +34,25 @@ export function snapPos(pos: number, m: PosRange): number {
   return ch1ToPos(posToCh1(pos, m), m.length)
 }
 
-/** Tốc độ tối đa dùng được (cm/s): không vượt giới hạn module và không vượt phần cứng (255 = 120 cm/s). */
+/** Tốc độ tối đa của module (cm/s) = "Tốc độ max" người dùng nhập; đồng thời là thang CH3 (255 = maxSpeedCms). */
 export function speedCap(m: Pick<ModuleCfg, 'maxSpeedCms'>): number {
-  return Math.max(1, Math.min(m.maxSpeedCms, H2_MAX_SPEED_CMS))
+  return Math.max(1, m.maxSpeedCms)
 }
 
-/** CH3 → tốc độ cm/s (tuyến tính, 255 = 120 cm/s). */
-export function ch3ToCms(ch3: number): number {
-  return (ch3 / 255) * H2_MAX_SPEED_CMS
+/** CH3 → tốc độ cm/s (tuyến tính, 255 = maxSpeedCms của module). */
+export function ch3ToCms(ch3: number, maxSpeedCms: number): number {
+  return (ch3 / 255) * Math.max(1, maxSpeedCms)
 }
 
-/** Sai số làm tròn cho phép khi ceil (đơn vị CH3): 47.06 cm/s (≈100.0025) vẫn ra 100, không nhảy 101. */
+/** Sai số làm tròn cho phép khi ceil (đơn vị CH3): vd 47.06 cm/s (≈100.0025) với max 120 vẫn ra 100, không nhảy 101. */
 const CH3_CEIL_EPS = 0.01
 
 /**
- * Tốc độ cm/s → CH3, làm tròn LÊN (không chậm hơn yêu cầu nên đoạn không đến muộn), kẹp 1..255
- * (0 là phanh). 47.06 cm/s → 100, 60 → 128, 120 → 255.
+ * Tốc độ cm/s → CH3 theo thang của module (255 = maxSpeedCms), làm tròn LÊN (không chậm hơn yêu cầu nên đoạn
+ * không đến muộn), kẹp 1..255 (0 là phanh). Max 120: 47.06 → 100, 60 → 128; max 80: 40 → 128, 80 → 255.
  */
-export function cmsToCh3(cms: number): number {
-  return clamp(Math.ceil((cms / H2_MAX_SPEED_CMS) * 255 - CH3_CEIL_EPS), 1, 255)
+export function cmsToCh3(cms: number, maxSpeedCms: number): number {
+  return clamp(Math.ceil((cms / Math.max(1, maxSpeedCms)) * 255 - CH3_CEIL_EPS), 1, 255)
 }
 
 export interface DurationConv {
@@ -63,15 +62,13 @@ export interface DurationConv {
   tooFast: boolean
 }
 
-/**
- * Quãng đường (m) trong N giây → CH3. Làm tròn LÊN (không chậm hơn yêu cầu, có sai số epsilon). `capCms` là trần tốc độ của module (≤ 120).
- */
-export function durationToCh3(distM: number, seconds: number, capCms = H2_MAX_SPEED_CMS): DurationConv {
-  const cap = Math.max(1, Math.min(capCms, H2_MAX_SPEED_CMS))
+/** Quãng đường (m) trong N giây → CH3 theo thang maxSpeedCms của module. Làm tròn LÊN (có sai số epsilon). */
+export function durationToCh3(distM: number, seconds: number, maxSpeedCms: number): DurationConv {
+  const max = Math.max(1, maxSpeedCms)
   const dist = Math.abs(distM)
   const needCms = (dist * 100) / Math.max(seconds, 0.01)
-  const ch3 = clamp(Math.ceil((needCms / H2_MAX_SPEED_CMS) * 255 - CH3_CEIL_EPS), 1, cmsToCh3(cap))
-  return { ch3, minSeconds: (dist * 100) / cap, tooFast: needCms > cap + 1e-6 }
+  const ch3 = clamp(Math.ceil((needCms / max) * 255 - CH3_CEIL_EPS), 1, 255)
+  return { ch3, minSeconds: (dist * 100) / max, tooFast: needCms > max + 1e-6 }
 }
 
 export interface ManualMotionBaseline {
@@ -126,7 +123,7 @@ export function computeManualMotionProgress(
 
     if (distLeft > 0.008 && mod) {
       const ch3 = st?.ch3 && st.ch3 > 0 ? st.ch3 : mod.defaultSpeed
-      const speedCms = Math.max(1, ch3ToCms(ch3))
+      const speedCms = Math.max(1, ch3ToCms(ch3, mod.maxSpeedCms))
       const eta = (distLeft * 100) / speedCms
       if (eta > maxEta) maxEta = eta
     }

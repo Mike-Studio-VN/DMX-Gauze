@@ -1,6 +1,6 @@
 import { portAddress } from './artnet'
 import { ARTNET_PORT, CH, CHANNELS_PER_MODULE, DMX_UNIVERSE_SIZE, SENT_CH4_PULSE_VALUE, SENT_PULSE_MS } from './dmx'
-import { ch3ToCms, clamp, cmsToCh3, durationToCh3, posToCh1, snapPos, speedCap } from './convert'
+import { ch3ToCms, clamp, cmsToCh3, durationToCh3, posToCh1, snapPos } from './convert'
 import { DEFAULT_DMX_TRANSPORT_HZ, normalizeDmxTransportRate, startDmxFrameLoop } from './dmxTransport'
 import type { DriverFactory, DriverEvents, OutputDriver } from './drivers'
 import type {
@@ -262,15 +262,14 @@ export class GauzeCore {
       }
       const dist = clamped - st.pos
       let ch3 = m.defaultSpeed
-      const capCh3 = cmsToCh3(speedCap(m))
-      if (cmd.speed.unit === 'cms') ch3 = Math.min(cmsToCh3(cmd.speed.value), capCh3)
+      if (cmd.speed.unit === 'cms') ch3 = cmsToCh3(cmd.speed.value, m.maxSpeedCms)
       else if (cmd.speed.unit === 'sec') {
-        const c = durationToCh3(dist, cmd.speed.value, speedCap(m))
+        const c = durationToCh3(dist, cmd.speed.value, m.maxSpeedCms)
         ch3 = c.ch3
         if (c.tooFast && Math.abs(dist) > 1e-4) warnings.push(`${m.name}: cần tối thiểu ${c.minSeconds.toFixed(1)} s`)
       }
       st.target = clamped
-      st.ch3 = Math.min(ch3, capCh3)
+      st.ch3 = ch3
     }
     return { ok: true, warnings: warnings.length ? warnings : undefined }
   }
@@ -292,13 +291,14 @@ export class GauzeCore {
   }
 
   private simulate(dt: number): void {
-    for (const st of this.states.values()) {
+    for (const [id, st] of this.states) {
+      const m = this.modules.get(id)!
       const diff = st.target - st.pos
       if (this.locked || Math.abs(diff) < 1e-6) {
         st.moving = false
         continue
       }
-      const step = (ch3ToCms(st.ch3) / 100) * dt
+      const step = (ch3ToCms(st.ch3, m.maxSpeedCms) / 100) * dt
       if (Math.abs(diff) <= step) {
         st.pos = st.target
         st.moving = false
