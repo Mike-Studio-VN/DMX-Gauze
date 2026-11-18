@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { GauzeBridge, SnapshotDto } from '@shared/api'
+import type { GauzeBridge, SnapshotDto, StartupBridge } from '@shared/api'
 import type { Command, CoreConfig, Project } from '@shared/types'
 
 const bridge: GauzeBridge = {
@@ -22,4 +22,12 @@ const bridge: GauzeBridge = {
   },
 }
 
-contextBridge.exposeInMainWorld('gauze', bridge)
+if (process.argv.includes('--gauze-startup')) {
+  const startupBridge: StartupBridge = {
+    hasRecentProject: () => ipcRenderer.invoke('startup:has-recent'),
+    chooseProject: (choice) => ipcRenderer.invoke('startup:choose', choice),
+  }
+  contextBridge.exposeInMainWorld('gauzeStartup', startupBridge)
+} else {
+  contextBridge.exposeInMainWorld('gauze', bridge)
+}

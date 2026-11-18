@@ -35,3 +35,10 @@ export interface GauzeBridge {
   listSerialPorts(): Promise<string[]>
   onSnapshot(cb: (snap: SnapshotDto) => void): () => void
 }
+
+export type StartupProjectChoice = 'recent' | 'new' | 'open'
+
+export interface StartupBridge {
+  hasRecentProject(): Promise<boolean>
+  chooseProject(choice: StartupProjectChoice): Promise<boolean>
+}
