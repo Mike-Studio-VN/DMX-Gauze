@@ -183,11 +183,15 @@ export class GauzeCore {
     switch (cmd.type) {
       case 'lock':
         this.locked = cmd.locked
-        if (cmd.locked) this.holdAll()
+        if (cmd.locked) {
+          this.holdAll()
+          this.overrides.clear() // khoá chặn cả override đã gửi
+        }
         return { ok: true }
       case 'estop':
         this.holdAll()
         this.locked = true
+        this.overrides.clear()
         return { ok: true }
       case 'stop': {
         const ids = cmd.ids === 'all' ? [...this.states.keys()] : cmd.ids
@@ -207,6 +211,7 @@ export class GauzeCore {
   private setOverride(id: string, values: number[]): CommandResult {
     const m = this.modules.get(id)
     if (!m) return { ok: false, message: 'Không tìm thấy module.' }
+    if (this.locked) return { ok: false, message: 'Đang khoá – tắt khoá để gửi.' }
     if (values.length !== CHANNELS_PER_MODULE || values.some((v) => !Number.isInteger(v) || v < 0 || v > 255)) {
       return { ok: false, message: 'Giá trị DMX phải là số nguyên 0–255.' }
     }
@@ -215,8 +220,7 @@ export class GauzeCore {
     const full = clamp((values[0] << 8) | values[1], Math.round((lo / m.length) * 65535), Math.round((hi / m.length) * 65535))
     const out = [full >> 8, full & 0xff, values[2], values[3]]
     this.overrides.set(id, out)
-    const warnings = this.locked ? ['Đang khoá toàn cục: override vẫn gửi đúng giá trị đã nhập (kể cả CH4).'] : undefined
-    return { ok: true, warnings }
+    return { ok: true }
   }
 
   private hold(id: string): void {

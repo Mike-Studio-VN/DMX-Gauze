@@ -2232,6 +2232,7 @@ function ChannelMonitor({
   const valid = parsed.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)
   const dirty = draft.some((d) => d !== null) && (!sent || parsed.some((n, i) => n !== sent[i]))
   const send = async () => {
+    if (globalLocked) return setErr('Đang khoá – tắt khoá để gửi.')
     if (!valid) return setErr('Mỗi kênh phải là số nguyên 0–255.')
     const res = await getBridge().command({ type: 'override', id: moduleId, values: parsed as [number, number, number, number] })
     setErr(res.ok ? null : (res.message ?? 'Gửi thất bại'))
@@ -2262,7 +2263,7 @@ function ChannelMonitor({
           <button
             type="button"
             onClick={() => void send()}
-            disabled={!dirty || !valid}
+            disabled={!dirty}
             title="Gửi 4 giá trị đã nhập ra DMX (giữ & phát lại liên tục)"
             className="cursor-pointer rounded-full bg-brand/20 px-2 py-0.5 text-[10px] font-semibold text-[#FFB26B] hover:bg-brand/30 disabled:cursor-default disabled:opacity-40"
           >
@@ -2296,7 +2297,7 @@ function ChannelMonitor({
       {globalLocked && (
         <p className="flex items-start gap-1 text-[10.5px] text-warn">
           <AlertTriangle size={11} className="mt-px shrink-0" />
-          Đang khoá toàn cục: Sent vẫn phát đúng giá trị nhập (kể cả CH4), bỏ qua khoá.
+          Đang khoá – tắt khoá để gửi (Sent bị chặn, không phát DMX).
         </p>
       )}
       {err && <p className="text-[10.5px] text-danger">{err}</p>}

@@ -88,22 +88,40 @@ describe('GauzeCore', () => {
       return core
     }
 
-    it('phát đúng 4 giá trị (kể cả CH4) khi khoá toàn cục, chỉ module đó, và giữ qua các tick', () => {
+    it('khoá bật → Sent bị chặn, không tạo override; khoá tắt → gửi đúng 4 giá trị, module khác không đổi', () => {
       const core = setup()
       try {
         core.command({ type: 'lock', locked: true })
         core.tick()
-        const base = core.snapshot().frame.slice(4, 8)
+        const locked = [...core.snapshot().frame.slice(0, 8)]
         const res = core.command({ type: 'override', id: 'm-a', values: [10, 20, 30, 77] })
-        expect(res.ok).toBe(true)
-        expect(res.warnings?.length).toBe(1)
+        expect(res.ok).toBe(false)
+        core.tick()
+        expect([...core.snapshot().frame.slice(0, 8)]).toEqual(locked)
+        expect(core.snapshot().overrides).toEqual({})
+
+        core.command({ type: 'lock', locked: false })
+        expect(core.command({ type: 'override', id: 'm-a', values: [10, 20, 30, 77] }).ok).toBe(true)
         core.tick()
         core.tick()
         const f = core.snapshot().frame
         expect([...f.slice(0, 4)]).toEqual([10, 20, 30, 77])
-        expect([...f.slice(4, 8)]).toEqual([...base]) // module khác không bị ảnh hưởng
-        expect(core.snapshot().locked).toBe(true)
-        expect(core.snapshot().overrides?.['m-a']).toEqual([10, 20, 30, 77])
+        expect([...f.slice(4, 8)]).toEqual([0, 0, 100, 77]) // module khác dùng frame thường
+      } finally {
+        core.stop()
+      }
+    })
+
+    it('bật khoá khi đang có override → override bị xoá, CH4 về 0', () => {
+      const core = setup()
+      try {
+        core.command({ type: 'lock', locked: false })
+        core.command({ type: 'override', id: 'm-a', values: [10, 20, 30, 77] })
+        core.tick()
+        core.command({ type: 'lock', locked: true })
+        core.tick()
+        expect(core.snapshot().overrides).toEqual({})
+        expect(core.snapshot().frame[3]).toBe(0)
       } finally {
         core.stop()
       }
@@ -115,13 +133,14 @@ describe('GauzeCore', () => {
         expect(core.command({ type: 'override', id: 'm-a', values: [256, 0, 0, 0] }).ok).toBe(false)
         expect(core.command({ type: 'override', id: 'm-a', values: [1.5, 0, 0, 0] }).ok).toBe(false)
         expect(core.command({ type: 'override', id: 'nope', values: [0, 0, 0, 0] }).ok).toBe(false)
+        core.command({ type: 'lock', locked: false })
         core.command({ type: 'override', id: 'm-a', values: [255, 255, 50, 77] })
         core.tick()
         expect([...core.snapshot().frame.slice(0, 4)]).toEqual([0x80, 0x00, 50, 77]) // 0.5 m → 32768
         core.command({ type: 'clearOverride', id: 'm-a' })
         core.tick()
         expect(core.snapshot().overrides).toEqual({})
-        expect(core.snapshot().frame[3]).toBe(0) // khoá toàn cục (mặc định) lại ép CH4=0
+        expect(core.snapshot().frame[3]).toBe(77)
       } finally {
         core.stop()
       }
