@@ -163,7 +163,6 @@ export function createWebBridge(): GauzeBridge {
     },
     async configure(cfg: CoreConfig): Promise<void> {
       core.configure(cfg)
-      core.restartTimer()
       core.start()
     },
     async command(cmd: Command) {

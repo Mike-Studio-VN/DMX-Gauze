@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { GauzeCore } from './core'
 import { MockDriver } from './drivers'
 import { CH, LOCK_VALUE } from './dmx'
+import { DMX_TRANSPORT_RATES } from './dmxTransport'
 import { createDefaultProject, normalizeProject } from './preset'
 
 describe('GauzeCore', () => {
@@ -144,6 +145,65 @@ describe('GauzeCore', () => {
   })
 })
 
+describe('DMX transport rate', () => {
+  it.each(DMX_TRANSPORT_RATES)('sends %i frames per second through the active driver', (sendHz) => {
+    vi.useFakeTimers()
+    const send = vi.fn()
+    const core = new GauzeCore((_cfg, ev) => Object.assign(new MockDriver(ev), { send }))
+    const cfg = { modules: [], output: { ...createDefaultProject().settings.output, sendHz }, lockValue: LOCK_VALUE }
+
+    try {
+      core.configure(cfg)
+      core.start()
+      vi.advanceTimersByTime(500)
+      core.configure(cfg)
+      vi.advanceTimersByTime(1500)
+      expect(send).toHaveBeenCalledTimes(sendHz * 2)
+      expect(core.status().sendHz).toBe(sendHz)
+    } finally {
+      core.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('switches the running cadence without reopening the driver or flushing the route', () => {
+    vi.useFakeTimers()
+    const send = vi.fn()
+    const stop = vi.fn()
+    const factory = vi.fn<ConstructorParameters<typeof GauzeCore>[0]>((_cfg, ev) =>
+      Object.assign(new MockDriver(ev), { send, stop }),
+    )
+    const core = new GauzeCore(factory)
+    const project = createDefaultProject()
+    const cfg = { modules: project.modules, output: project.settings.output, lockValue: LOCK_VALUE }
+
+    try {
+      core.configure(cfg)
+      core.start()
+      core.command({ type: 'lock', locked: false })
+      vi.advanceTimersByTime(1000)
+      expect(send).toHaveBeenCalledTimes(25)
+
+      core.configure({ ...cfg, output: { ...cfg.output, sendHz: 60 } })
+      expect(factory).toHaveBeenCalledTimes(1)
+      expect(stop).not.toHaveBeenCalled()
+      expect(send).toHaveBeenCalledTimes(25)
+      expect(core.snapshot().locked).toBe(false)
+
+      vi.advanceTimersByTime(1000)
+      expect(send).toHaveBeenCalledTimes(85)
+      expect(core.status().sendHz).toBe(60)
+      core.stop()
+      const framesAfterStop = send.mock.calls.length
+      vi.advanceTimersByTime(1000)
+      expect(send).toHaveBeenCalledTimes(framesAfterStop)
+    } finally {
+      core.stop()
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('connection status without device feedback', () => {
   it('node tự dựng (confirmed:false) chỉ cho trạng thái "sending", node thật cho "online"', () => {
     const now = 1000
@@ -157,7 +217,7 @@ describe('connection status without device feedback', () => {
     core.configure({ modules: [p.modules[0]], output: p.settings.output, lockValue: LOCK_VALUE })
     expect(core.status().state).toBe('sending')
     confirmed = true
-    core.configure({ modules: [p.modules[0]], output: { ...p.settings.output, sendHz: 30 }, lockValue: LOCK_VALUE })
+    core.pollNow()
     expect(core.status().state).toBe('online')
   })
 })

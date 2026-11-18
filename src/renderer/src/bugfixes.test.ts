@@ -1216,6 +1216,16 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     expect(netSettingsHtml).not.toContain('<select');
     expect(netSettingsHtml).toContain('role="combobox"');
     expect(netSettingsHtml).toContain('Art-Net');
+    expect(netSettingsHtml).toContain('aria-label="Tần số phát frame DMX"');
+    expect(netSettingsHtml).toContain('Đồng bộ file 25 Hz');
+    expect(netSettingsHtml).toContain('25 FPS · 40 ms/frame');
+
+    useAppStore.getState().updateOutputSettings({ sendHz: 60 });
+    const updatedRateHtml = renderToStaticMarkup(
+      React.createElement(SettingsModal, { overrideState: useAppStore.getState() }),
+    );
+    expect(updatedRateHtml).toContain('Đồng bộ file 60 Hz');
+    expect(updatedRateHtml).toContain('60 FPS · 16.67 ms/frame');
     expect(netSettingsHtml).toContain('grid-cols-2 items-end gap-3');
     expect(netSettingsHtml).toContain('Cổng 6454 đang bận');
     expect(netSettingsHtml).not.toContain('localhost');

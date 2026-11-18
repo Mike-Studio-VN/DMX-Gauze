@@ -1,6 +1,7 @@
 // Bộ dựng gói tin DMX cho các giao thức ngoài Art-Net:
 // sACN E1.31, KiNET v1/v2, Enttec DMX USB Pro / Mk2, và Generic Serial.
 import { ARTNET_PORT } from './dmx'
+import { normalizeDmxTransportRate } from './dmxTransport'
 import type { DriverId, OutputSettings } from './types'
 
 export const SACN_PORT = 5568
@@ -29,6 +30,7 @@ export function resolveOutputSettingsPatch(
   const merged: OutputSettings = {
     ...current,
     ...patch,
+    sendHz: normalizeDmxTransportRate(patch.sendHz ?? current.sendHz),
     ...(autoPort !== null ? { port: autoPort } : {}),
   }
   if (driverChanged && nextDriver === 'sacn') {
