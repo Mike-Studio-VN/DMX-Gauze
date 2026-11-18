@@ -155,6 +155,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   const marqueeDraggedRef = useRef(false)
   const clipDraggedRef = useRef(false)
   const marqueeCleanupRef = useRef<(() => void) | null>(null)
+  const scrubCleanupRef = useRef<(() => void) | null>(null)
   const timeRef = useRef(time)
   timeRef.current = time
   const clipsRef = useRef(clips)
@@ -197,12 +198,15 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       linearPlannerRef.current,
     )
     if (warnings.length > 0) notify(warnings[0], 'warn')
-    for (const c of commands) void sendCommandRef.current(c, { quietWarnings: true })
+    for (const c of commands) void sendCommandRef.current(c, { quietWarnings: true, source: 'timeline' })
   }
   const dispatchFollowRef = useRef(dispatchTimelineFollow)
   dispatchFollowRef.current = dispatchTimelineFollow
 
-  useEffect(() => () => marqueeCleanupRef.current?.(), [])
+  useEffect(() => () => {
+    marqueeCleanupRef.current?.()
+    scrubCleanupRef.current?.()
+  }, [])
 
   useEffect(() => {
     if (snapshot?.locked) {
@@ -312,7 +316,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       }
       if (res.shouldStop) {
         linearPlannerRef.current.reset()
-        void sendCommandRef.current({ type: 'stop', ids: 'all' })
+        void sendCommandRef.current({ type: 'stop', ids: 'all' }, { source: 'timeline' })
       }
     })
   }, [ltcActive, effectiveLtcFps, freewheelFrames, maxTime, dmxHz])
@@ -361,6 +365,24 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     return latestT
   }
 
+  const trackScrub = (onMove: (ev: PointerEvent) => void, finish: () => void) => {
+    scrubCleanupRef.current?.()
+    const cleanup = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', cleanup)
+      scrubCleanupRef.current = null
+    }
+    const onUp = () => {
+      cleanup()
+      finish()
+    }
+    scrubCleanupRef.current = cleanup
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', cleanup)
+  }
+
   const startHeadOrScrub = (e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation()
     if (editingHead) return
@@ -374,13 +396,9 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       if (!rect) return
       latestT = scrubRulerFromClientX(ev.clientX, rect.left)
     }
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
+    trackScrub(onMove, () => {
       if (moved) previewTimelineAt(latestT)
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
+    })
   }
 
   const startRulerScrub = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -389,13 +407,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     const onMove = (ev: PointerEvent) => {
       latestT = scrubRulerFromClientX(ev.clientX, el.getBoundingClientRect().left)
     }
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      previewTimelineAt(latestT)
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
+    trackScrub(onMove, () => previewTimelineAt(latestT))
   }
 
   const startClipDrag = (
@@ -787,7 +799,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     if (playing) {
       setPlaying(false)
       linearPlannerRef.current.reset()
-      void sendCommand({ type: 'stop', ids: 'all' })
+      void sendCommand({ type: 'stop', ids: 'all' }, { source: 'timeline' })
       return
     }
     if (snapshot?.locked) {

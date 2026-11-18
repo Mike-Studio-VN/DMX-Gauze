@@ -1108,6 +1108,7 @@ export function PropertiesPanel(props: {
   const {
     project,
     focusScope,
+    activeTab,
     selectedIds,
     selectedLayerId,
     selectedButtonId,
@@ -1521,47 +1522,49 @@ export function PropertiesPanel(props: {
                 ))}
               </div>
 
-              <div className="grid grid-cols-2 gap-1.5">
-                <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
-                  <span className="shrink-0 text-[10px] text-muted">Biên độ</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={waveAmplitudeCm}
-                    onChange={(e) => {
-                      const value = Number(e.target.value)
-                      if (Number.isFinite(value) && value >= 0) setWaveAmplitudeCm(value)
-                    }}
-                    className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none"
-                  />
-                  <span className="shrink-0 text-[10px] text-muted">cm</span>
-                </label>
-                <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
-                  <span className="shrink-0 text-[10px] text-muted">Lên trước</span>
-                  <select
-                    value={waveFirstUp}
-                    onChange={(e) => setWaveFirstUp(e.target.value === 'even' ? 'even' : 'odd')}
-                    className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg outline-none"
+              {activeTab === 'timeline' && (
+                <div className="grid grid-cols-2 gap-1.5">
+                  <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
+                    <span className="shrink-0 text-[10px] text-muted">Biên độ</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={waveAmplitudeCm}
+                      onChange={(e) => {
+                        const value = Number(e.target.value)
+                        if (Number.isFinite(value) && value >= 0) setWaveAmplitudeCm(value)
+                      }}
+                      className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none"
+                    />
+                    <span className="shrink-0 text-[10px] text-muted">cm</span>
+                  </label>
+                  <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
+                    <span className="shrink-0 text-[10px] text-muted">Lên trước</span>
+                    <select
+                      value={waveFirstUp}
+                      onChange={(e) => setWaveFirstUp(e.target.value === 'even' ? 'even' : 'odd')}
+                      className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg outline-none"
+                    >
+                      <option value="odd">Lẻ</option>
+                      <option value="even">Chẵn</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    disabled={layerMods.length === 0}
+                    onClick={() => applyLayerMotionPreset(activeLayer.id, 'alternating-wave', {
+                      duration: layerPresetDur,
+                      amplitudeCm: waveAmplitudeCm,
+                      firstUp: waveFirstUp,
+                    })}
+                    className="kiln-btn col-span-2 h-8 justify-start gap-1.5 px-2.5 text-[11px] text-fg disabled:cursor-not-allowed disabled:opacity-45"
                   >
-                    <option value="odd">Lẻ</option>
-                    <option value="even">Chẵn</option>
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  disabled={layerMods.length === 0}
-                  onClick={() => applyLayerMotionPreset(activeLayer.id, 'alternating-wave', {
-                    duration: layerPresetDur,
-                    amplitudeCm: waveAmplitudeCm,
-                    firstUp: waveFirstUp,
-                  })}
-                  className="kiln-btn col-span-2 h-8 justify-start gap-1.5 px-2.5 text-[11px] text-fg disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  {presetIcon('alternating-wave')}
-                  Sóng so le · 1 chu kỳ / {layerPresetDur}s
-                </button>
-              </div>
+                    {presetIcon('alternating-wave')}
+                    Thêm cue Sóng so le · {layerPresetDur}s
+                  </button>
+                </div>
+              )}
 
               <p className="text-[10.5px] text-muted">
                 {layerMods.length === 0

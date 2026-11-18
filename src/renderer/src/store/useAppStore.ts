@@ -260,7 +260,7 @@ interface AppState {
   updateKey: (id: string, patch: Partial<TimelineKey>) => void
   deleteKey: (id: string) => void
 
-  sendCommand: (cmd: Command, opts?: { quietWarnings?: boolean }) => Promise<CommandResult>
+  sendCommand: (cmd: Command, opts?: { quietWarnings?: boolean; source?: 'timeline' }) => Promise<CommandResult>
   pollNow: () => void
 
   newProject: () => Promise<void>
@@ -332,6 +332,7 @@ function mirrorLayerClips(
 }
 
 export const useAppStore = create<AppState>((set, get) => {
+  const timelineCommandedIds = new Set<string>()
   const applyProject = (next: Project, opts?: { coalesceKey?: string; dirty?: boolean; extra?: Partial<AppState> }) => {
     const state = get()
     const now = Date.now()
@@ -490,13 +491,19 @@ export const useAppStore = create<AppState>((set, get) => {
       })
     },
 
-    setActiveTab: (activeTab) =>
+    setActiveTab: (activeTab) => {
+      if (get().activeTab === 'timeline' && activeTab !== 'timeline' && timelineCommandedIds.size > 0) {
+        const ids = [...timelineCommandedIds]
+        timelineCommandedIds.clear()
+        void getBridge().command({ type: 'stop', ids })
+      }
       set((s) => ({
         activeTab,
         focusScope: activeTab === 'buttons' ? 'buttons' : activeTab === 'timeline' ? 'timeline' : 'tree',
         selectedButtonId:
           activeTab === 'buttons' ? (s.selectedButtonId ?? s.project.buttons[0]?.id ?? null) : s.selectedButtonId,
-      })),
+      }))
+    },
     setFocusScope: (focusScope) => set({ focusScope }),
     setSettingsOpen: (settingsOpen, tab) =>
       set((s) => ({
@@ -1371,9 +1378,23 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     applyLayerMotionPreset(layerId, presetId, opts) {
-      const { project, playheadTime } = get()
+      const { project, playheadTime, activeTab, notify } = get()
+      const alternating = presetId === 'alternating-wave'
+      if (alternating && activeTab !== 'timeline') return 0
       const layer = project.layers.find((l) => l.id === layerId)
       if (!layer) return 0
+      const layerMods = project.modules.filter((m) => m.layerId === layerId)
+      if (alternating && layerMods.length > 0) {
+        const hasSharedAddress = layerMods.some((mod) =>
+          mod.dmxLoop || !isValidStartAddress(mod.startAddress) || project.modules.some((other) =>
+            other.id !== mod.id && rangesOverlap(mod.startAddress, other.startAddress),
+          ),
+        )
+        if (layer.syncLayer || hasSharedAddress) {
+          notify('Sóng so le cần tắt Sync Layer và dùng địa chỉ DMX riêng cho từng module', 'warn')
+          return 0
+        }
+      }
       const duration = opts?.duration ?? 4
       const staggerSec = opts?.staggerSec ?? 0.35
       if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(staggerSec) || staggerSec < 0) {
@@ -1407,7 +1428,6 @@ export const useAppStore = create<AppState>((set, get) => {
         ? project.layers.map((l) => (l.id === layerId ? { ...l, syncLayer: false } : l))
         : project.layers
       // Nếu layer đang bật Loop DMX (dùng chung kênh), tách Loop DMX và đảm bảo mỗi module có địa chỉ DMX hợp lệ, không trùng.
-      const layerMods = project.modules.filter((m) => m.layerId === layerId)
       const hasLoop = layerMods.some((m) => m.dmxLoop)
       let modules = project.modules
       if (hasLoop) {
@@ -1450,11 +1470,11 @@ export const useAppStore = create<AppState>((set, get) => {
         {
           extra: {
             selectedClipId: created[0].id,
-            selectedClipIds: [created[0].id],
+            selectedClipIds: alternating ? created.map((clip) => clip.id) : [created[0].id],
             selectedKeyId: null,
             selectedLayerId: null,
             selectedTimelineLayerId: null,
-            selectedIds: [created[0].moduleId],
+            selectedIds: alternating ? created.map((clip) => clip.moduleId) : [created[0].moduleId],
             focusScope: 'timeline',
           },
         },
@@ -1634,6 +1654,7 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     async sendCommand(cmd, opts) {
+      if (opts?.source === 'timeline' && get().activeTab !== 'timeline') return { ok: false }
       let effectiveCmd = cmd
       if ((cmd.type === 'move' || cmd.type === 'stop') && Array.isArray(cmd.ids)) {
         const { project } = get()
@@ -1659,6 +1680,16 @@ export const useAppStore = create<AppState>((set, get) => {
           }
         }
         effectiveCmd = { ...cmd, ids: [...expanded] }
+      }
+      if (effectiveCmd.type === 'move') {
+        for (const id of effectiveCmd.ids) {
+          if (opts?.source === 'timeline') timelineCommandedIds.add(id)
+          else timelineCommandedIds.delete(id)
+        }
+      } else if (effectiveCmd.type === 'stop' && Array.isArray(effectiveCmd.ids)) {
+        for (const id of effectiveCmd.ids) timelineCommandedIds.delete(id)
+      } else if (effectiveCmd.type === 'stop' || effectiveCmd.type === 'estop' || (effectiveCmd.type === 'lock' && effectiveCmd.locked)) {
+        timelineCommandedIds.clear()
       }
       const res = await getBridge().command(effectiveCmd)
       if (!res.ok && res.message) {
