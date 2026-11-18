@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import {
   ArrowDown,
   ArrowUp,
@@ -224,7 +224,7 @@ function ManualStopButton({
     <button
       type="button"
       title={hint}
-      aria-label="Dừng module đang chọn (Space)"
+      aria-label="Dừng module đang chọn"
       onClick={onClick}
       data-state={waveMoving ? 'run' : 'idle'}
       data-wave-pct={wavePct}
@@ -246,9 +246,6 @@ function ManualStopButton({
         <div className="flex shrink-0 items-center gap-1.5">
           <span className="rounded-full bg-[#F08C82]/14 px-2 py-0.5 text-[10.5px] font-bold text-[#F5B0A8] tabular-nums">
             {wavePct}%
-          </span>
-          <span className="rounded-full border border-[#F08C82]/28 bg-[#F08C82]/10 px-2.5 py-0.5 text-[10px] font-semibold text-[#F4ADA5]">
-            Space
           </span>
         </div>
       </div>
@@ -588,6 +585,8 @@ export function ModeManual(props: {
   const [unit, setUnit] = useState<SpeedUnit>('cms')
   const [val, setVal] = useState(47)
   const [runState, setRunState] = useState<ManualRunState | null>(null)
+  const lastMove = useRef<{ target: 'min' | 'max'; ids: string[] } | null>(null)
+  const isMoving = Object.values(snapshot?.modules ?? {}).some((mod) => mod.moving)
 
   const speedSpec = { unit, value: Math.max(0.1, val) }
   const speedText = Number.isInteger(val) ? String(val) : String(Number(val.toFixed(1)))
@@ -618,6 +617,7 @@ export function ModeManual(props: {
       setRunState(null)
       return
     }
+    lastMove.current = { target: cmd.target, ids: selectedIds }
     const initial = computeManualMotionProgress(baselines, project.modules, snapshot)
     setRunState({
       dir,
@@ -682,24 +682,34 @@ export function ModeManual(props: {
     return undefined
   }, [runState, snapshot, project.modules])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && !['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
-        e.preventDefault()
-        setRunState(null)
-        void sendCommand({ type: 'stop', ids: 'all' })
-      }
+  const onSpace = useEffectEvent((e: KeyboardEvent) => {
+    if (e.code !== 'Space' || (e.target as HTMLElement)?.closest?.('input, select, textarea, [contenteditable="true"]')) {
+      return
     }
+    e.preventDefault()
+    if (e.repeat) return
+    if (isMoving) {
+      setRunState(null)
+      void sendCommand({ type: 'stop', ids: 'all' })
+    } else if (lastMove.current?.ids === selectedIds) {
+      void runManual({ type: 'move', target: lastMove.current.target })
+    } else {
+      notify('Chọn Lên hoặc Xuống để bắt đầu điều khiển', 'warn')
+    }
+  })
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => onSpace(e)
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [sendCommand])
+  }, [])
 
   return (
     <div className="flex h-full flex-col gap-2 text-xs">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-muted">
-          Áp dụng cho <strong className="text-[#FFB26B]">{selectedIds.length}</strong> module đang chọn · Phím{' '}
-          <span className="kiln-kbd">Space</span> = Dừng tất cả
+          Áp dụng cho <strong className="text-[#FFB26B]">{selectedIds.length}</strong> module đang chọn ·{' '}
+          {isMoving ? 'space để dừng' : 'space để chạy'}
         </span>
 
         <div className="flex items-center gap-2">
@@ -753,7 +763,7 @@ export function ModeManual(props: {
             onClick={() => void runManual({ type: 'move', target: 'min' })}
           />
           <ManualStopButton
-            hint="Dừng ngay và giữ nguyên vị trí hiện tại (Space)"
+            hint="Dừng ngay và giữ nguyên vị trí hiện tại"
             unitLabel={unitLabel}
             waveRatio={sharedWave.ratio}
             waveMoving={sharedWave.moving}

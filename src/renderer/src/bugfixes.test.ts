@@ -1068,6 +1068,22 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     // Cả 3 nút đều chia sẻ cùng 1 data-wave-pct="62" khi đang dừng giữa chừng
     const pctMatches = manualHtml.match(/data-wave-pct="62"/g) ?? [];
     expect(pctMatches).toHaveLength(3);
+    expect(manualHtml).toContain('space để chạy');
+    expect(manualHtml).not.toContain('Space');
+
+    const moduleId = project.modules[0].id;
+    const movingHtml = renderToStaticMarkup(
+      React.createElement(ModeManual, {
+        overrideState: {
+          snapshot: {
+            ...stoppedSnap,
+            modules: { [moduleId]: { ...stoppedSnap.modules[moduleId], moving: true } },
+          },
+        },
+      }),
+    );
+    expect(movingHtml).toContain('space để dừng');
+    expect(movingHtml).not.toContain('Space');
   });
 
   it('ModeButtons renders 4-col Cue Pad grid and CueButton layer/module editing moves to PropertiesPanel', () => {
@@ -1170,7 +1186,7 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     project.settings.timeline.fps = 60;
 
     // Network tab: uses custom KilnSelect (no native <select>), flex-col aligned fields,
-    // and surfaces localhost Art-Net info + status warning in UI
+    // and still surfaces port errors.
     project.settings.output.ip = '127.0.0.1';
     useAppStore.setState({
       project,
@@ -1212,7 +1228,7 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     expect(updatedRateHtml).toContain('60 FPS · 16.67 ms/frame');
     expect(netSettingsHtml).toContain('grid-cols-2 items-end gap-3');
     expect(netSettingsHtml).toContain('Cổng 6454 đang bận');
-    expect(netSettingsHtml).toContain('Đích localhost: app gửi ArtDmx qua cổng động');
+    expect(netSettingsHtml).not.toContain('localhost');
 
     // Open KilnSelect renders grouped theme menu & 40/50/60 fps options
     const openDriverHtml = renderToStaticMarkup(

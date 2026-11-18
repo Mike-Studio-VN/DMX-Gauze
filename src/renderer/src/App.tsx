@@ -29,6 +29,7 @@ import {
   WifiOff,
   X,
 } from 'lucide-react'
+import { ARTNET_PORT, isLoopbackTarget } from '@shared/dmx'
 import { IconButton } from './components/IconButton'
 import { GauzeTree } from './components/GauzeTree'
 import { CollapsedTreeRail } from './components/CollapsedTreeRail'
@@ -252,6 +253,8 @@ export function App() {
   const st = snapshot?.status
   const locked = snapshot?.locked ?? true
   const out = project.settings.output
+  const artNetLoopback = out.driver === 'artnet' && out.port === ARTNET_PORT && isLoopbackTarget(out.ip)
+  const statusTarget = artNetLoopback ? '' : ` · Đích: ${out.ip}:${out.port}`
   const fileLabel = projectFilePath ? projectFilePath.split(/[\\/]/).pop() : 'Chưa lưu'
   const driverShortLabel: Record<string, string> = {
     artnet: 'Art-Net',
@@ -454,7 +457,7 @@ export function App() {
 
                 <div className="mt-1.5 flex h-9 items-center justify-between border-t border-line px-4 text-[9.5px] font-semibold tracking-widest text-muted uppercase">
                   <span>DMX GAUZE ENGINE</span>
-                  <span>v{info?.version ?? '1.0.2'}</span>
+                  <span>v{info?.version ?? '1.0.3'}</span>
                 </div>
               </div>
             )}
@@ -463,7 +466,7 @@ export function App() {
           <button
             type="button"
             onClick={() => setSettingsOpen(true, 'network')}
-            title={`Trạng thái: ${st?.state ?? 'idle'} · Giao thức: ${out.driver.toUpperCase()} · Đích: ${out.ip}:${out.port} · Universe ${out.universe}. Bấm để mở Cài đặt hệ thống (tab DMX)`}
+            title={`Trạng thái: ${st?.state ?? 'idle'} · Giao thức: ${out.driver.toUpperCase()}${statusTarget} · Universe ${out.universe}. Bấm để mở Cài đặt hệ thống (tab DMX)`}
             className={`${statusMeta.chip} h-7 cursor-pointer px-2.5 text-[11px]`}
           >
             <span className={`size-1.5 rounded-full ${statusMeta.dot}`} />
@@ -630,7 +633,7 @@ export function App() {
           <span>Ctrl+Z / Ctrl+Y Hoàn tác · Ctrl+C / Ctrl+V / Delete</span>
         </div>
         <span>
-          v{info?.version ?? '1.0.2'} · {info?.runtime ?? 'web'}
+          v{info?.version ?? '1.0.3'} · {info?.runtime ?? 'web'}
         </span>
       </footer>
 
