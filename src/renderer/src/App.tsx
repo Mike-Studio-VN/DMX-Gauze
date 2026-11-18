@@ -679,7 +679,7 @@ export function App() {
           <span>Ctrl+Z / Ctrl+Y Hoàn tác · Ctrl+C / Ctrl+V / Delete</span>
         </div>
         <span>
-          v{info?.version ?? '1.0.7'} · {info?.runtime ?? 'web'}
+          v{info?.version ?? '1.0.7'} · @Designed by Mike
         </span>
       </footer>
 
