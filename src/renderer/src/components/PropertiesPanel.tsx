@@ -18,8 +18,8 @@ import {
   Waves,
 } from 'lucide-react'
 import { layerLoopAddress } from '@shared/addressing'
-import { ch3ToCms, clamp } from '@shared/convert'
-import { CH, addressRange } from '@shared/dmx'
+import { ch3ToCms, clamp, normalizeDmxFineTune } from '@shared/convert'
+import { CH, DMX_FINE_TUNE_LIMIT, addressRange } from '@shared/dmx'
 import { defaultLayerTransform, defaultModuleTransform } from '@shared/preset'
 import {
   computeModuleBasePositions,
@@ -1930,6 +1930,7 @@ export function PropertiesPanel(props: {
   const frame = snapshot?.frame ?? []
   const ch1 = frame[baseIdx + CH.POSITION] ?? 0
   const ch2 = frame[baseIdx + CH.FINE] ?? 0
+  const fineTune = single.fineTune ?? 0
   const ch3 = frame[baseIdx + CH.SPEED] ?? single.defaultSpeed
   const ch4 = frame[baseIdx + CH.LOCK] ?? 0
   const modTf = single.transform ?? defaultModuleTransform()
@@ -2016,7 +2017,7 @@ export function PropertiesPanel(props: {
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
             DMX (Uni {project.settings.output.universe})
-            <span title="Mỗi module chiếm 4 kênh liên tiếp: Vị trí, Fine tune, Tốc độ, Khoá 77">
+            <span title="Mỗi module chiếm 4 kênh liên tiếp: byte cao vị trí, byte thấp vị trí, tốc độ, khoá 77">
               <HelpCircle size={12} className="text-muted" />
             </span>
           </span>
@@ -2067,6 +2068,33 @@ export function PropertiesPanel(props: {
             {single.dmxLoop ? `CH ${loopChStart}–${loopChEnd}` : 'Tắt'}
           </span>
         </button>
+
+        <label className="block space-y-1">
+          <span className="flex items-center gap-1 text-[11px] text-[#C2B3A4]">
+            Fine tune CH2 (bước DMX)
+            <span title="Cộng độ lệch có dấu vào vị trí DMX 16-bit. 1 đơn vị = 1 bước CH2, mặc định 0.">
+              <HelpCircle size={11} />
+            </span>
+          </span>
+          <input
+            key={`${single.id}-fine-${fineTune}`}
+            type="number"
+            min={-DMX_FINE_TUNE_LIMIT}
+            max={DMX_FINE_TUNE_LIMIT}
+            step={1}
+            defaultValue={fineTune}
+            onBlur={(e) => {
+              const input = e.currentTarget
+              const next = Number.isFinite(input.valueAsNumber) ? normalizeDmxFineTune(input.valueAsNumber) : fineTune
+              input.value = String(next)
+              if (next !== fineTune) updateModule(single.id, { fineTune: next })
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur()
+            }}
+            className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
+          />
+        </label>
 
         {addrError && (
           <p className="flex items-center gap-1 text-[11px] text-danger">
@@ -2179,11 +2207,11 @@ export function PropertiesPanel(props: {
         </div>
 
         <div className="grid grid-cols-4 gap-1.5 text-center tabular-nums">
-          <div className="rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title="CH1: Vị trí chính (0-255)">
+          <div className="rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title="CH1: Byte cao của vị trí DMX 16-bit (0–255)">
             <div className="text-[9.5px] text-muted">CH1 Pos</div>
             <div className="font-semibold text-fg">{ch1}</div>
           </div>
-          <div className="rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title="CH2: Fine tune 16-bit (0-255)">
+          <div className="rounded-xl bg-black/30 p-1.5 shadow-[inset_0_0_0_1px_var(--line)]" title="CH2: Byte thấp của vị trí DMX 16-bit (0–255)">
             <div className="text-[9.5px] text-muted">CH2 Fine</div>
             <div className="font-semibold text-fg">{ch2}</div>
           </div>

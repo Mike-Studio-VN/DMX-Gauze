@@ -59,6 +59,8 @@ export interface ModuleCfg {
   startAddress: number
   /** Tốc độ tối đa motor (cm/s) ứng với CH3 = 255. */
   maxSpeedCms: number
+  /** Độ lệch vị trí DMX có dấu, tính theo bước CH2. Mặc định 0. */
+  fineTune?: number
   /** Giá trị CH3 mặc định. */
   defaultSpeed: number
 }

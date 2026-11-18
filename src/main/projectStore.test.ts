@@ -114,6 +114,23 @@ describe('projectStore persistence & malformed import protection (Bug 2)', () =>
     expect(loaded.project.settings).toEqual(valid.settings);
   });
 
+  it('preserves signed Fine tune per module alongside legacy modules without calibration', async () => {
+    const project = createDefaultProject();
+    project.modules[0].fineTune = -255;
+    project.modules[1].fineTune = 255;
+    await saveProjectToDisk(project);
+
+    const { project: loaded } = await loadSavedProject();
+    expect(loaded.schemaVersion).toBe(project.schemaVersion);
+    expect(loaded.modules.slice(0, 3).map((module) => module.fineTune)).toEqual([-255, 255, undefined]);
+  });
+
+  it.each([-256, 256, 0.5])('rejects invalid Fine tune in project JSON (%i)', (fineTune) => {
+    const project = createDefaultProject();
+    project.modules[0].fineTune = fineTune;
+    expect(() => parseProjectJson(JSON.stringify(project))).toThrow(/fineTune/);
+  });
+
   it('preserves previous currentFilePath when Save As fails and saves subsequent Save to old path', async () => {
     const valid = createDefaultProject();
     valid.modules[0].name = 'Old Saved Scene';
