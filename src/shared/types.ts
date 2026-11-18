@@ -59,7 +59,9 @@ export interface ModuleCfg {
   startAddress: number
   /** Tốc độ tối đa motor (cm/s) ứng với CH3 = 255. */
   maxSpeedCms: number
-  /** Hiệu chỉnh tĩnh tại home (vị trí 0), mm, 0..40. Không áp khi chạy timeline/cue/wave. */
+  /** CH2 (fine) tĩnh, 0..255, phát nguyên giá trị này; không bị vị trí/timeline/cue/wave/LTC thay đổi. Mặc định 0. */
+  ch2Fine?: number
+  /** @deprecated v1.0.5–1.0.7 (mm, mã hoá 16-bit cũ). Chỉ giữ lại trong file để không mất dữ liệu, không còn tác dụng. */
   homeOffsetMm?: number
   /** Khoá riêng module: CH4=0, đóng băng, chặn Sent (lưu trong project; không vượt được khoá toàn cục). */
   locked?: boolean

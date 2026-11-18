@@ -1,35 +1,47 @@
 import { describe, expect, it } from 'vitest'
 import { autoAssign, conflictMap, nextFree, validateAddress } from './addressing'
 import { buildArtDmx, buildArtPoll, buildArtPollReply, parseArtPollReply, portAddress } from './artnet'
-import { ch3ToCms, cmsToCh3, dmxToPos, durationToCh3, homeOffsetSteps, posToDmx } from './convert'
+import { ch1Range, ch1ToPos, ch3ToCms, cmsToCh3, durationToCh3, posToCh1, snapPos } from './convert'
 import { LtcDecoder } from './ltc'
 import { DEFAULT_PROJECT_NAME, PROJECT_NAME_MAX, createDefaultProject, normalizeProject, projectFileName } from './preset'
 import { formatTc, parseTc } from './timecode'
 import { analyzeClipSpeeds } from './timeline'
 
 describe('convert', () => {
-  it('chuyển đổi vị trí 16-bit chính xác với hành trình 1m và 3m', () => {
-    const mid1 = posToDmx(0.5, 1)
-    expect(mid1.coarse).toBe(128)
-    expect(dmxToPos(mid1.coarse, mid1.fine, 1)).toBeCloseTo(0.5, 3)
+  const modA = { length: 4, minHeight: 0.4, maxHeight: 3.6 }
 
-    const mid3 = posToDmx(1.5, 3)
-    expect(mid3.coarse).toBe(128)
-    expect(dmxToPos(mid3.coarse, mid3.fine, 3)).toBeCloseTo(1.5, 3)
-  })
+  it('CH1 8-bit: 0/255 tại min,max, giữa; kẹp ngoài khoảng', () => {
+    const full = { length: 3, minHeight: 0, maxHeight: 3 }
+    expect(posToCh1(0, full)).toBe(0)
+    expect(posToCh1(3, full)).toBe(255)
+    expect(posToCh1(1.5, full)).toBe(128)
+    expect(posToCh1(-1, full)).toBe(0)
+    expect(posToCh1(99, full)).toBe(255)
+    // min/max nhập ở module: CH1 không ra ngoài [ceil(min/L×255), floor(max/L×255)]
+    expect(ch1Range(modA)).toEqual([26, 229])
+    expect(posToCh1(0, modA)).toBe(26)
+    expect(posToCh1(4, modA)).toBe(229)
+    expect(posToCh1(2, modA)).toBe(128)
+    expect(snapPos(0, modA)).toBeGreaterThanOrEqual(0.4)
+    expect(snapPos(4, modA)).toBeLessThanOrEqual(3.6)
+    expect(ch1ToPos(255, 3)).toBe(3)
+  });
 
-  it('home offset: mm → bước 16-bit, chỉ áp tại target 0', () => {
-    expect(homeOffsetSteps(40, 1)).toBe(2621)
-    expect(homeOffsetSteps(1000, 1)).toBe(2621) // kẹp 40 mm
-    expect(homeOffsetSteps(-5, 1)).toBe(0)
-    expect(posToDmx(0, 1, 40)).toEqual({ coarse: 10, fine: 0x3d })
-    expect(posToDmx(0.5, 1, 40)).toEqual(posToDmx(0.5, 1))
+  it('CH3: 100 ≈ 47 cm/s, 255 = 120 cm/s, tròn đúng, không nhảy do epsilon', () => {
+    expect(ch3ToCms(255)).toBe(120)
+    expect(ch3ToCms(100)).toBeCloseTo(47.06, 2)
+    expect(cmsToCh3(47.06)).toBe(100)
+    expect(cmsToCh3(47)).toBe(100)
+    expect(cmsToCh3(50)).toBe(107) // làm tròn lên: không chậm hơn yêu cầu
+    expect(cmsToCh3(120)).toBe(255)
+    expect(cmsToCh3(999)).toBe(255)
+    expect(durationToCh3(0.470588, 1).ch3).toBe(100) // ceil có epsilon: không thành 101
   });
 
   it('quy đổi tốc độ H2 120 cm/s và thời gian sang CH3', () => {
-    expect(ch3ToCms(255, 120)).toBeCloseTo(120, 5)
-    expect(cmsToCh3(60, 120)).toBe(128)
-    expect(cmsToCh3(0, 120)).toBe(1) // không bao giờ trả 0 (phanh)
+    expect(ch3ToCms(255)).toBeCloseTo(120, 5)
+    expect(cmsToCh3(60)).toBe(128)
+    expect(cmsToCh3(0)).toBe(1) // không bao giờ trả 0 (phanh)
 
     const r = durationToCh3(3, 5, 120) // 3m trong 5s = 60 cm/s
     expect(r.ch3).toBe(128)
@@ -44,15 +56,15 @@ describe('convert', () => {
   it('tính tiến độ & ETA cho nút Lên/Xuống ở chế độ Manual', async () => {
     const { computeManualMotionProgress } = await import('./convert')
     const p = createDefaultProject()
-    const m = { ...p.modules[0], id: 'm1', minHeight: 0, maxHeight: 3, length: 3, maxSpeedCms: 100 }
-    // Đang đi xuống từ 0m -> 3m, hiện tại ở 1.5m với ch3=255 (100 cm/s -> còn 1.5s)
+    const m = { ...p.modules[0], id: 'm1', minHeight: 0, maxHeight: 3, length: 3, maxSpeedCms: 120 }
+    // Đang đi xuống từ 0m -> 3m, hiện tại ở 1.5m với ch3=255 (120 cm/s -> còn 1.25s)
     const downRes = computeManualMotionProgress(
       { m1: { start: 0, goal: 3 } },
       [m],
       { modules: { m1: { pos: 1.5, target: 3, ch3: 255, moving: true } } },
     )
     expect(downRes.progress).toBeCloseTo(0.5, 3)
-    expect(downRes.etaSec).toBeCloseTo(1.5, 2)
+    expect(downRes.etaSec).toBeCloseTo(1.25, 2)
     expect(downRes.anyMoving).toBe(true)
     expect(downRes.reached).toBe(false)
 
@@ -564,7 +576,7 @@ describe('timeline -> GauzeCore end-to-end execution', () => {
     const { GauzeCore } = await import('./core')
     const { MockDriver } = await import('./drivers')
     const { CH, LOCK_VALUE } = await import('./dmx')
-    const { dmxToPos } = await import('./convert')
+    const { ch1ToPos } = await import('./convert')
     const { buildTimelineFollowCommands, evaluateModuleTimelineHeight } = await import('./timeline')
 
     let now = 10_000
@@ -628,7 +640,7 @@ describe('timeline -> GauzeCore end-to-end execution', () => {
     // 4) Kiểm tra frame DMX thực sự xuất CH4=77 và vị trí khớp chiều dài cuối clip
     const finalSnap = core.snapshot()
     expect(finalSnap.frame[CH.LOCK]).toBe(77)
-    expect(dmxToPos(finalSnap.frame[CH.POSITION], finalSnap.frame[CH.FINE], 1)).toBeCloseTo(0, 2)
+    expect(ch1ToPos(finalSnap.frame[CH.POSITION], 1)).toBeCloseTo(0, 2)
 
     // 5) Đảm bảo đoạn giữ đỉnh phẳng không bị võng vượt biên trong evaluateModuleTimelineHeight
     const holdClip = {

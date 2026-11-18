@@ -53,12 +53,12 @@ describe('GauzeCore', () => {
     core.stop()
   })
 
-  it('home offset chỉ áp ở target 0; khi chạy không đụng CH2', () => {
+  it('CH1 8-bit theo min–max, CH2 tĩnh theo module (không đổi khi vị trí đổi), CH3 theo cm/s', () => {
     const project = createDefaultProject()
-    const template = { ...project.modules[0], length: 1, minHeight: 0, maxHeight: 0.5, maxSpeedCms: 120 }
+    const template = { ...project.modules[0], length: 1, minHeight: 0.1, maxHeight: 0.5, maxSpeedCms: 120 }
     const modules = [
-      { ...template, id: 'm-a', startAddress: 1, homeOffsetMm: 40 },
-      { ...template, id: 'm-b', startAddress: 5, homeOffsetMm: 40 },
+      { ...template, id: 'm-a', startAddress: 1, ch2Fine: 40 },
+      { ...template, id: 'm-b', startAddress: 5 },
     ]
     const send = vi.fn<MockDriver['send']>()
     const core = new GauzeCore((_cfg, events) => Object.assign(new MockDriver(events), { send }))
@@ -66,11 +66,14 @@ describe('GauzeCore', () => {
       core.configure({ modules, output: project.settings.output, lockValue: LOCK_VALUE })
       core.command({ type: 'lock', locked: false })
       core.tick()
-      expect(send.mock.lastCall?.[2]).toEqual(Uint8Array.of(10, 0x3d, 100, LOCK_VALUE, 10, 0x3d, 100, LOCK_VALUE))
-      core.command({ type: 'move', ids: ['m-a'], target: 1.5, speed: { unit: 'cms', value: 120 } })
+      // target ban đầu 0 bị kẹp lên minHeight 0.1 → CH1 = ceil(25.5) = 26
+      expect(send.mock.lastCall?.[2]).toEqual(Uint8Array.of(26, 40, 100, LOCK_VALUE, 26, 0, 100, LOCK_VALUE))
+      core.command({ type: 'move', ids: ['m-a'], target: 1.5, speed: { unit: 'cms', value: 60 } })
       core.tick()
-      expect(core.snapshot().modules['m-a'].target).toBe(0.5)
-      expect(send.mock.lastCall?.[2]?.slice(0, 2)).toEqual(Uint8Array.of(0x80, 0x00))
+      expect(send.mock.lastCall?.[2]).toEqual(Uint8Array.of(127, 40, 128, LOCK_VALUE, 26, 0, 100, LOCK_VALUE)) // max 0.5 → floor(127.5)
+      core.command({ type: 'move', ids: ['m-a'], target: 0.3, speed: { unit: 'cms', value: 120 } })
+      core.tick()
+      expect(send.mock.lastCall?.[2]?.slice(0, 3)).toEqual(Uint8Array.of(77, 40, 255)) // CH2 vẫn 40
     } finally {
       core.stop()
     }
@@ -169,7 +172,7 @@ describe('GauzeCore', () => {
         core.command({ type: 'lock', locked: false })
         core.command({ type: 'override', id: 'm-a', values: [255, 255, 50, 77] })
         core.tick()
-        expect([...core.snapshot().frame.slice(0, 4)]).toEqual([0x80, 0x00, 50, 77]) // 0.5 m → 32768
+        expect([...core.snapshot().frame.slice(0, 4)]).toEqual([127, 255, 50, 77]) // CH1 kẹp ≤ floor(0.5×255)=127; CH2 raw giữ nguyên
         core.command({ type: 'clearOverride', id: 'm-a' })
         core.tick()
         expect(core.snapshot().overrides).toEqual({})

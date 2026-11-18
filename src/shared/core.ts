@@ -1,6 +1,6 @@
 import { portAddress } from './artnet'
 import { ARTNET_PORT, CH, CHANNELS_PER_MODULE, DMX_UNIVERSE_SIZE } from './dmx'
-import { cmsToCh3, ch3ToCms, clamp, durationToCh3, posToDmx } from './convert'
+import { ch1Range, ch3ToCms, clamp, cmsToCh3, durationToCh3, posToCh1, snapPos, speedCap } from './convert'
 import { DEFAULT_DMX_TRANSPORT_HZ, normalizeDmxTransportRate, startDmxFrameLoop } from './dmxTransport'
 import type { DriverFactory, DriverEvents, OutputDriver } from './drivers'
 import type {
@@ -86,7 +86,7 @@ export class GauzeCore {
     // Áp lại giới hạn min/max cho mục tiêu hiện có.
     for (const [id, st] of this.states) {
       const [lo, hi] = limits(this.modules.get(id)!)
-      st.target = clamp(st.target, lo, hi)
+      st.target = snapPos(clamp(st.target, lo, hi), this.modules.get(id)!)
     }
     const { sendHz, ...driverSettings } = cfg.output
     const key = JSON.stringify(driverSettings)
@@ -224,10 +224,9 @@ export class GauzeCore {
     if (values.length !== CHANNELS_PER_MODULE || values.some((v) => !Number.isInteger(v) || v < 0 || v > 255)) {
       return { ok: false, message: 'Giá trị DMX phải là số nguyên 0–255.' }
     }
-    // CH1/CH2 là vị trí 16-bit: kẹp theo [min, max] của module.
-    const [lo, hi] = limits(m)
-    const full = clamp((values[0] << 8) | values[1], Math.round((lo / m.length) * 65535), Math.round((hi / m.length) * 65535))
-    const out = [full >> 8, full & 0xff, values[2], values[3]]
+    // CH1 = vị trí 8-bit: kẹp theo [min, max] của module. CH2 (fine) và CH3/CH4 phát đúng giá trị nhập.
+    const [c1lo, c1hi] = ch1Range(m)
+    const out = [clamp(values[0], c1lo, c1hi), values[1], values[2], values[3]]
     this.overrides.set(id, out)
     return { ok: true }
   }
@@ -273,20 +272,21 @@ export class GauzeCore {
         default:
           target = cmd.target
       }
-      const clamped = clamp(target, lo, hi)
+      const clamped = snapPos(clamp(target, lo, hi), m) // đích thực tế sau lượng tử hoá CH1
       if (Math.abs(clamped - target) > 1e-6 && typeof cmd.target === 'number') {
         warnings.push(`${m.name}: giới hạn ${lo}–${hi} m`)
       }
       const dist = clamped - st.pos
       let ch3 = m.defaultSpeed
-      if (cmd.speed.unit === 'cms') ch3 = cmsToCh3(cmd.speed.value, m.maxSpeedCms)
+      const capCh3 = cmsToCh3(speedCap(m))
+      if (cmd.speed.unit === 'cms') ch3 = Math.min(cmsToCh3(cmd.speed.value), capCh3)
       else if (cmd.speed.unit === 'sec') {
-        const c = durationToCh3(dist, cmd.speed.value, m.maxSpeedCms)
+        const c = durationToCh3(dist, cmd.speed.value, speedCap(m))
         ch3 = c.ch3
         if (c.tooFast && Math.abs(dist) > 1e-4) warnings.push(`${m.name}: cần tối thiểu ${c.minSeconds.toFixed(1)} s`)
       }
       st.target = clamped
-      st.ch3 = ch3
+      st.ch3 = Math.min(ch3, capCh3)
     }
     return { ok: true, warnings: warnings.length ? warnings : undefined }
   }
@@ -309,13 +309,12 @@ export class GauzeCore {
 
   private simulate(dt: number): void {
     for (const [id, st] of this.states) {
-      const m = this.modules.get(id)!
       const diff = st.target - st.pos
       if (this.locked || this.moduleLocks.has(id) || Math.abs(diff) < 1e-6) {
         st.moving = false
         continue
       }
-      const step = (ch3ToCms(st.ch3, m.maxSpeedCms) / 100) * dt
+      const step = (ch3ToCms(st.ch3) / 100) * dt
       if (Math.abs(diff) <= step) {
         st.pos = st.target
         st.moving = false
@@ -333,9 +332,8 @@ export class GauzeCore {
       const st = this.states.get(m.id)
       const a = m.startAddress - 1
       if (!st || a < 0 || a + CHANNELS_PER_MODULE > DMX_UNIVERSE_SIZE) continue
-      const { coarse, fine } = posToDmx(st.target, m.length, m.homeOffsetMm)
-      this.frame[a + CH.POSITION] = coarse
-      this.frame[a + CH.FINE] = fine
+      this.frame[a + CH.POSITION] = posToCh1(st.target, m)
+      this.frame[a + CH.FINE] = clamp(Math.round(m.ch2Fine ?? 0), 0, 255) // CH2 tĩnh theo module, không phụ thuộc vị trí
       this.frame[a + CH.SPEED] = st.ch3
       this.frame[a + CH.LOCK] = this.moduleLocks.has(m.id) ? 0 : lockVal
       const ov = this.overrides.get(m.id)

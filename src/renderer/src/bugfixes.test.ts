@@ -184,7 +184,8 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
       const [first, second] = project.modules;
       const { commands } = planTimelineFollow(withCue.modules, clips, [], 7, 0);
       expect(commands).toHaveLength(2);
-      expect(commands[0]).toMatchObject({ type: 'move', ids: [first.id], target: 0.1 });
+      expect(commands[0]).toMatchObject({ type: 'move', ids: [first.id] });
+      expect((commands[0] as { target: number }).target).toBeCloseTo(0.1, 1); // lượng tử hoá CH1
       expect(commands[1]).toMatchObject({ type: 'move', ids: [second.id], target: 0 });
 
       store.setPlayheadTime(18);
@@ -194,10 +195,10 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
       const cueClips = useAppStore.getState().project.clips ?? [];
       expect(cueClips.slice(0, 2)).toEqual(clips);
       expect(cueClips.slice(2).map(({ startTime, duration }) => [startTime, duration])).toEqual([[18, 4], [18, 4]]);
-      expect(planTimelineFollow(withCue.modules, cueClips, [], 19, 0).commands).toMatchObject([
-        { type: 'move', ids: [first.id], target: 0.03 },
-        { type: 'move', ids: [second.id], target: 0.07 },
-      ]);
+      const waveCmds = planTimelineFollow(withCue.modules, cueClips, [], 19, 0).commands as Array<{ type: string; ids: string[]; target: number }>;
+      expect(waveCmds.map((c) => [c.type, c.ids[0]])).toEqual([['move', first.id], ['move', second.id]]);
+      expect(waveCmds[0].target).toBeCloseTo(0.03, 1); // đích đã lượng tử hoá CH1
+      expect(waveCmds[1].target).toBeCloseTo(0.07, 1);
       expect(bridgeCommand).not.toHaveBeenCalled();
 
       for (const mode of ['manual', 'buttons'] as const) {
@@ -984,7 +985,7 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     // Batch update sizes, maxSpeedCms, defaultSpeed, transform (Y stays locked to 0), unique names, and layerId in 1 undo step.
     const err1 = useAppStore.getState().updateModulesBatch([m1.id, m2.id], {
       nameBase: 'Cánh',
-      maxSpeedCms: 140,
+      maxSpeedCms: 110,
       defaultSpeed: 180,
       transformAxis: { field: 'position', index: 0, value: 2.5 },
     });
@@ -992,8 +993,8 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     let mods = useAppStore.getState().project.modules;
     expect(mods[0].name).toBe('Cánh 1');
     expect(mods[1].name).toBe('Cánh 2');
-    expect(mods[0].maxSpeedCms).toBe(140);
-    expect(mods[1].maxSpeedCms).toBe(140);
+    expect(mods[0].maxSpeedCms).toBe(110);
+    expect(mods[1].maxSpeedCms).toBe(110);
     expect(mods[0].defaultSpeed).toBe(180);
     expect(mods[1].defaultSpeed).toBe(180);
     expect(mods[0].transform?.position).toEqual([2.5, 0, mods[0].transform?.position[2]]);
@@ -1113,7 +1114,7 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     }
   });
 
-  it('renders a home offset (mm) field for a selected module and updates its value through the store', () => {
+  it('renders a static CH2 (0–255) field for a selected module and updates its value through the store', () => {
     vi.useFakeTimers();
     try {
       setupBrowserEnv();
@@ -1130,14 +1131,16 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
       const propertiesHtml = () => renderToStaticMarkup(
         React.createElement(PropertiesPanel, { overrideState: useAppStore.getState() }),
       );
-      expect(propertiesHtml()).toContain('Fine tune CH2 — home (mm)');
+      expect(propertiesHtml()).toContain('Fine tune CH2 (0–255)');
       expect(propertiesHtml()).toContain('>Sent<');
       expect(propertiesHtml()).not.toMatch(/\dm → \d/);
-      expect(propertiesHtml()).toMatch(/<input[^>]*min="0"[^>]*max="40"[^>]*value="0"/);
+      expect(propertiesHtml()).toMatch(/<input[^>]*min="0"[^>]*max="255"[^>]*value="0"/);
 
-      useAppStore.getState().updateModule(id, { homeOffsetMm: 12.5 });
-      expect(propertiesHtml()).toMatch(/<input[^>]*min="0"[^>]*max="40"[^>]*value="12.5"/);
-      expect(useAppStore.getState().project.modules[1].homeOffsetMm).toBeUndefined();
+      useAppStore.getState().updateModule(id, { ch2Fine: 300 });
+      expect(useAppStore.getState().project.modules[0].ch2Fine).toBe(255); // kẹp 0..255
+      useAppStore.getState().updateModule(id, { ch2Fine: 17 });
+      expect(propertiesHtml()).toMatch(/<input[^>]*min="0"[^>]*max="255"[^>]*value="17"/);
+      expect(useAppStore.getState().project.modules[1].ch2Fine).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }

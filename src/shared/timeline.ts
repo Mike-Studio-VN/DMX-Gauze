@@ -1,4 +1,4 @@
-import { clamp } from './convert'
+import { clamp, snapPos, speedCap } from './convert'
 import { parseTc, snapDeltaToFps, snapTimeToFps } from './timecode'
 import type { ClipKeyframe, Command, Fps, ModuleCfg, Snapshot, TimelineClip, TimelineKey } from './types'
 
@@ -188,7 +188,7 @@ function buildAlternatingWaveKeyframes(
   const segments = 8
   // Smooth interpolation constrains the Bézier controls to the segment's endpoints.
   // Its peak speed is bounded by 3 × the largest sample delta divided by the segment duration.
-  const maxSpeedAmplitude = (mod.maxSpeedCms * period) / (100 * 3 * segments * Math.SQRT1_2)
+  const maxSpeedAmplitude = (speedCap(mod) * period) / (100 * 3 * segments * Math.SQRT1_2)
   const amplitude = Math.min(requestedAmplitudeCm / 100, (hi - lo) / 2, maxSpeedAmplitude)
   const center = clamp(startingHeight ?? lo, lo + amplitude, Math.max(lo + amplitude, hi - amplitude))
   // DMX position is drop length, so a negative displacement raises the curtain.
@@ -319,6 +319,21 @@ export interface KeyframeSpeed {
   tooSlow: boolean
 }
 
+/** Quãng đường thực tế (cm) giữa 2 độ cao sau khi kẹp min–max và lượng tử hoá CH1 (8-bit). */
+export function segmentDistCm(mod: Pick<ModuleCfg, 'length' | 'minHeight' | 'maxHeight'>, h1: number, h2: number): number {
+  return Math.abs(snapPos(h2, mod) - snapPos(h1, mod)) * 100
+}
+
+/** cm/s → giây cho quãng distCm; quãng = 0 hoặc tốc độ ≤ 0 → null (không chia cho 0). */
+export function cmsToSeconds(distCm: number, cms: number): number | null {
+  return distCm > 1e-9 && cms > 0 ? distCm / cms : null
+}
+
+/** giây → cm/s (kẹp [1, capCms]); quãng = 0 hoặc thời gian ≤ 0 → null. */
+export function secondsToCms(distCm: number, seconds: number, capCms: number): number | null {
+  return distCm > 1e-9 && seconds > 0 ? clamp(distCm / seconds, 1, Math.max(1, capCms)) : null
+}
+
 /** Tốc độ của đoạn đi từ điểm `kf` (distCm: quãng tới điểm kế, dtSec: thời gian tới điểm kế). */
 export function resolveKeyframeSpeed(
   kf: Pick<ClipKeyframe, 'speedMode' | 'manualSpeedCms'>,
@@ -352,7 +367,7 @@ function manualSpeedAt(clips: TimelineClip[], mod: ModuleCfg, time: number): num
   const p1 = sorted[seg]
   if (p1.speedMode !== 'manual') return null
   const p2 = sorted[seg + 1]
-  return resolveKeyframeSpeed(p1, Math.abs(p2.height - p1.height) * 100, p2.offset - p1.offset, mod.maxSpeedCms).cms
+  return resolveKeyframeSpeed(p1, segmentDistCm(mod, p1.height, p2.height), p2.offset - p1.offset, speedCap(mod)).cms
 }
 
 /** Trả về danh sách các đoạn chuyển động giữa 2 key và kiểm tra có vượt tốc độ tối đa của module không. */
@@ -364,9 +379,9 @@ export function analyzeClipSpeeds(clip: TimelineClip, mod: ModuleCfg | undefined
     const a = sorted[i]
     const b = sorted[i + 1]
     const dt = Math.max(0.001, b.offset - a.offset)
-    const distCm = Math.abs(b.height - a.height) * 100
+    const distCm = segmentDistCm(mod, a.height, b.height)
     const requiredCms = distCm / dt
-    const minDurationSec = distCm / Math.max(1, mod.maxSpeedCms)
+    const minDurationSec = distCm / Math.max(1, speedCap(mod))
     out.push({
       clipId: clip.id,
       moduleId: mod.id,
@@ -376,9 +391,9 @@ export function analyzeClipSpeeds(clip: TimelineClip, mod: ModuleCfg | undefined
       fromHeight: a.height,
       toHeight: b.height,
       requiredCms,
-      maxSpeedCms: mod.maxSpeedCms,
+      maxSpeedCms: speedCap(mod),
       minDurationSec,
-      feasible: requiredCms <= mod.maxSpeedCms + 1e-3,
+      feasible: requiredCms <= speedCap(mod) + 1e-3,
     })
   }
   return out
@@ -807,8 +822,11 @@ function buildSmoothMoveCommand(
 ): Command | null {
   const hNow = evaluateModuleTimelineHeight(clips, keys, mod, time)
   if (hNow === null) return null
-  const hAhead =
-    lookaheadSec > 0 ? (evaluateModuleTimelineHeight(clips, keys, mod, time + lookaheadSec) ?? hNow) : hNow
+  // Đích thực tế sau lượng tử hoá CH1: so sánh dedupe với target đã snap trong core.
+  const hAhead = snapPos(
+    lookaheadSec > 0 ? (evaluateModuleTimelineHeight(clips, keys, mod, time + lookaheadSec) ?? hNow) : hNow,
+    mod,
+  )
 
   const st = snap?.modules[mod.id]
   const curPos = st?.pos ?? hNow
@@ -819,14 +837,14 @@ function buildSmoothMoveCommand(
 
   let speedCms: number
   if (lookaheadSec <= 0) {
-    speedCms = mod.maxSpeedCms
+    speedCms = speedCap(mod)
   } else {
     const velCurveCms = (Math.abs(hAhead - hNow) * 100) / Math.max(0.02, lookaheadSec)
     const lagError = Math.abs(hNow - curPos)
     speedCms =
       lagError > 0.08
-        ? mod.maxSpeedCms
-        : clamp(velCurveCms + (lagError * 100) / 0.25, 1, mod.maxSpeedCms)
+        ? speedCap(mod)
+        : clamp(velCurveCms + (lagError * 100) / 0.25, 1, speedCap(mod))
     speedCms = manualSpeedAt(clips, mod, time) ?? speedCms
   }
 
@@ -887,7 +905,7 @@ export function planTimelineFollow(
 
     const minH = mod.minHeight
     const maxH = Math.min(mod.length, Math.max(minH, mod.maxHeight))
-    const clampH = (h: number) => Math.max(minH, Math.min(maxH, Number(h.toFixed(3))))
+    const clampH = (h: number) => snapPos(Math.max(minH, Math.min(maxH, h)), mod)
 
     let targetH: number
     let segKey: string
@@ -904,7 +922,7 @@ export function planTimelineFollow(
         defaultFromH = targetH
         const rem = sorted[0].offset - rel
         remainingSec = rem > 0.02 ? rem : null
-        segKey = `pre:${activeClip.id}:${sorted[0].id}:${activeClip.startTime}:${sorted[0].offset}:${targetH}:${minH}:${maxH}:${mod.maxSpeedCms}`
+        segKey = `pre:${activeClip.id}:${sorted[0].id}:${activeClip.startTime}:${sorted[0].offset}:${targetH}:${minH}:${maxH}:${speedCap(mod)}`
       } else if (rel >= sorted[sorted.length - 1].offset) {
         targetH = clampH(sorted[sorted.length - 1].height)
         defaultFromH = targetH
@@ -919,7 +937,7 @@ export function planTimelineFollow(
         remainingSec = Math.max(0.02, activeClip.startTime + p2.offset - time)
         segLabel = `P${seg + 1}→P${seg + 2}`
         manualP1 = p1.speedMode === 'manual' ? p1 : null
-        segKey = `seg:${activeClip.id}:${p1.id}:${p2.id}:${activeClip.startTime}:${activeClip.duration}:${p1.offset}:${p2.offset}:${targetH}:${minH}:${maxH}:${mod.maxSpeedCms}:${manualP1 ? `m${manualP1.manualSpeedCms}` : 'a'}`
+        segKey = `seg:${activeClip.id}:${p1.id}:${p2.id}:${activeClip.startTime}:${activeClip.duration}:${p1.offset}:${p2.offset}:${targetH}:${minH}:${maxH}:${speedCap(mod)}:${manualP1 ? `m${manualP1.manualSpeedCms}` : 'a'}`
       }
     } else if (time < modClips[0].startTime) {
       if ((modClips[0].curveMode ?? 'smooth') !== 'linear') {
@@ -966,10 +984,10 @@ export function planTimelineFollow(
     const distM = Math.abs(targetH - curPos)
     let speedCms: number
     if (manualP1 && remainingSec !== null && distM >= 0.0015) {
-      const r = resolveKeyframeSpeed(manualP1, distM * 100, remainingSec, mod.maxSpeedCms)
+      const r = resolveKeyframeSpeed(manualP1, distM * 100, remainingSec, speedCap(mod))
       speedCms = r.cms
       if (r.overMax) {
-        warnings.push(`${mod.name} (${segLabel}): tốc độ manual ${manualP1.manualSpeedCms} cm/s > tối đa ${mod.maxSpeedCms} cm/s, đã kẹp`)
+        warnings.push(`${mod.name} (${segLabel}): tốc độ manual ${manualP1.manualSpeedCms} cm/s > tối đa ${speedCap(mod)} cm/s, đã kẹp`)
       }
       if (r.tooSlow) {
         warnings.push(
@@ -977,17 +995,17 @@ export function planTimelineFollow(
         )
       }
     } else if (remainingSec === null || distM < 0.0015) {
-      speedCms = mod.maxSpeedCms
+      speedCms = speedCap(mod)
     } else {
       const requiredCms = (distM * 100) / remainingSec
-      if (requiredCms > mod.maxSpeedCms + 1e-3) {
-        const achievableSec = (distM * 100) / Math.max(1, mod.maxSpeedCms)
+      if (requiredCms > speedCap(mod) + 1e-3) {
+        const achievableSec = (distM * 100) / Math.max(1, speedCap(mod))
         warnings.push(
-          `${mod.name} (${segLabel || 'đoạn thẳng'}): cần ${requiredCms.toFixed(0)} cm/s (> ${mod.maxSpeedCms} cm/s, cần ${achievableSec.toFixed(2)}s thay vì ${remainingSec.toFixed(2)}s)`,
+          `${mod.name} (${segLabel || 'đoạn thẳng'}): cần ${requiredCms.toFixed(0)} cm/s (> ${speedCap(mod)} cm/s, cần ${achievableSec.toFixed(2)}s thay vì ${remainingSec.toFixed(2)}s)`,
         )
-        speedCms = mod.maxSpeedCms
+        speedCms = speedCap(mod)
       } else {
-        speedCms = clamp(requiredCms, 1, mod.maxSpeedCms)
+        speedCms = clamp(requiredCms, 1, speedCap(mod))
       }
     }
 

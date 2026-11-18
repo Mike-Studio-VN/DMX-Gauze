@@ -1,5 +1,5 @@
 import { autoAssign } from './addressing'
-import { ARTNET_PORT, DEFAULT_SPEED, DEFAULT_TARGET_IP, HOME_OFFSET_MAX_MM, H2_MAX_SPEED_CMS, LOCK_VALUE } from './dmx'
+import { ARTNET_PORT, DEFAULT_SPEED, DEFAULT_TARGET_IP, H2_MAX_SPEED_CMS, LOCK_VALUE } from './dmx'
 import { DEFAULT_DMX_TRANSPORT_HZ, normalizeDmxTransportRate } from './dmxTransport'
 import { KINET_PORT, SACN_PORT, defaultPortForDriver } from './protocols'
 import { FPS_OPTIONS, LTC_FPS_OPTIONS } from './timecode'
@@ -234,10 +234,11 @@ export function normalizeProject(raw: unknown): Project {
       maxHeight: Math.min(length, maxHeight),
       startAddress: reqFinite(item.startAddress, `modules[${idx}].startAddress`, 1, 509, true),
       maxSpeedCms: reqFinite(item.maxSpeedCms, `modules[${idx}].maxSpeedCms`, 1, 10000),
-      // fineTune (±255 bước, v1.0.4) bị bỏ qua: định nghĩa cũ không đổi được sang mm.
+      // fineTune (±255 bước, v1.0.4) bị bỏ qua. homeOffsetMm (v1.0.5–1.0.7) được giữ nguyên nhưng không còn tác dụng.
+      ...(item.ch2Fine === undefined ? {} : { ch2Fine: reqFinite(item.ch2Fine, `modules[${idx}].ch2Fine`, 0, 255, true) }),
       ...(item.homeOffsetMm === undefined
         ? {}
-        : { homeOffsetMm: reqFinite(item.homeOffsetMm, `modules[${idx}].homeOffsetMm`, 0, HOME_OFFSET_MAX_MM) }),
+        : { homeOffsetMm: reqFinite(item.homeOffsetMm, `modules[${idx}].homeOffsetMm`, 0, 40) }),
       ...(reqOptionalBool(item.locked, `modules[${idx}].locked`, false) ? { locked: true } : {}),
       defaultSpeed: reqFinite(item.defaultSpeed, `modules[${idx}].defaultSpeed`, 1, 255, true),
     }
