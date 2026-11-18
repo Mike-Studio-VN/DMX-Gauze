@@ -41,7 +41,7 @@ describe('ArtNetDriver real loopback high-port socket routing & cooperation proo
     }
   })
 
-  it('delivers 10/10 ArtDmx frames to an active exclusive local receiver on same port, preserves receiver exclusivity, emits indeterminate discovery warning, and accepts cooperative source-port replies', async () => {
+  it('delivers 10/10 ArtDmx frames to an active exclusive local receiver on same port, preserves receiver exclusivity, keeps expected loopback discovery silent, and accepts cooperative source-port replies', async () => {
     const { sock: localReceiver, port: recvPort } = await bindLoopbackUdp(false, '127.0.0.1')
     openSockets.push(localReceiver)
 
@@ -82,7 +82,7 @@ describe('ArtNetDriver real loopback high-port socket routing & cooperation proo
         expect(receivedDmx.length).toBe(10)
       }, { timeout: 2000 })
 
-      expect(ev.onWarn).toHaveBeenCalledWith(expect.stringContaining(`Đích localhost:${recvPort}`))
+      expect(ev.onWarn).not.toHaveBeenCalledWith(expect.any(String))
       expect(ev.onError).not.toHaveBeenCalledWith(expect.any(String))
 
       // Prove localReceiver still holds exclusive ownership of recvPort while driver is active.
@@ -94,7 +94,7 @@ describe('ArtNetDriver real loopback high-port socket routing & cooperation proo
       })
       expect(bindErr?.code).toBe('EADDRINUSE')
 
-      // Cooperative reply forwarded back to the ephemeral ArtPoll source port discovers node & clears warning.
+      // Cooperative reply forwarded back to the ephemeral ArtPoll source port discovers the node.
       replyToSource = true
       await vi.waitFor(() => {
         driver.poll()

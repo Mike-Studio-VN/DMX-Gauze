@@ -20,8 +20,6 @@ export class ArtNetDriver implements OutputDriver {
   private readonly life = new UdpSocketLifecycle()
   private rxSock: dgram.Socket | null = null
   private rxDisabled = false
-  private warnNotified = false
-  private receivedReply = false
   private seq = 0
 
   constructor(
@@ -41,7 +39,6 @@ export class ArtNetDriver implements OutputDriver {
   private handleMessage = (msg: Uint8Array, rinfo: dgram.RemoteInfo): void => {
     const reply = parseArtPollReply(msg)
     if (!reply) return
-    this.receivedReply = true
     this.ev.onWarn(null)
     this.ev.onNode({
       ip: reply.ip === '0.0.0.0' ? rinfo.address : reply.ip,
@@ -65,15 +62,7 @@ export class ArtNetDriver implements OutputDriver {
   private ensurePollReplyListener(): void {
     if (this.life.closing || this.rxSock || this.rxDisabled) return
     const listenPort = this.listenPort()
-    if (isLoopbackTarget(this.cfg.ip) && this.targetPort() === listenPort) {
-      if (!this.receivedReply && !this.warnNotified) {
-        this.warnNotified = true
-        this.ev.onWarn(
-          `Đích localhost:${listenPort}: không bind ${listenPort} để tránh tranh receiver cục bộ — trạng thái discovery không xác định (không đồng nghĩa receiver offline); vẫn gửi ArtDmx và nhận phản hồi bổ sung qua cổng nguồn động nếu node hỗ trợ.`,
-        )
-      }
-      return
-    }
+    if (isLoopbackTarget(this.cfg.ip) && this.targetPort() === listenPort) return
     const rx = dgram.createSocket({ type: 'udp4', reuseAddr: true })
     this.rxSock = rx
 
@@ -114,8 +103,6 @@ export class ArtNetDriver implements OutputDriver {
 
   start(): void {
     this.rxDisabled = false
-    this.warnNotified = false
-    this.receivedReply = false
     this.closeRxSocket()
     const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true })
     this.life.attach(sock)
@@ -131,7 +118,7 @@ export class ArtNetDriver implements OutputDriver {
         sock.setBroadcast(true)
         if (!this.life.markReady()) return
         this.ev.onError(null)
-        if (!this.warnNotified && !this.rxDisabled) {
+        if (!this.rxDisabled) {
           this.ev.onWarn(null)
         }
       } catch (err) {
