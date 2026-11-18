@@ -36,6 +36,7 @@ import {
   type LayerMotionPresetId,
   analyzeClipSpeeds,
   buildCurveKeyframes,
+  clipAutoSpeedCms,
   fitDefaultMotionDuration,
   fullCurvePath,
   heightToPercent,
@@ -804,7 +805,7 @@ function MomentEditor({
         const cap = speedCap(mod)
         const distCm = segmentDistCm(mod, kf.height, next.height)
         const dt = next.offset - kf.offset
-        const r = resolveKeyframeSpeed(kf, distCm, dt, cap, clip.autoSpeedLimitCms)
+        const r = resolveKeyframeSpeed(kf, distCm, dt, cap, clipAutoSpeedCms(mod, clip))
         const secs = cmsToSeconds(distCm, r.cms)
         const setSpeed = (patch: Partial<ClipKeyframe>) =>
           onUpdate({ keyframes: sorted.map((k) => (k.id === kf.id ? { ...k, ...patch } : k)) }, `kfspd-${kf.id}`)
@@ -1077,7 +1078,9 @@ function CueButtonEditor({
               <button
                 key={unit}
                 type="button"
-                onClick={() => onSave({ ...btn, speedUnit: unit as SpeedUnit })}
+                onClick={() => {
+                  if (btn.speedUnit !== unit) onSave({ ...btn, speedUnit: unit as SpeedUnit, autoSpeedLimitCms: undefined })
+                }}
                 className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${btn.speedUnit === unit ? 'on' : ''}`}
               >
                 {label}
@@ -1092,7 +1095,7 @@ function CueButtonEditor({
             aria-label="Giá trị tốc độ hoặc thời gian nút Cue"
             value={btn.speedValue}
             onChange={(e) =>
-              onSave({ ...btn, speedValue: Math.max(0.1, Number(e.target.value) || 1) }, `cue-spd-${btn.id}`)
+              onSave({ ...btn, speedValue: Math.max(0.1, Number(e.target.value) || 1), autoSpeedLimitCms: undefined }, `cue-spd-${btn.id}`)
             }
             className="kiln-field h-8 w-24 px-3 text-right text-xs tabular-nums"
           />

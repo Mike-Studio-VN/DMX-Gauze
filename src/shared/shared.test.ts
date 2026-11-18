@@ -582,7 +582,7 @@ describe('timeline -> GauzeCore end-to-end execution', () => {
   it('rèm thực sự chạy lên xuống chính xác theo timeline (cả pre-roll từ vị trí lệch, mượt Catmull-Rom và khung DMX)', async () => {
     const { GauzeCore } = await import('./core')
     const { MockDriver } = await import('./drivers')
-    const { CH, DEFAULT_SPEED, LOCK_VALUE } = await import('./dmx')
+    const { CH, LOCK_VALUE } = await import('./dmx')
     const { ch1ToPos } = await import('./convert')
     const { buildTimelineFollowCommands, evaluateModuleTimelineHeight } = await import('./timeline')
 
@@ -628,7 +628,7 @@ describe('timeline -> GauzeCore end-to-end execution', () => {
       core.tick()
       if (checkpoints.has(ms)) {
         const s = core.snapshot()
-        expect(s.frame[CH.SPEED]).toBeLessThanOrEqual(DEFAULT_SPEED)
+        expect(ch3ToCms(s.frame[CH.SPEED], p.modules[0].maxSpeedCms)).toBeLessThanOrEqual(50)
         sampled[ms] = {
           front: s.modules['m-front-1'].pos,
           back: s.modules['m-back-1'].pos,

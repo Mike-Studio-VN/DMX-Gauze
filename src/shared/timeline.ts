@@ -1,18 +1,34 @@
-import { ch3ToCms, clamp, snapPos, speedCap } from './convert'
-import { DEFAULT_SPEED } from './dmx'
+import { ch3ToCms, clamp, cmsToCh3, snapPos, speedCap } from './convert'
 import { parseTc, snapDeltaToFps, snapTimeToFps } from './timecode'
 import type { ClipKeyframe, Command, Fps, ModuleCfg, Snapshot, TimelineClip, TimelineKey } from './types'
 
 const MIN_DURATION = 0.05
 
-export const DEFAULT_MOTION_SPEED_CMS = ch3ToCms(DEFAULT_SPEED)
+export const DEFAULT_MOTION_SPEED_CMS = 50
+
+export function defaultMotionSpeedCh3(mod: ModuleCfg, limit = DEFAULT_MOTION_SPEED_CMS): number {
+  const max = speedCap(mod)
+  const cap = Math.min(max, limit)
+  const ch3 = cmsToCh3(cap, max)
+  // Timing conversion rounds up. Use the preceding step if that would exceed the motion cap.
+  return ch3ToCms(ch3, max) > cap ? ch3 - 1 : ch3
+}
+
+export function defaultMotionSpeedCms(mod: ModuleCfg, limit = DEFAULT_MOTION_SPEED_CMS): number {
+  return ch3ToCms(defaultMotionSpeedCh3(mod, limit), speedCap(mod))
+}
+
+export function defaultCueSpeedCms(modules: ModuleCfg[]): number {
+  const speed = Math.min(DEFAULT_MOTION_SPEED_CMS, ...modules.map((mod) => defaultMotionSpeedCms(mod)))
+  return Math.floor(speed * 100 + 1e-9) / 100
+}
 
 export function roundUpMotionDuration(seconds: number): number {
   return Math.ceil(seconds * 2 - 1e-9) / 2
 }
 
-function autoMotionSpeed(mod: ModuleCfg, clip?: TimelineClip): number {
-  return Math.min(speedCap(mod), clip?.autoSpeedLimitCms ?? Infinity)
+export function clipAutoSpeedCms(mod: ModuleCfg, clip?: TimelineClip): number {
+  return clip?.autoSpeedLimitCms === undefined ? speedCap(mod) : defaultMotionSpeedCms(mod, clip.autoSpeedLimitCms)
 }
 
 function clipAtTime(clips: TimelineClip[], time: number): TimelineClip | undefined {
@@ -756,7 +772,7 @@ export function clipPeakSpeedCms(clip: TimelineClip, mod: ModuleCfg): number {
 
 export function defaultMotionDuration(clip: TimelineClip, mod: ModuleCfg): number {
   const autoSpeedLimitCms = clip.autoSpeedLimitCms ?? DEFAULT_MOTION_SPEED_CMS
-  const required = clip.duration * clipPeakSpeedCms(clip, mod) / Math.min(speedCap(mod), autoSpeedLimitCms)
+  const required = clip.duration * clipPeakSpeedCms(clip, mod) / defaultMotionSpeedCms(mod, autoSpeedLimitCms)
   return required > clip.duration + 1e-9 ? roundUpMotionDuration(required) : clip.duration
 }
 
@@ -944,8 +960,8 @@ export function planTimelineFollow(
       .filter((c) => c.moduleId === mod.id && c.keyframes.length > 0)
       .sort((a, b) => a.startTime - b.startTime)
     const autoCap = Math.min(
-      autoMotionSpeed(mod, clipAtTime(modClips, time)),
-      autoMotionSpeed(mod, clipAtTime(modClips, time + Math.max(0, lookaheadSec))),
+      clipAutoSpeedCms(mod, clipAtTime(modClips, time)),
+      clipAutoSpeedCms(mod, clipAtTime(modClips, time + Math.max(0, lookaheadSec))),
     )
 
     if (lookaheadSec <= 0 || modClips.length === 0) {

@@ -1,10 +1,9 @@
 import { autoAssign } from './addressing'
-import { speedCap } from './convert'
 import { ARTNET_PORT, DEFAULT_SPEED, DEFAULT_TARGET_IP, H2_MAX_SPEED_CMS, LOCK_VALUE } from './dmx'
 import { DEFAULT_DMX_TRANSPORT_HZ, normalizeDmxTransportRate } from './dmxTransport'
 import { KINET_PORT, SACN_PORT, defaultPortForDriver } from './protocols'
 import { FPS_OPTIONS, LTC_FPS_OPTIONS } from './timecode'
-import { DEFAULT_MOTION_SPEED_CMS, fitDefaultMotionDuration, roundUpMotionDuration, segmentDistCm } from './timeline'
+import { DEFAULT_MOTION_SPEED_CMS, defaultCueSpeedCms, defaultMotionSpeedCms, fitDefaultMotionDuration, roundUpMotionDuration, segmentDistCm } from './timeline'
 
 export const CURRENT_SCHEMA_VERSION = 2
 import type {
@@ -270,6 +269,9 @@ export function normalizeProject(raw: unknown): Project {
         steps,
         speedUnit: b.speedUnit,
         speedValue: reqFinite(b.speedValue, `buttons[${idx}].speedValue`, 0.01),
+        ...(b.autoSpeedLimitCms === undefined ? {} : {
+          autoSpeedLimitCms: reqFinite(b.autoSpeedLimitCms, `buttons[${idx}].autoSpeedLimitCms`, 1, DEFAULT_MOTION_SPEED_CMS),
+        }),
         ...(b.slotIndex !== undefined
           ? { slotIndex: reqFinite(b.slotIndex, `buttons[${idx}].slotIndex`, 0, 128, true) }
           : {}),
@@ -436,7 +438,7 @@ export function createDefaultProject(): Project {
 
   const modules = autoAssign(layers, [...frontModules, backModule])
   const fullTravelSeconds = Math.max(...modules.map((mod) =>
-    segmentDistCm(mod, mod.minHeight, mod.maxHeight) / Math.min(speedCap(mod), DEFAULT_MOTION_SPEED_CMS),
+    segmentDistCm(mod, mod.minHeight, mod.maxHeight) / defaultMotionSpeedCms(mod),
   ))
   const fullTravelDuration = roundUpMotionDuration(fullTravelSeconds)
 
@@ -485,6 +487,7 @@ export function createDefaultProject(): Project {
         steps: modules.map((m) => ({ moduleId: m.id, position: m.maxHeight })),
         speedUnit: 'sec',
         speedValue: fullTravelDuration,
+        autoSpeedLimitCms: DEFAULT_MOTION_SPEED_CMS,
       },
       {
         id: 'cue-wave',
@@ -494,7 +497,8 @@ export function createDefaultProject(): Project {
           position: Number((0.2 + 0.8 * Math.sin((i / 11) * Math.PI)).toFixed(2)),
         })),
         speedUnit: 'cms',
-        speedValue: Number(DEFAULT_MOTION_SPEED_CMS.toFixed(2)),
+        speedValue: defaultCueSpeedCms(frontModules),
+        autoSpeedLimitCms: DEFAULT_MOTION_SPEED_CMS,
       },
       {
         id: 'cue-home',
@@ -502,6 +506,7 @@ export function createDefaultProject(): Project {
         steps: modules.map((m) => ({ moduleId: m.id, position: 0 })),
         speedUnit: 'sec',
         speedValue: fullTravelDuration,
+        autoSpeedLimitCms: DEFAULT_MOTION_SPEED_CMS,
       },
     ],
     keys: [],
