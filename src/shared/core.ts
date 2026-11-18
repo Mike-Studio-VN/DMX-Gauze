@@ -115,7 +115,8 @@ export class GauzeCore {
     this.rateWindowStart = this.now()
     this.driverKey = key
     const ev: DriverEvents = {
-      onNode: (n) => this.nodes.set(n.ip, n),
+      // Node tự dựng (confirmed:false) lưu khoá riêng để không ghi đè / bị phản hồi thật ghi đè cùng IP.
+      onNode: (n) => this.nodes.set(n.confirmed === false ? `${n.ip}#unconfirmed` : n.ip, n),
       onError: (m) => {
         this.driverError = m
       },
@@ -332,11 +333,13 @@ export class GauzeCore {
     const o = this.cfg?.output
     const now = this.now()
     const live = [...this.nodes.values()].filter((n) => now - n.lastSeen <= NODE_TIMEOUT_MS)
-    if (live.length) this.everOnline = true
+    const confirmed = live.some((n) => n.confirmed !== false)
+    if (confirmed) this.everOnline = true
     let state: ConnectionStatus['state']
     if (!this.driver) state = 'idle'
     else if (this.driverError) state = 'error'
-    else if (live.length) state = 'online'
+    else if (confirmed) state = 'online'
+    else if (live.length) state = 'sending'
     else if (this.everOnline) state = 'lost'
     else state = 'searching'
     return {
@@ -346,7 +349,7 @@ export class GauzeCore {
       port: o?.port ?? ARTNET_PORT,
       portAddress: o ? portAddress(o.net, o.subnet, o.universe) : 0,
       sendHz: this.measuredHz,
-      nodes: live,
+      nodes: live.filter((n) => n.confirmed !== false), // danh sách discovery chỉ gồm thiết bị thật đã phản hồi
       message: this.driverError,
       warning: this.driverWarn,
     }

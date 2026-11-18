@@ -80,6 +80,7 @@ export class SacnDriver implements OutputDriver {
               name: `sACN U${universe}`,
               longName: `E1.31 ${this.cfg.sacnMulticast !== false ? 'Multicast' : 'Unicast'} (${ip}:${port})`,
               lastSeen: Date.now(),
+              confirmed: false,
             })
           }
         })
@@ -101,6 +102,7 @@ export class SacnDriver implements OutputDriver {
       name: `sACN U${universe}`,
       longName: `E1.31 ${this.cfg.sacnMulticast !== false ? 'Multicast' : 'Unicast'} (${ip}:${port})`,
       lastSeen: Date.now(),
+      confirmed: false,
     })
   }
 

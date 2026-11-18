@@ -213,6 +213,10 @@ export function normalizeProject(raw: unknown): Project {
     }
   })
 
+  for (const [label, items] of [['layers', layers], ['modules', modules]] as const) {
+    if (new Set(items.map((i) => i.id)).size !== items.length) failProject(`${label} có id trùng nhau`)
+  }
+
   let buttons: CueButton[] = []
   if (raw.buttons !== undefined) {
     if (!Array.isArray(raw.buttons)) failProject('buttons phải là mảng')
