@@ -57,6 +57,11 @@ const CURVE_COLORS = ['#F7842E', '#C58A5B', '#A86A3E', '#DE9D68', '#8F5B38']
 const BODY_H = 28
 const DOT_PAD_X = 6
 const DOT_PAD_Y = 5
+const FOLLOWING_LTC = 'Đang theo LTC'
+
+function followsLtc(): boolean {
+  return useAppStore.getState().ltcActive
+}
 
 function heightToY(h: number, minH: number, maxH: number, height: number, padY = DOT_PAD_Y): number {
   const usableH = Math.max(4, height - padY * 2)
@@ -146,7 +151,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     setPlayheadTime(time)
   }, [time, setPlayheadTime])
   const [playing, setPlaying] = useState(false)
-  const transportRef = useRef<'idle' | 'local' | 'ltc'>('idle')
+  const localTransportRef = useRef<'idle' | 'local'>('idle')
   const [ltcStatus, setLtcStatus] = useState<'off' | 'lock' | 'freewheel' | 'lost'>('off')
   const [snapToFrame, setSnapToFrame] = useState(true)
   const [pxPerSec, setPxPerSec] = useState(64)
@@ -181,6 +186,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   const playbackLastTickRef = useRef(0)
   const linearPlannerRef = useRef(new LinearFollowPlanner())
   const ltcClockRef = useRef(new LtcClockTracker())
+  const ltcSessionStartedRef = useRef(false)
 
   const maxTime = useMemo(
     () => Math.max(20, ...clips.map((c) => c.startTime + c.duration + 4), ...project.keys.map((k) => k.time + 4)),
@@ -221,16 +227,28 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     if (snapshot?.locked) {
       linearPlannerRef.current.reset()
       if (playing) {
-        transportRef.current = 'idle'
+        localTransportRef.current = 'idle'
         setPlaying(false)
       }
     }
   }, [snapshot?.locked, playing])
 
   useEffect(() => {
+    if (!ltcActive) {
+      ltcSessionStartedRef.current = false
+      return
+    }
+    localTransportRef.current = 'idle'
+    setPlaying(false)
+    scrubCleanupRef.current?.()
+    setEditingHead(false)
+    holdTimelineTargets()
+  }, [ltcActive, holdTimelineTargets])
+
+  useEffect(() => {
     if (!playing || ltcActive) return
     const stopPlayback = startDmxFrameLoop(dmxHz, (now) => {
-      if (transportRef.current !== 'local') return
+      if (localTransportRef.current !== 'local' || followsLtc()) return
       const dt = (now - playbackLastTickRef.current) / 1000
       playbackLastTickRef.current = now
       const next = Math.min(maxTime, timeRef.current + dt)
@@ -239,7 +257,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       if (next >= maxTime) {
         linearPlannerRef.current.reset()
         dispatchFollowRef.current(maxTime, 0)
-        transportRef.current = 'idle'
+        localTransportRef.current = 'idle'
         stopPlayback()
         setPlaying(false)
       } else {
@@ -249,6 +267,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     return stopPlayback
   }, [playing, ltcActive, maxTime, dmxHz])
 
+  const { deviceId, channel, offsetFrames, freewheelFrames } = project.settings.ltc
   useEffect(() => {
     if (!ltcActive) {
       setLtcStatus('off')
@@ -258,16 +277,25 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     let stopped = false
     let ctx: AudioContext | null = null
     let stream: MediaStream | null = null
+    let heldTime = ltcSessionStartedRef.current ? timeRef.current : null
+    ltcSessionStartedRef.current = true
     const clock = ltcClockRef.current
+    const currentInput = () => {
+      const { ltcActive: active, project: currentProject } = useAppStore.getState()
+      const { ltc, timeline } = currentProject.settings
+      return !stopped && active && ltc.deviceId === deviceId && ltc.channel === channel &&
+        ltc.offsetFrames === offsetFrames && resolveLtcFps(timeline.fps, ltc.fps) === effectiveLtcFps
+    }
     planner.reset()
+    setLtcStatus('lost')
     setLtcDropFrame(undefined)
 
     const startLtc = async () => {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          audio: project.settings.ltc.deviceId ? { deviceId: { exact: project.settings.ltc.deviceId } } : true,
+          audio: deviceId ? { deviceId: { exact: deviceId } } : true,
         })
-        if (stopped) {
+        if (!currentInput()) {
           stream.getTracks().forEach((track) => track.stop())
           return
         }
@@ -277,29 +305,32 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
         const dec = new LtcDecoder(
           ctx.sampleRate,
           (f) => {
-            if (stopped || transportRef.current !== 'ltc') return
+            if (!currentInput()) return
             const nowMs = performance.now()
             const ltcRate = realFps(effectiveLtcFps)
-            const rawSec = tcToSeconds(f, effectiveLtcFps) + project.settings.ltc.offsetFrames / ltcRate
+            const rawSec = tcToSeconds(f, effectiveLtcFps) + offsetFrames / ltcRate
+            // A replacement input may be behind the published clock after freewheel.
+            if (heldTime !== null && Math.max(0, rawSec) < heldTime) return
+            heldTime = null
             const { timeSec, discontinuity } = clock.onDecodedFrame(rawSec, nowMs)
-            const sec = clamp(timeSec, 0, maxTime)
             if (discontinuity) planner.reset()
             if (effectiveLtcFps === 29.97) setLtcDropFrame(f.df)
             setLtcStatus('lock')
-            timeRef.current = sec
-            setTime(sec)
+            timeRef.current = timeSec
+            setTime(timeSec)
           },
           nominalFps(effectiveLtcFps),
         )
         proc.onaudioprocess = (ev) => {
-          const chIdx = project.settings.ltc.channel === 'right' && ev.inputBuffer.numberOfChannels > 1 ? 1 : 0
+          if (!currentInput()) return
+          const chIdx = channel === 'right' && ev.inputBuffer.numberOfChannels > 1 ? 1 : 0
           dec.push(ev.inputBuffer.getChannelData(chIdx))
         }
         src.connect(proc)
         proc.connect(ctx.destination)
         setLtcStatus('lost')
       } catch (err) {
-        if (stopped || transportRef.current !== 'ltc') return
+        if (!currentInput()) return
         notify(`Không mở được ngõ âm thanh LTC: ${(err as Error).message}`, 'error')
         setLtcStatus('lost')
       }
@@ -314,36 +345,34 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       stream?.getTracks().forEach((t) => t.stop())
       void ctx?.close()
     }
-  }, [ltcActive, effectiveLtcFps, maxTime, project.settings.ltc, notify, holdTimelineTargets, setLtcDropFrame])
+  }, [ltcActive, effectiveLtcFps, deviceId, channel, offsetFrames, notify, holdTimelineTargets, setLtcDropFrame])
 
-  const freewheelFrames = project.settings.ltc.freewheelFrames
   useEffect(() => {
     if (!ltcActive) return
     return startDmxFrameLoop(dmxHz, (now) => {
-      if (transportRef.current !== 'ltc') return
+      if (!followsLtc()) return
       const res = ltcClockRef.current.poll(now, realFps(effectiveLtcFps), freewheelFrames)
       setLtcStatus(res.status)
       if (res.timeSec !== null) {
-        const clampedSec = clamp(res.timeSec, 0, maxTime)
-        timeRef.current = clampedSec
-        setTime(clampedSec)
-        if (res.shouldFollow) dispatchFollowRef.current(clampedSec, 0.06)
+        timeRef.current = res.timeSec
+        setTime(res.timeSec)
+        if (res.shouldFollow) dispatchFollowRef.current(res.timeSec, 0.06)
       }
       if (res.shouldStop) {
         linearPlannerRef.current.reset()
         holdTimelineTargets()
       }
     })
-  }, [ltcActive, effectiveLtcFps, freewheelFrames, maxTime, dmxHz, holdTimelineTargets])
+  }, [ltcActive, effectiveLtcFps, freewheelFrames, dmxHz, holdTimelineTargets])
 
   const previewTimelineAt = (t: number) => {
-    if (transportRef.current === 'ltc') return
+    if (followsLtc()) return
     linearPlannerRef.current.reset()
     dispatchTimelineFollow(t, 0)
   }
 
   const seekTo = (t: number, forcePreview = true) => {
-    if (transportRef.current === 'ltc') return
+    if (followsLtc()) return
     const clampedT = clamp(t, 0, maxTime)
     linearPlannerRef.current.reset()
     timeRef.current = clampedT
@@ -402,7 +431,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
 
   const startHeadOrScrub = (e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation()
-    if (editingHead || transportRef.current === 'ltc') return
+    if (editingHead || followsLtc()) return
     const startX = e.clientX
     let moved = false
     let latestT = timeRef.current
@@ -419,7 +448,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   }
 
   const startRulerScrub = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (transportRef.current === 'ltc') return
+    if (followsLtc()) return
     const el = e.currentTarget
     let latestT = scrubRulerFromClientX(e.clientX, el.getBoundingClientRect().left)
     const onMove = (ev: PointerEvent) => {
@@ -800,6 +829,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   }
 
   const timelineWidth = Math.ceil(maxTime * pxPerSec)
+  const playheadX = Math.min(time, maxTime) * pxPerSec
   const ticks = Array.from({ length: Math.ceil(maxTime) + 1 }, (_, i) => i)
 
   const isLtcLive = ltcActive && (ltcStatus === 'lock' || ltcStatus === 'freewheel')
@@ -813,18 +843,10 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     ...new Set([0, ...clips.map((c) => c.startTime), ...project.keys.map((k) => k.time), sequenceEnd]),
   ].sort((a, b) => a - b)
 
-  const disableLtc = () => {
-    transportRef.current = 'idle'
-    setLtcActive(false)
-  }
-
   const togglePlay = () => {
-    if (transportRef.current === 'ltc') {
-      disableLtc()
-      return
-    }
-    if (transportRef.current === 'local') {
-      transportRef.current = 'idle'
+    if (followsLtc()) return
+    if (localTransportRef.current === 'local') {
+      localTransportRef.current = 'idle'
       setPlaying(false)
       linearPlannerRef.current.reset()
       holdTimelineTargets()
@@ -837,7 +859,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
       timeRef.current = project.settings.timeline.startTime
       setTime(project.settings.timeline.startTime)
     }
-    transportRef.current = 'local'
+    localTransportRef.current = 'local'
     playbackLastTickRef.current = performance.now()
     linearPlannerRef.current.reset()
     dispatchTimelineFollow(timeRef.current, 0.06)
@@ -851,19 +873,9 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
         <div className="timeline-timecode" aria-label="Timecode hiện tại">
           <button
             type="button"
-            onClick={() => {
-              setPlaying(false)
-              if (ltcActive) {
-                disableLtc()
-              } else {
-                transportRef.current = 'ltc'
-                scrubCleanupRef.current?.()
-                setEditingHead(false)
-                holdTimelineTargets()
-                setLtcStatus('lost')
-                setLtcActive(true)
-              }
-            }}
+            aria-label={ltcActive ? 'Tắt nhận LTC' : 'Bật nhận LTC'}
+            aria-pressed={ltcActive}
+            onClick={() => setLtcActive(!followsLtc())}
             title={
               !ltcActive
                 ? ltcMatched
@@ -930,12 +942,12 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
           <button
             type="button"
             className="timeline-icon"
-            title="Về timecode bắt đầu"
+            title={ltcActive ? FOLLOWING_LTC : 'Về timecode bắt đầu'}
             aria-label="Về timecode bắt đầu"
             disabled={ltcActive}
             onClick={() => {
-              if (transportRef.current === 'ltc') return
-              transportRef.current = 'idle'
+              if (followsLtc()) return
+              localTransportRef.current = 'idle'
               setPlaying(false)
               seekTo(project.settings.timeline.startTime)
             }}
@@ -945,7 +957,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
           <button
             type="button"
             className="timeline-icon"
-            title="Mốc trước"
+            title={ltcActive ? FOLLOWING_LTC : 'Mốc trước'}
             aria-label="Mốc trước"
             disabled={ltcActive}
             onClick={() => seekTo([...cueTimes].reverse().find((t) => t < time - 0.01) ?? 0)}
@@ -955,16 +967,17 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
           <button
             type="button"
             className="timeline-play"
-            title={ltcActive ? 'Dừng LTC' : playing ? 'Tạm dừng' : 'Phát'}
-            aria-label={ltcActive ? 'Dừng LTC' : playing ? 'Tạm dừng' : 'Phát'}
+            title={ltcActive ? FOLLOWING_LTC : playing ? 'Tạm dừng' : 'Phát'}
+            aria-label={playing ? 'Tạm dừng' : 'Phát'}
+            disabled={ltcActive}
             onClick={togglePlay}
           >
-            {playing || ltcActive ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}
+            {playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}
           </button>
           <button
             type="button"
             className="timeline-icon"
-            title="Mốc tiếp theo"
+            title={ltcActive ? FOLLOWING_LTC : 'Mốc tiếp theo'}
             aria-label="Mốc tiếp theo"
             disabled={ltcActive}
             onClick={() => seekTo(cueTimes.find((t) => t > time + 0.01) ?? sequenceEnd)}
@@ -974,12 +987,12 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
           <button
             type="button"
             className="timeline-icon"
-            title="Về cuối sóng"
+            title={ltcActive ? FOLLOWING_LTC : 'Về cuối sóng'}
             aria-label="Về cuối sóng"
             disabled={ltcActive}
             onClick={() => {
-              if (transportRef.current === 'ltc') return
-              transportRef.current = 'idle'
+              if (followsLtc()) return
+              localTransportRef.current = 'idle'
               setPlaying(false)
               seekTo(sequenceEnd)
             }}
@@ -1105,32 +1118,34 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
             <div
               ref={rulerRef}
               onPointerDown={startRulerScrub}
+              title={ltcActive ? FOLLOWING_LTC : undefined}
               style={{ width: timelineWidth }}
               className="relative h-6 cursor-ew-resize select-none"
             >
               <div
                 role={editingHead ? undefined : 'button'}
+                aria-disabled={ltcActive || undefined}
                 tabIndex={editingHead || ltcActive ? undefined : 0}
                 aria-label={editingHead ? undefined : `Thời gian playhead ${time.toFixed(2)}s, double-click để nhập số`}
                 onPointerDown={startHeadOrScrub}
                 onDoubleClick={(e) => {
                   e.stopPropagation()
-                  if (transportRef.current === 'ltc') return
+                  if (followsLtc()) return
                   headCanceledRef.current = false
                   setHeadInput(time.toFixed(2))
                   setEditingHead(true)
                 }}
                 onKeyDown={(e) => {
-                  if (transportRef.current !== 'ltc' && !editingHead && (e.key === 'Enter' || e.key === 'F2')) {
+                  if (!followsLtc() && !editingHead && (e.key === 'Enter' || e.key === 'F2')) {
                     e.preventDefault()
                     headCanceledRef.current = false
                     setHeadInput(time.toFixed(2))
                     setEditingHead(true)
                   }
                 }}
-                title={ltcActive ? 'Playhead đồng bộ theo LTC' : 'Kéo để tua · Double-click để nhập số giây'}
+                title={time > maxTime ? `${formatTimelineTc(time)} · ngoài vùng dựng` : ltcActive ? FOLLOWING_LTC : 'Kéo để tua · Double-click để nhập số giây'}
                 className={`timeline-ruler-marker ${editingHead ? 'editing' : ''}`}
-                style={{ left: editingHead ? Math.max(28, time * pxPerSec) : time * pxPerSec }}
+                style={{ left: editingHead ? Math.max(28, playheadX) : playheadX }}
               >
                 {editingHead ? (
                   <input
@@ -1736,7 +1751,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
 
           {/* Vạch Playhead dọc xuyên qua toàn bộ Tracks */}
           <div
-            style={{ left: 168 + time * pxPerSec }}
+            style={{ left: 168 + playheadX }}
             className="timeline-playhead pointer-events-none absolute top-6 bottom-0 z-10 w-0.5"
           >
             <div className="timeline-playhead-tip" />
