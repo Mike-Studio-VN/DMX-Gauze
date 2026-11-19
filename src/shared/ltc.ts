@@ -23,8 +23,9 @@ export class LtcDecoder {
   private since = 0
   private half = false
   private bits: number[] = []
-  private maxF = 0
-  private frameCount = 0
+  private lastFrame: LtcFrame | null = null
+  private completeSecond = false
+  private estimatedFps: number | null = null
 
   constructor(
     sampleRate: number,
@@ -36,9 +37,9 @@ export class LtcDecoder {
     this.period = this.bitPeriod
   }
 
-  /** Số fps ước lượng từ frame lớn nhất đã thấy. */
-  get detectedFps(): number {
-    return this.maxF + 1
+  /** Ước lượng từ một giây có đủ số khung liên tiếp. NDF 30 danh nghĩa có thể là 29.97 hoặc 30. */
+  get detectedFps(): number | null {
+    return this.estimatedFps
   }
 
   push(samples: Float32Array): void {
@@ -93,11 +94,25 @@ export class LtcDecoder {
     const m = bcd(bs, 32, 4) + 10 * bcd(bs, 40, 3)
     const h = bcd(bs, 48, 4) + 10 * bcd(bs, 56, 2)
     if (f > 29 || s > 59 || m > 59 || h > 23) return
-    this.frameCount += 1
-    if (this.frameCount % 120 === 0) this.maxF = 0
-    this.maxF = Math.max(this.maxF, f)
-    this.onFrame({ h, m, s, f, df: bs[10] === 1 })
+    const frame = { h, m, s, f, df: bs[10] === 1 }
+    this.observeFrameRate(frame)
+    this.onFrame(frame)
     this.bits = []
+  }
+
+  private observeFrameRate(frame: LtcFrame): void {
+    const prev = this.lastFrame
+    this.lastFrame = frame
+    const startsSecond = frame.f === (frame.df && frame.m % 10 !== 0 && frame.s === 0 ? 2 : 0)
+    if (prev && prev.df === frame.df) {
+      const delta = (86400 + (frame.h - prev.h) * 3600 + (frame.m - prev.m) * 60 + frame.s - prev.s) % 86400
+      if (delta === 0 && frame.f === prev.f + 1) return
+      const count = prev.f + 1
+      if (delta === 1 && startsSecond && this.completeSecond && (count === 24 || count === 25 || count === 30)) {
+        this.estimatedFps = frame.df && count === 30 ? 29.97 : count
+      }
+    }
+    this.completeSecond = startsSecond
   }
 }
 

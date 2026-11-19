@@ -3,6 +3,7 @@ import { autoAssign, layerLoopAddress, nextFree, orderedModules, validateAddress
 import type { AppInfo, SnapshotDto } from '@shared/api'
 import { clamp } from '@shared/convert'
 import { DEFAULT_SPEED, H2_MAX_SPEED_CMS, MODULE_MAX_SPEED_LIMIT_CMS, isValidStartAddress, rangesOverlap } from '@shared/dmx'
+import type { LtcClockStatus, LtcFrame } from '@shared/ltc'
 import { resolveOutputSettingsPatch } from '@shared/protocols'
 import {
   type CurvePresetId,
@@ -44,6 +45,20 @@ import { getBridge } from '../services/bridge'
 export type ControlTab = 'buttons' | 'manual' | 'timeline'
 export type FocusScope = 'tree' | 'buttons' | 'timeline'
 export type SettingsTab = 'network' | 'safety' | 'ltc' | 'notifications'
+export type LtcReceptionStatus = LtcClockStatus | 'waiting'
+interface LtcReception {
+  status: LtcReceptionStatus
+  frame: LtcFrame | null
+  signalLevel: number
+  error: string | null
+  detectedFps: number | null
+  waitingForPosition: boolean
+  inputOpen: boolean
+}
+
+const stoppedLtcReception: LtcReception = {
+  status: 'off', frame: null, signalLevel: 0, error: null, detectedFps: null, waitingForPosition: false, inputOpen: false,
+}
 export type ToastKind = 'info' | 'success' | 'warn' | 'error'
 export type ToastIcon =
   | 'info'
@@ -154,6 +169,8 @@ interface AppState {
   playheadTime: number
   ltcActive: boolean
   ltcDropFrame: boolean | undefined
+  ltcReception: LtcReception
+  ltcInputRevision: number
   settingsOpen: boolean
   settingsTab: SettingsTab
   toast: ToastMsg | null
@@ -255,6 +272,8 @@ interface AppState {
   setPlayheadTime: (time: number) => void
   setLtcActive: (active: boolean) => void
   setLtcDropFrame: (dropFrame: boolean | undefined) => void
+  setLtcReception: (patch: Partial<LtcReception>) => void
+  retryLtcInput: () => void
   applyLayerMotionPreset: (
     layerId: string,
     presetId: LayerMotionPresetId,
@@ -401,6 +420,8 @@ export const useAppStore = create<AppState>((set, get) => {
     playheadTime: 0,
     ltcActive: false,
     ltcDropFrame: undefined,
+    ltcReception: stoppedLtcReception,
+    ltcInputRevision: 0,
     settingsOpen: false,
     settingsTab: 'network',
     toast: null,
@@ -412,10 +433,26 @@ export const useAppStore = create<AppState>((set, get) => {
       if (get().playheadTime !== next) set({ playheadTime: next })
     },
     setLtcActive(active) {
-      if (get().ltcActive !== active) set({ ltcActive: active, ltcDropFrame: undefined })
+      if (get().ltcActive === active) return
+      set({
+        ltcActive: active,
+        ltcDropFrame: undefined,
+        ltcReception: active ? { ...stoppedLtcReception, status: 'waiting' } : stoppedLtcReception,
+        ...(active ? { activeTab: 'timeline', focusScope: 'timeline', ltcInputRevision: get().ltcInputRevision + 1 } : {}),
+      })
     },
     setLtcDropFrame(dropFrame) {
       if (get().ltcDropFrame !== dropFrame) set({ ltcDropFrame: dropFrame })
+    },
+    setLtcReception(patch) {
+      const { ltcActive, ltcReception } = get()
+      if (!ltcActive) return
+      if ((Object.keys(patch) as Array<keyof LtcReception>).some((key) => patch[key] !== ltcReception[key])) {
+        set({ ltcReception: { ...ltcReception, ...patch } })
+      }
+    },
+    retryLtcInput() {
+      if (get().ltcActive) set((s) => ({ ltcInputRevision: s.ltcInputRevision + 1, ltcReception: { ...stoppedLtcReception, status: 'waiting' } }))
     },
 
     notify(text, kind = 'info', opts) {
@@ -512,7 +549,9 @@ export const useAppStore = create<AppState>((set, get) => {
       if (get().activeTab === 'timeline' && activeTab !== 'timeline') get().holdTimelineTargets()
       set((s) => ({
         activeTab,
-        ...(activeTab !== 'timeline' && s.ltcActive ? { ltcActive: false, ltcDropFrame: undefined } : {}),
+        ...(activeTab !== 'timeline' && s.ltcActive
+          ? { ltcActive: false, ltcDropFrame: undefined, ltcReception: stoppedLtcReception }
+          : {}),
         focusScope: activeTab === 'buttons' ? 'buttons' : activeTab === 'timeline' ? 'timeline' : 'tree',
         selectedButtonId:
           activeTab === 'buttons' ? (s.selectedButtonId ?? s.project.buttons[0]?.id ?? null) : s.selectedButtonId,

@@ -142,6 +142,7 @@ vi.mock('lucide-react', () => {
     Play: icon('Play'),
     Plus: icon('Plus'),
     Settings: icon('Settings'),
+    RefreshCw: icon('RefreshCw'),
     SkipBack: icon('SkipBack'),
     SkipForward: icon('SkipForward'),
     WifiOff: icon('WifiOff'),
@@ -151,6 +152,7 @@ vi.mock('lucide-react', () => {
 });
 
 import { TimelineEditor } from './components/TimelineEditor';
+import { LtcSettingsPanel } from './components/LtcSettingsPanel';
 import { getBridge } from './services/bridge';
 import { useAppStore } from './store/useAppStore';
 
@@ -221,27 +223,40 @@ function extractText(node: unknown): string {
   return '';
 }
 
-function mockPcmInput() {
-  const processor: { connect: () => void; onaudioprocess?: (event: unknown) => void } = { connect: vi.fn() };
-  vi.stubGlobal('navigator', {
-    mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) },
-  });
+function mockLtcAudio(open: () => Promise<{ getTracks: () => TestTrack[] }>) {
+  const getUserMedia = vi.fn(open);
+  const processors: Array<{ connect: () => void; onaudioprocess?: (event: unknown) => void }> = [];
+  vi.stubGlobal('navigator', { mediaDevices: { getUserMedia, enumerateDevices: async () => [] } });
   vi.stubGlobal('AudioContext', class {
     sampleRate = 48000;
     destination = {};
     createMediaStreamSource() { return { connect: vi.fn() }; }
-    createScriptProcessor() { return processor; }
+    createScriptProcessor() {
+      const processor = { connect: vi.fn() };
+      processors.push(processor);
+      return processor;
+    }
     close = vi.fn(async () => {});
   });
+  return { getUserMedia, processors };
+}
+
+interface TestTrack {
+  stop: () => void;
+  onended?: (() => void) | null;
+}
+
+function mockPcmInput() {
+  const { processors } = mockLtcAudio(async () => ({ getTracks: () => [{ stop: vi.fn() }] }));
   let phase = 1;
   return {
-    ready: () => vi.waitFor(() => expect(processor.onaudioprocess).toBeTypeOf('function')),
+    ready: () => vi.waitFor(() => expect(processors[0]?.onaudioprocess).toBeTypeOf('function')),
     feed(minute: number, second: number, frames: number[]) {
       for (const frame of frames) {
         vi.advanceTimersByTime(40);
         const pcm = encodeSmpteBiphaseFrame(0, minute, second, frame, 48000, 25, phase);
         phase = pcm.endPhase;
-        processor.onaudioprocess!({ inputBuffer: { numberOfChannels: 1, getChannelData: () => pcm.samples } });
+        processors[0].onaudioprocess!({ inputBuffer: { numberOfChannels: 1, getChannelData: () => pcm.samples } });
       }
     },
   };
@@ -400,7 +415,7 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     const lockNodes = collectNodes(hookRuntime.lastTree);
     const lockOutput = lockNodes.find((n) => n.type === 'output');
     expect(extractText(lockOutput)).toBe('00:00:03:02');
-    expect(extractText(hookRuntime.lastTree)).toContain('Live');
+    expect(extractText(hookRuntime.lastTree)).toContain('Đã khóa (Lock)');
     const lockMoveCount = dispatched.filter((c) => c.type === 'move').length;
     expect(lockMoveCount).toBeGreaterThanOrEqual(1);
     const seek = lockNodes.find((n) => n.props['aria-label'] === 'Về cuối sóng');
@@ -420,6 +435,7 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     // Playhead must advance beyond locked frame 03:02 during freewheel and keep dispatching moves.
     expect(freewheelTimecodes.some((tc) => tc > '00:00:03:02')).toBe(true);
     const afterFreewheelMoves = dispatched.filter((c) => c.type === 'move').length;
+    expect(useAppStore.getState().ltcReception.status).toBe('freewheel');
     expect(afterFreewheelMoves).toBeGreaterThan(lockMoveCount);
     expect(dispatched.filter((c) => c.type === 'stop')).toHaveLength(0);
 
@@ -428,9 +444,9 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
       vi.advanceTimersByTime(35);
     }
 
-    const lostNodes = collectNodes(hookRuntime.lastTree);
+    const lostNodes = collectNodes(hookRuntime.render());
     const lostOutputTc = extractText(lostNodes.find((n) => n.type === 'output'));
-    expect(extractText(hookRuntime.lastTree)).toContain('Mất kết nối');
+    expect(extractText(hookRuntime.lastTree)).toContain('Mất tín hiệu');
     // Capped at 3.08s + 0.40s = 3.48s (00:00:03:12), never drifting unboundedly after lost.
     expect(lostOutputTc).toBe('00:00:03:12');
 
@@ -446,8 +462,8 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
       capturedProc!.onaudioprocess!({ inputBuffer: { numberOfChannels: 1, getChannelData: () => enc.samples } });
     }
     vi.advanceTimersByTime(40);
-    expect(extractText(hookRuntime.lastTree)).toContain('Live');
-    const stopLtc = collectNodes(hookRuntime.lastTree).find((n) => n.props['aria-label'] === 'Tắt nhận LTC');
+    expect(extractText(hookRuntime.render())).toContain('Đã khóa (Lock)');
+    const stopLtc = collectNodes(hookRuntime.lastTree).find((n) => n.props['aria-label'] === 'Nhận timecode (LTC)');
     expect(stopLtc).toBeDefined();
     (stopLtc!.props.onClick as () => void)();
     hookRuntime.render();
@@ -632,7 +648,7 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     expect(extractText(findNode('output'))).toBe('00:00:01:02');
     expect(dropAt(0.026)).toBe(0.04);
 
-    (findNode('button', 'Tắt nhận LTC')!.props.onClick as () => void)();
+    (findNode('button', 'Nhận timecode (LTC)')!.props.onClick as () => void)();
     hookRuntime.render();
     expect(findNode('select', 'Tốc độ khung hình')?.props).toMatchObject({ value: 50, disabled: false });
     expect(extractText(findNode('output'))).toBe('00:00:01:05');
@@ -766,7 +782,7 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     expect(sendCommand).toHaveBeenCalled();
 
     const held = useAppStore.getState().playheadTime;
-    click(find('aria-label', 'Tắt nhận LTC'));
+    click(find('aria-label', 'Nhận timecode (LTC)'));
     expect(useAppStore.getState().ltcActive).toBe(false);
     expect(useAppStore.getState().playheadTime).toBe(held);
     click(find('aria-label', 'Về timecode bắt đầu'));
@@ -774,5 +790,123 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     click(find('className', 'timeline-play'));
     vi.advanceTimersByTime(100);
     expect(useAppStore.getState().playheadTime).toBeGreaterThan(1.2);
+  });
+
+  it('syncs the Settings switch with Timeline, reports permission denial, retries and releases late streams', async () => {
+    const project = createDefaultProject();
+    project.settings.timeline.fps = 50;
+    project.settings.ltc.fps = 25;
+    project.settings.ltc.offsetFrames = 2;
+    useAppStore.setState({ project, activeTab: 'manual', notify: vi.fn(), sendCommand: async () => ({ ok: true }) });
+    const track: TestTrack = { stop: vi.fn() };
+    const lateTrack: TestTrack = { stop: vi.fn() };
+    let resolveLate!: (stream: { getTracks: () => TestTrack[] }) => void;
+    const lateStream = new Promise<{ getTracks: () => TestTrack[] }>((resolve) => { resolveLate = resolve; });
+    const audio = mockLtcAudio(async () => ({ getTracks: () => [track] }));
+    audio.getUserMedia
+      .mockRejectedValueOnce(new DOMException('denied', 'NotAllowedError'))
+      .mockResolvedValueOnce({ getTracks: () => [track] })
+      .mockImplementationOnce(() => lateStream);
+
+    hookRuntime.component = () => ({
+      type: 'test',
+      props: { children: [TimelineEditor({}), LtcSettingsPanel({ state: useAppStore.getState() })] },
+    });
+    const nodeWith = (key: string, value: unknown) => collectNodes(hookRuntime.lastTree).find((node) => node.props[key] === value);
+    const click = (node?: VNode) => {
+      (node!.props.onClick as () => void)();
+      hookRuntime.render();
+    };
+    const timelineToggle = () => collectNodes(hookRuntime.lastTree).find((n) =>
+      n.props['aria-label'] === 'Nhận timecode (LTC)' && 'aria-pressed' in n.props,
+    );
+    hookRuntime.render();
+    expect(audio.getUserMedia).not.toHaveBeenCalled();
+    expect(nodeWith('role', 'switch')?.props['aria-checked']).toBe(false);
+    click(nodeWith('role', 'switch'));
+    expect(useAppStore.getState().activeTab).toBe('timeline');
+    expect(timelineToggle()?.props['aria-pressed']).toBe(true);
+    expect(nodeWith('aria-label', 'Tốc độ khung hình')?.props).toMatchObject({ value: 25, disabled: true });
+    await vi.waitFor(() => expect(useAppStore.getState().ltcReception.error).toContain('Chưa có quyền micrô'));
+    hookRuntime.render();
+    expect(extractText(nodeWith('role', 'alert'))).toContain('Chưa có quyền micrô');
+    expect(extractText(hookRuntime.lastTree)).toContain('Mất tín hiệu');
+
+    click(collectNodes(hookRuntime.lastTree).find((n) => n.type === 'button' && extractText(n) === 'Thử lại'));
+    await vi.waitFor(() => expect(audio.processors[0]?.onaudioprocess).toBeTypeOf('function'));
+    vi.advanceTimersByTime(200);
+    expect(extractText(hookRuntime.render())).toContain('Đang chờ tín hiệu');
+    let phase = 1;
+    for (const frame of [0, 1, 2]) {
+      vi.advanceTimersByTime(40);
+      const encoded = encodeSmpteBiphaseFrame(0, 0, 3, frame, 48000, 25, phase);
+      phase = encoded.endPhase;
+      audio.processors[0].onaudioprocess!({ inputBuffer: { numberOfChannels: 1, getChannelData: () => encoded.samples } });
+    }
+    expect(extractText(hookRuntime.render())).toContain('Đã khóa (Lock)');
+    expect(extractText(hookRuntime.lastTree)).toContain('00:00:03:01'); // Raw source, without the two-frame offset.
+    expect(nodeWith('role', 'meter')?.props['aria-valuenow']).toBe(80);
+
+    click(timelineToggle());
+    expect(nodeWith('role', 'switch')?.props['aria-checked']).toBe(false);
+    expect(nodeWith('aria-label', 'Tốc độ khung hình')?.props).toMatchObject({ value: 50, disabled: false });
+    expect(track.stop).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().ltcReception.status).toBe('off');
+
+    click(timelineToggle());
+    expect(nodeWith('role', 'switch')?.props['aria-checked']).toBe(true);
+    click(nodeWith('role', 'switch'));
+    expect(timelineToggle()?.props['aria-pressed']).toBe(false);
+    resolveLate({ getTracks: () => [lateTrack] });
+    await vi.waitFor(() => expect(lateTrack.stop).toHaveBeenCalledOnce());
+    expect(audio.processors).toHaveLength(1);
+  });
+
+  it('shows a confident nominal FPS mismatch and holds the playhead across audio device replacement', async () => {
+    const project = createDefaultProject();
+    project.settings.timeline.fps = 25;
+    const track: TestTrack = { stop: vi.fn() };
+    const replacement: TestTrack = { stop: vi.fn() };
+    const holdTimelineTargets = vi.fn();
+    const audio = mockLtcAudio(async () => ({ getTracks: () => [replacement] }));
+    audio.getUserMedia.mockResolvedValueOnce({ getTracks: () => [track] });
+    useAppStore.setState({ project, holdTimelineTargets, notify: vi.fn(), sendCommand: async () => ({ ok: true }) });
+    hookRuntime.component = () => ({
+      type: 'test',
+      props: { children: [TimelineEditor({}), LtcSettingsPanel({ state: useAppStore.getState() })] },
+    });
+    useAppStore.getState().setLtcActive(true);
+    hookRuntime.render();
+    await vi.waitFor(() => expect(audio.processors[0]?.onaudioprocess).toBeTypeOf('function'));
+    let phase = 1;
+    const feed = (input: number, second: number, frames: number[], fps: number) => {
+      for (const frame of frames) {
+        vi.advanceTimersByTime(40);
+        const encoded = encodeSmpteBiphaseFrame(0, 0, second, frame, 48000, fps, phase);
+        phase = encoded.endPhase;
+        audio.processors[input].onaudioprocess!({ inputBuffer: { numberOfChannels: 1, getChannelData: () => encoded.samples } });
+      }
+    };
+    feed(0, 3, Array.from({ length: 24 }, (_, i) => i), 24);
+    feed(0, 4, [0, 1], 24);
+    expect(useAppStore.getState().ltcReception.detectedFps).toBe(24);
+    expect(extractText(hookRuntime.render())).toContain('Khác FPS đã chọn (25 fps)');
+    const held = useAppStore.getState().playheadTime;
+
+    useAppStore.setState({ project: { ...project, settings: { ...project.settings, ltc: { ...project.settings.ltc, deviceId: 'usb' } } } });
+    hookRuntime.render();
+    await vi.waitFor(() => expect(audio.processors[1]?.onaudioprocess).toBeTypeOf('function'));
+    expect(audio.getUserMedia).toHaveBeenLastCalledWith({ audio: { deviceId: { exact: 'usb' } } });
+    expect(track.stop).toHaveBeenCalledOnce();
+    feed(1, 1, [0, 1, 2], 25);
+    expect(useAppStore.getState().playheadTime).toBe(held);
+    expect(useAppStore.getState().ltcReception).toMatchObject({ status: 'waiting', waitingForPosition: true });
+    feed(1, 5, [0, 1, 2], 25);
+    expect(useAppStore.getState().playheadTime).toBeGreaterThan(held);
+    expect(useAppStore.getState().ltcReception.status).toBe('lock');
+    replacement.onended!();
+    expect(useAppStore.getState().ltcReception).toMatchObject({ status: 'lost', inputOpen: false });
+    expect(replacement.stop).toHaveBeenCalledOnce();
+    expect(holdTimelineTargets).toHaveBeenCalled();
   });
 });

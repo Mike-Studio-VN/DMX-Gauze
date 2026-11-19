@@ -49,6 +49,7 @@ import {
   segmentPath,
 } from '@shared/timeline'
 import type { ClipKeyframe, Fps, ModuleCfg, TimelineClip } from '@shared/types'
+import { ltcInputError, ltcStatusLabels } from '../services/ltcInput'
 import { useAppStore } from '../store/useAppStore'
 
 const MIN_CLIP_DUR = 0.4
@@ -132,6 +133,9 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
     setLtcActive,
     ltcDropFrame,
     setLtcDropFrame,
+    ltcReception,
+    setLtcReception,
+    ltcInputRevision,
     sendCommand,
     holdTimelineTargets,
     notify,
@@ -152,7 +156,6 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   }, [time, setPlayheadTime])
   const [playing, setPlaying] = useState(false)
   const localTransportRef = useRef<'idle' | 'local'>('idle')
-  const [ltcStatus, setLtcStatus] = useState<'off' | 'lock' | 'freewheel' | 'lost'>('off')
   const [snapToFrame, setSnapToFrame] = useState(true)
   const [pxPerSec, setPxPerSec] = useState(64)
   const [editingHead, setEditingHead] = useState(false)
@@ -187,6 +190,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   const linearPlannerRef = useRef(new LinearFollowPlanner())
   const ltcClockRef = useRef(new LtcClockTracker())
   const ltcSessionStartedRef = useRef(false)
+  const ltcFollowingRef = useRef(false)
 
   const maxTime = useMemo(
     () => Math.max(20, ...clips.map((c) => c.startTime + c.duration + 4), ...project.keys.map((k) => k.time + 4)),
@@ -269,90 +273,134 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
 
   const { deviceId, channel, offsetFrames, freewheelFrames } = project.settings.ltc
   useEffect(() => {
-    if (!ltcActive) {
-      setLtcStatus('off')
-      return
-    }
+    if (!ltcActive) return
     const planner = linearPlannerRef.current
     let stopped = false
+    let failed = false
     let ctx: AudioContext | null = null
     let stream: MediaStream | null = null
+    let lastMeterAt = -Infinity
     let heldTime = ltcSessionStartedRef.current ? timeRef.current : null
     ltcSessionStartedRef.current = true
     const clock = ltcClockRef.current
-    const currentInput = () => {
-      const { ltcActive: active, project: currentProject } = useAppStore.getState()
-      const { ltc, timeline } = currentProject.settings
-      return !stopped && active && ltc.deviceId === deviceId && ltc.channel === channel &&
-        ltc.offsetFrames === offsetFrames && resolveLtcFps(timeline.fps, ltc.fps) === effectiveLtcFps
-    }
     planner.reset()
-    setLtcStatus('lost')
     setLtcDropFrame(undefined)
+    setLtcReception({
+      status: 'waiting', frame: null, signalLevel: 0, error: null, detectedFps: null, waitingForPosition: false, inputOpen: false,
+    })
+
+    const isCurrentInput = () => {
+      const state = useAppStore.getState()
+      const settings = state.project.settings
+      return !stopped && !failed && state.ltcActive && state.ltcInputRevision === ltcInputRevision &&
+        settings.ltc.deviceId === deviceId && settings.ltc.channel === channel && settings.ltc.offsetFrames === offsetFrames &&
+        resolveLtcFps(settings.timeline.fps, settings.ltc.fps) === effectiveLtcFps
+    }
+
+    const releaseInput = () => {
+      stream?.getTracks().forEach((track) => {
+        track.onended = null
+        track.stop()
+      })
+      stream = null
+      void ctx?.close().catch(() => {})
+      ctx = null
+    }
+
+    const holdInput = () => {
+      ltcFollowingRef.current = false
+      clock.reset()
+      planner.reset()
+      holdTimelineTargets()
+    }
+
+    const failInput = (message: string) => {
+      if (!isCurrentInput()) return
+      failed = true
+      holdInput()
+      releaseInput()
+      setLtcReception({ status: 'lost', error: message, signalLevel: 0, inputOpen: false, waitingForPosition: false })
+      notify(message, 'error')
+    }
 
     const startLtc = async () => {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: deviceId ? { deviceId: { exact: deviceId } } : true,
         })
-        if (!currentInput()) {
-          stream.getTracks().forEach((track) => track.stop())
+        if (!isCurrentInput()) {
+          releaseInput()
           return
         }
-        ctx = new AudioContext()
-        const src = ctx.createMediaStreamSource(stream)
-        const proc = ctx.createScriptProcessor(2048, 2, 1)
+        for (const track of stream.getTracks()) {
+          track.onended = () => failInput('Thiết bị thu đã ngắt kết nối. Cắm lại hoặc chọn thiết bị khác, rồi thử lại.')
+        }
+        const inputContext = new AudioContext()
+        ctx = inputContext
+        if (inputContext.state === 'suspended') await inputContext.resume()
+        if (!isCurrentInput()) {
+          releaseInput()
+          return
+        }
+        const src = inputContext.createMediaStreamSource(stream)
+        const proc = inputContext.createScriptProcessor(2048, 2, 1)
         const dec = new LtcDecoder(
-          ctx.sampleRate,
+          inputContext.sampleRate,
           (f) => {
-            if (!currentInput()) return
+            if (!isCurrentInput()) return
             const nowMs = performance.now()
             const ltcRate = realFps(effectiveLtcFps)
             const rawSec = tcToSeconds(f, effectiveLtcFps) + offsetFrames / ltcRate
-            // A replacement input may be behind the published clock after freewheel.
-            if (heldTime !== null && Math.max(0, rawSec) < heldTime) return
+            if (effectiveLtcFps === 29.97) setLtcDropFrame(f.df)
+            if (heldTime !== null && Math.max(0, rawSec) < heldTime) {
+              setLtcReception({ frame: f, detectedFps: dec.detectedFps, waitingForPosition: true })
+              return
+            }
             heldTime = null
+            ltcFollowingRef.current = true
             const { timeSec, discontinuity } = clock.onDecodedFrame(rawSec, nowMs)
             if (discontinuity) planner.reset()
-            if (effectiveLtcFps === 29.97) setLtcDropFrame(f.df)
-            setLtcStatus('lock')
+            setLtcReception({ status: 'lock', frame: f, detectedFps: dec.detectedFps, waitingForPosition: false })
             timeRef.current = timeSec
             setTime(timeSec)
           },
           nominalFps(effectiveLtcFps),
         )
         proc.onaudioprocess = (ev) => {
-          if (!currentInput()) return
+          if (!isCurrentInput()) return
           const chIdx = channel === 'right' && ev.inputBuffer.numberOfChannels > 1 ? 1 : 0
-          dec.push(ev.inputBuffer.getChannelData(chIdx))
+          const samples = ev.inputBuffer.getChannelData(chIdx)
+          const now = performance.now()
+          if (now - lastMeterAt >= 100) {
+            let peak = 0
+            for (const sample of samples) peak = Math.max(peak, Math.abs(sample))
+            setLtcReception({ signalLevel: Math.round(clamp(peak, 0, 1) * 100) })
+            lastMeterAt = now
+          }
+          dec.push(samples)
         }
         src.connect(proc)
-        proc.connect(ctx.destination)
-        setLtcStatus('lost')
+        proc.connect(inputContext.destination)
+        setLtcReception({ inputOpen: true })
       } catch (err) {
-        if (!currentInput()) return
-        notify(`Không mở được ngõ âm thanh LTC: ${(err as Error).message}`, 'error')
-        setLtcStatus('lost')
+        failInput(ltcInputError(err))
       }
     }
     void startLtc()
 
     return () => {
       stopped = true
-      clock.reset()
-      planner.reset()
-      holdTimelineTargets()
-      stream?.getTracks().forEach((t) => t.stop())
-      void ctx?.close()
+      holdInput()
+      releaseInput()
     }
-  }, [ltcActive, effectiveLtcFps, deviceId, channel, offsetFrames, notify, holdTimelineTargets, setLtcDropFrame])
+  }, [ltcActive, deviceId, channel, offsetFrames, effectiveLtcFps, ltcInputRevision, notify, holdTimelineTargets, setLtcDropFrame, setLtcReception])
 
   useEffect(() => {
     if (!ltcActive) return
     return startDmxFrameLoop(dmxHz, (now) => {
-      if (!followsLtc()) return
+      if (!followsLtc() || !ltcFollowingRef.current) return
       const res = ltcClockRef.current.poll(now, realFps(effectiveLtcFps), freewheelFrames)
-      setLtcStatus(res.status)
+      setLtcReception({ status: res.status })
       if (res.timeSec !== null) {
         timeRef.current = res.timeSec
         setTime(res.timeSec)
@@ -363,7 +411,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
         holdTimelineTargets()
       }
     })
-  }, [ltcActive, effectiveLtcFps, freewheelFrames, dmxHz, holdTimelineTargets])
+  }, [ltcActive, effectiveLtcFps, freewheelFrames, dmxHz, holdTimelineTargets, setLtcReception])
 
   const previewTimelineAt = (t: number) => {
     if (followsLtc()) return
@@ -832,7 +880,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   const playheadX = Math.min(time, maxTime) * pxPerSec
   const ticks = Array.from({ length: Math.ceil(maxTime) + 1 }, (_, i) => i)
 
-  const isLtcLive = ltcActive && (ltcStatus === 'lock' || ltcStatus === 'freewheel')
+  const ltcStatus = ltcReception.status
   const sequenceEnd = Math.max(
     project.settings.timeline.startTime,
     0,
@@ -873,7 +921,7 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
         <div className="timeline-timecode" aria-label="Timecode hiện tại">
           <button
             type="button"
-            aria-label={ltcActive ? 'Tắt nhận LTC' : 'Bật nhận LTC'}
+            aria-label="Nhận timecode (LTC)"
             aria-pressed={ltcActive}
             onClick={() => setLtcActive(!followsLtc())}
             title={
@@ -881,16 +929,16 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
                 ? ltcMatched
                   ? 'Bấm để đồng bộ với bộ Timecode ngoài (LTC)'
                   : `Bấm để đồng bộ LTC (Timeline ${storedFps} fps sẽ theo LTC ${effectiveLtcFps} fps)`
-                : isLtcLive
-                  ? 'Đang kết nối bộ Timecode ngoài (Live) · Bấm để ngắt đồng bộ'
-                  : 'Không kết nối được bộ Timecode ngoài · Bấm để tắt đồng bộ'
+                : `${ltcStatusLabels[ltcStatus]} · Bấm để tắt nhận LTC`
             }
             className={`inline-flex h-6 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium transition ${
               !ltcActive
                 ? 'bg-white/[0.06] text-[#D2C2B3] hover:bg-white/[0.12] hover:text-fg'
-                : isLtcLive
+                : ltcStatus === 'lock'
                   ? 'bg-ok/15 text-ok shadow-[inset_0_0_0_1px_rgba(127,221,168,0.38)]'
-                  : 'bg-danger/15 text-danger shadow-[inset_0_0_0_1px_rgba(255,125,110,0.38)]'
+                  : ltcStatus === 'lost'
+                    ? 'bg-danger/15 text-danger shadow-[inset_0_0_0_1px_rgba(255,125,110,0.38)]'
+                    : 'bg-warn/15 text-warn'
             }`}
           >
             {!ltcActive ? (
@@ -898,15 +946,15 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
                 <Clock size={12} />
                 <span>Timecode</span>
               </>
-            ) : isLtcLive ? (
+            ) : ltcStatus === 'lock' ? (
               <>
                 <span className="size-2 rounded-full bg-ok shadow-[0_0_6px_rgba(127,221,168,0.85)]" />
-                <span>Live</span>
+                <span>{ltcStatusLabels[ltcStatus]}</span>
               </>
             ) : (
               <>
-                <WifiOff size={12} />
-                <span>Mất kết nối</span>
+                {ltcStatus === 'lost' ? <WifiOff size={12} /> : <Clock size={12} />}
+                <span>{ltcStatusLabels[ltcStatus]}</span>
               </>
             )}
           </button>

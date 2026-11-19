@@ -1472,15 +1472,16 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     );
     expect(ltcSettingsHtml).not.toContain('<select');
     expect(ltcSettingsHtml).toContain('60 fps');
-    expect(ltcSettingsHtml).toContain('không khớp chuẩn LTC SMPTE');
+    expect(ltcSettingsHtml).toContain('Theo Timeline (30 fps)');
+    expect(ltcSettingsHtml).toContain('aria-checked="false"');
     expect(ltcSettingsHtml).toContain('30 fps');
     const linkedSettings = renderToStaticMarkup(React.createElement(SettingsModal, {
       overrideState: { ...useAppStore.getState(), ltcActive: true },
     }));
-    expect(linkedSettings).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Tốc độ khung hình Timeline"/);
-    expect(linkedSettings).not.toMatch(/<button[^>]*disabled=""[^>]*aria-label="Tốc độ khung LTC In"/);
-    expect(linkedSettings).toContain('Đang link theo LTC: 30 fps');
-    expect(linkedSettings).toContain('Theo Timeline dùng 30 fps khi FPS đã lưu là 60.');
+    expect(linkedSettings).toMatch(/<output aria-label="Tốc độ khung hình Timeline"[^>]*>30 fps<\/output>/);
+    expect(linkedSettings).toMatch(/<button[^>]*aria-label="Tốc độ khung LTC In"/);
+    expect(linkedSettings).toContain('Đang link theo LTC (đã khóa)');
+    expect(linkedSettings).toContain('Timeline sẽ dùng 30 fps khi bật LTC');
     expect(linkedSettings).not.toContain('không khớp chuẩn LTC SMPTE');
 
     useAppStore.getState().updateOutputSettings({ driver: 'sacn' });
