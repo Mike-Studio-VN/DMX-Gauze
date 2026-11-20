@@ -1,6 +1,6 @@
 import { ch1Range, ch1ToPos, ch3ToCms, clamp, cmsToCh3, snapPos, speedCap, stepPositionM } from './convert'
 import { parseTc, snapDeltaToFps, snapTimeToFps } from './timecode'
-import type { ClipKeyframe, Command, CueButton, Fps, ModuleCfg, Snapshot, TimelineClip, TimelineKey } from './types'
+import type { ClipKeyframe, Command, CueButton, CueStep, Fps, ModuleCfg, Snapshot, TimelineClip, TimelineKey } from './types'
 
 const MIN_DURATION = 0.05
 
@@ -1598,4 +1598,53 @@ export function keyframeHeightFromInput(raw: number, view: 'm' | 'ch1', mod: Hei
   }
   const [lo, hi] = heightRange(mod, 'm')
   return { height: clamp(raw, lo, hi) }
+}
+
+// ---- Cue: áp dụng chung vị trí + tốc độ cho các module đang được tích ----
+
+/** Một bước cue từ số người dùng nhập theo `unit`: m kẹp [min, max] (2 chữ số), CH1 làm tròn + kẹp ch1Range của module. */
+export function cueStepFromInput(raw: number, unit: 'm' | 'ch1', m: Pick<ModuleCfg, 'id' | 'length' | 'minHeight' | 'maxHeight'>): CueStep {
+  if (unit === 'ch1') {
+    const [lo, hi] = ch1Range(m)
+    return { moduleId: m.id, position: clamp(Math.round(raw), lo, hi), unit: 'ch1' }
+  }
+  return { moduleId: m.id, position: Number(clamp(raw, m.minHeight, m.maxHeight).toFixed(2)) }
+}
+
+/**
+ * Áp CẢ HAI giá trị cho các module ĐANG TÍCH (có trong steps): `pos` (theo btn.positionUnit, lưu nguyên vào từng CueStep,
+ * kẹp theo min–max từng module) và `spd` (theo đơn vị đang chọn → speedUnit/speedValue của cue, chỉ khi Manual). null = không đổi.
+ * Module bỏ tích giữ nguyên. `clamped` = tên module bị kẹp.
+ */
+export function applyCueValues(
+  btn: CueButton,
+  modules: ReadonlyArray<ModuleCfg>,
+  input: { pos: number | null; spd: number | null },
+): { btn: CueButton; clamped: string[]; reason?: 'none-selected' | 'nothing' | 'auto-speed' } {
+  const modById = new Map(modules.map((m) => [m.id, m]))
+  if (!btn.steps.some((s) => modById.has(s.moduleId))) return { btn, clamped: [], reason: 'none-selected' }
+  const auto = btn.autoSpeedLimitCms !== undefined
+  const speedGiven = input.spd !== null && !auto
+  if (input.pos === null && !speedGiven) return { btn, clamped: [], reason: input.spd !== null ? 'auto-speed' : 'nothing' }
+  const unit = btn.positionUnit ?? 'm'
+  const clamped: string[] = []
+  let next = btn
+  if (input.pos !== null) {
+    const wanted = unit === 'ch1' ? Math.round(input.pos) : Number(input.pos.toFixed(2))
+    next = {
+      ...next,
+      steps: btn.steps.map((s) => {
+        const m = modById.get(s.moduleId)
+        if (!m) return s
+        const stored = cueStepFromInput(input.pos as number, unit, m)
+        if (stored.position !== wanted) clamped.push(m.name)
+        return stored
+      }),
+    }
+  }
+  if (speedGiven) {
+    const view = cueSpeedView(btn)
+    next = { ...next, speedUnit: view, speedValue: speedStoredFromInput(view, input.spd as number), speedView: view, autoSpeedLimitCms: undefined }
+  }
+  return { btn: next, clamped }
 }

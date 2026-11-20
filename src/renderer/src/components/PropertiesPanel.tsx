@@ -43,9 +43,11 @@ import {
   removeClipKeyframe,
   resolveClipBoundsNoOverlap,
   cmsToSeconds,
+  DEFAULT_MOTION_SPEED_CMS,
+  applyCueValues,
   cueRepDistanceCm,
+  defaultCueSpeedCms,
   cueSpeedView,
-  speedStoredFromInput,
   storedSpeedAsCms,
   speedDisplayValue,
   heightRange,
@@ -939,9 +941,13 @@ function CueButtonEditor({
   onBack: () => void
 }) {
   const heightUnit = btn.positionUnit ?? 'm'
-  const [globalHeight, setGlobalHeight] = useState('1')
+  // Ô áp dụng chung (số theo đơn vị đang chọn); null = để trống = không đổi trường đó.
+  const [applyPos, setApplyPos] = useState<number | null>(null)
+  const [applySpd, setApplySpd] = useState<number | null>(null)
+  const [applyWarn, setApplyWarn] = useState<string | null>(null)
+  // Cue: Auto = tốc độ tự tính/giới hạn theo cue mặc định (autoSpeedLimitCms); Manual = người dùng nhập.
+  const isAuto = btn.autoSpeedLimitCms !== undefined
   const stepById = new Map(btn.steps.map((s) => [s.moduleId, s]))
-  const refMod = modules[0] ?? { minHeight: 0, maxHeight: 1, length: 1 }
   const refMax = modules.find((m) => m.id === btn.steps[0]?.moduleId)?.maxSpeedCms ?? modules[0]?.maxSpeedCms ?? H2_MAX_SPEED_CMS
   const repDist = cueRepDistanceCm(btn.steps, modules, (id) => snapshotModules[id]?.pos)
   const speedView = cueSpeedView(btn)
@@ -966,10 +972,8 @@ function CueButtonEditor({
     storeFromInput(heightUnit === 'ch1' ? mToCh1(snapshotModules[m.id]?.pos ?? m.minHeight, m.length) : (snapshotModules[m.id]?.pos ?? m.minHeight), m)
   const switchHeightUnit = (nextUnit: 'm' | 'ch1') => {
     if (nextUnit === heightUnit) return
-    const cur = Number(globalHeight)
-    if (Number.isFinite(cur)) {
-      setGlobalHeight(nextUnit === 'ch1' ? String(mToCh1(cur, refMod.length)) : String(Number(ch1ToPos(clamp(Math.round(cur), 0, 255), refMod.length).toFixed(4))))
-    }
+    setApplyPos(null) // số đang chờ áp dụng thuộc đơn vị cũ
+    setApplyWarn(null)
     onSave({ ...btn, positionUnit: nextUnit === 'ch1' ? 'ch1' : undefined })
   }
 
@@ -1001,17 +1005,19 @@ function CueButtonEditor({
     onSave({ ...btn, steps: nextSteps })
   }
 
-  const applyAllSelectedLayersHeight = (rawVal: number) => {
-    const modById = new Map(modules.map((m) => [m.id, m]))
-    if (btn.steps.length > 0) {
-      const steps = btn.steps.map((s) => {
-        const m = modById.get(s.moduleId)
-        return m ? storeFromInput(rawVal, m) : s
-      })
-      onSave({ ...btn, steps })
+  // Áp dụng CẢ HAI giá trị cho module đang tích (logic ở applyCueValues): vị trí lưu nguyên theo đơn vị đang chọn, kẹp theo từng module.
+  const applyToSelected = () => {
+    const res = applyCueValues(btn, modules, { pos: applyPos, spd: applySpd })
+    if (res.reason) {
+      setApplyWarn(
+        res.reason === 'none-selected' ? 'Chưa tích module nào: tích layer/module rồi bấm Áp dụng.' : res.reason === 'auto-speed' ? 'Đang Auto: tốc độ chỉ đọc, chọn Manual để nhập.' : 'Chưa nhập giá trị nào.',
+      )
       return
     }
-    onSave({ ...btn, steps: modules.map((m) => storeFromInput(rawVal, m)) })
+    onSave(res.btn, `cue-apply-${btn.id}`)
+    setApplyPos(null)
+    setApplySpd(null)
+    setApplyWarn(res.clamped.length > 0 ? `${res.clamped.length} module bị kẹp theo min–max: ${res.clamped.slice(0, 4).join(', ')}${res.clamped.length > 4 ? '…' : ''}` : null)
   }
 
   return (
@@ -1051,9 +1057,48 @@ function CueButtonEditor({
       </label>
 
       <div className="space-y-1.5 border-b border-line pb-3">
-        <span className="text-[11px] text-[#C2B3A4]">Tốc độ / thời lượng chạy</span>
-        <div className="flex items-center gap-2">
-          <div className="kiln-seg flex-1" role="group" aria-label="Đơn vị tốc độ nút Cue">
+        <span className="text-[11px] text-[#C2B3A4]">Tốc độ &amp; vị trí chạy</span>
+        <div className="kiln-seg" role="group" aria-label="Chế độ tốc độ nút Cue">
+          {(['auto', 'manual'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              aria-pressed={(m === 'auto') === isAuto}
+              title={m === 'auto' ? 'Auto: tốc độ tự tính, giới hạn theo cue mặc định' : 'Manual: nhập tốc độ'}
+              onClick={() => {
+                if ((m === 'auto') === isAuto) return
+                if (m === 'auto') {
+                  const mods = btn.steps.length > 0 ? modules.filter((x) => stepById.has(x.id)) : modules
+                  onSave({ ...btn, speedUnit: 'cms', speedValue: defaultCueSpeedCms(mods), speedView: undefined, autoSpeedLimitCms: DEFAULT_MOTION_SPEED_CMS })
+                } else onSave({ ...btn, autoSpeedLimitCms: undefined })
+              }}
+              className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${(m === 'auto') === isAuto ? 'on' : ''}`}
+            >
+              {m === 'auto' ? 'Auto' : 'Manual'}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="kiln-seg min-w-0 flex-1" role="group" aria-label="Đơn vị vị trí">
+            {(
+              [
+                ['m', 'm'],
+                ['ch1', 'CH1'],
+              ] as const
+            ).map(([unit, label]) => (
+              <button
+                key={unit}
+                type="button"
+                onClick={() => switchHeightUnit(unit)}
+                aria-pressed={heightUnit === unit}
+                title="Chỉ đổi cách hiển thị: vị trí đã lưu không bị quy đổi cho tới khi bạn sửa ô"
+                className={`kiln-seg-btn h-7 min-w-0 flex-1 px-1 text-[11px] font-semibold ${heightUnit === unit ? 'on' : ''}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="kiln-seg min-w-0 flex-1" role="group" aria-label="Đơn vị tốc độ nút Cue">
             {(
               [
                 ['cms', 'cm/s'],
@@ -1067,30 +1112,76 @@ function CueButtonEditor({
                 aria-pressed={speedView === unit}
                 title="Chỉ đổi cách hiển thị: giá trị đã lưu không bị quy đổi cho tới khi bạn sửa ô"
                 onClick={() => {
-                  if (unit !== speedView) onSave({ ...btn, speedView: unit })
+                  if (unit !== speedView) {
+                    setApplySpd(null)
+                    onSave({ ...btn, speedView: unit })
+                  }
                 }}
-                className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${speedView === unit ? 'on' : ''}`}
+                className={`kiln-seg-btn h-7 min-w-0 flex-1 px-1 text-[11px] ${speedView === unit ? 'on' : ''}`}
               >
                 {label}
               </button>
             ))}
           </div>
-
-          <NumberField
-            key={`${btn.id}-${speedView}`}
-            min={speedView === 'ch3' ? 1 : 0.1}
-            max={speedView === 'ch3' ? 255 : undefined}
-            step={speedView === 'ch3' ? 1 : '0.5'}
-            integer={speedView === 'ch3' ? 'round' : undefined}
-            aria-label={`Giá trị tốc độ nút Cue (${speedView === 'cms' ? 'cm/s' : speedView === 'sec' ? 's' : 'CH3'})`}
-            value={speedShown}
-            onCommit={(v) => {
-              if (v === speedShown) return
-              onSave({ ...btn, speedUnit: speedView, speedValue: speedStoredFromInput(speedView, v), speedView, autoSpeedLimitCms: undefined }, `cue-spd-${btn.id}`)
-            }}
-            className="kiln-field h-8 w-24 px-3 text-right text-xs tabular-nums"
-          />
         </div>
+
+        <div className="flex items-center gap-1.5">
+          <label className="kiln-field flex h-8 min-w-0 flex-1 items-center gap-0.5 px-2" title="Vị trí áp cho các module đang tích (để trống = không đổi)">
+            <NumberField
+              key={`apos-${btn.id}-${heightUnit}`}
+              step={heightUnit === 'ch1' ? '1' : '0.1'}
+              integer={heightUnit === 'ch1' ? 'round' : undefined}
+              min="0"
+              max={heightUnit === 'ch1' ? '255' : undefined}
+              placeholder="vị trí"
+              aria-label={`Vị trí áp dụng cho module đang tích (${heightUnit === 'ch1' ? 'CH1' : 'm'})`}
+              value={applyPos}
+              onCommit={(v) => {
+                setApplyWarn(null)
+                setApplyPos(v)
+              }}
+              className="w-full min-w-0 bg-transparent text-right text-xs tabular-nums outline-none"
+            />
+            <span className="text-[10px] text-muted">{heightUnit === 'ch1' ? 'CH1' : 'm'}</span>
+          </label>
+          <label
+            className="kiln-field flex h-8 min-w-0 flex-1 items-center gap-0.5 px-2"
+            title={isAuto ? 'Auto: tốc độ tự tính, chỉ đọc (chọn Manual để nhập)' : 'Tốc độ của cue (để trống = không đổi)'}
+          >
+            <NumberField
+              key={`aspd-${btn.id}-${speedView}-${isAuto}`}
+              readOnly={isAuto}
+              tabIndex={isAuto ? -1 : 0}
+              min={speedView === 'ch3' ? 1 : 0.1}
+              max={speedView === 'ch3' ? 255 : undefined}
+              step={speedView === 'ch3' ? 1 : '0.5'}
+              integer={speedView === 'ch3' ? 'round' : undefined}
+              placeholder={speedShown === null ? '—' : String(speedShown)}
+              aria-label={`Tốc độ áp dụng (${speedView === 'cms' ? 'cm/s' : speedView === 'sec' ? 's' : 'CH3'})`}
+              value={isAuto ? speedShown : applySpd}
+              onCommit={(v) => {
+                setApplyWarn(null)
+                setApplySpd(v)
+              }}
+              className="w-full min-w-0 bg-transparent text-right text-xs tabular-nums outline-none"
+            />
+            <span className="text-[10px] text-muted">{speedView === 'cms' ? 'cm/s' : speedView === 'sec' ? 's' : 'CH3'}</span>
+          </label>
+        </div>
+        <button
+          type="button"
+          onClick={applyToSelected}
+          title="Áp cả vị trí và tốc độ đã nhập cho các module đang tích (ô trống = không đổi)"
+          className="kiln-btn kiln-btn-cue h-8 w-full justify-start px-3.5 text-[11.5px] font-semibold"
+        >
+          Áp dụng cho module đã tích
+        </button>
+        {applyWarn && (
+          <p className="flex items-start gap-1 text-[10.5px] text-warn">
+            <AlertTriangle size={11} className="mt-px shrink-0" />
+            {applyWarn}
+          </p>
+        )}
         {(btn.speedUnit === 'ch3' || speedView === 'ch3') && (
           <p className="text-[10.5px] text-muted tabular-nums">
             255 = {refMax} cm/s (module đầu tiên của cue)
@@ -1100,7 +1191,7 @@ function CueButtonEditor({
         )}
         {speedView !== btn.speedUnit && (
           <p className="text-[10.5px] text-muted">
-            Đã lưu theo {btn.speedUnit === 'cms' ? 'cm/s' : btn.speedUnit === 'sec' ? 's' : 'CH3'}; đang hiển thị quy đổi tạm, sửa ô để lưu theo đơn vị đang chọn.
+            Đã lưu theo {btn.speedUnit === 'cms' ? 'cm/s' : btn.speedUnit === 'sec' ? 's' : 'CH3'}; đang hiển thị quy đổi tạm, nhập số để lưu theo đơn vị đang chọn.
           </p>
         )}
       </div>
@@ -1133,55 +1224,6 @@ function CueButtonEditor({
             </button>
           </div>
 
-          <div className="kiln-seg" role="group" aria-label="Đơn vị vị trí">
-            {(
-              [
-                ['m', 'm'],
-                ['ch1', 'CH1'],
-              ] as const
-            ).map(([unit, label]) => (
-              <button
-                key={unit}
-                type="button"
-                onClick={() => switchHeightUnit(unit)}
-                aria-pressed={heightUnit === unit}
-                className={`kiln-seg-btn h-7 px-2.5 text-[11px] font-semibold ${heightUnit === unit ? 'on' : ''}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <div className="kiln-field flex h-8 w-24 items-center rounded-full px-2.5">
-            <NumberField
-              step={heightUnit === 'ch1' ? '1' : '0.1'}
-              integer={heightUnit === 'ch1' ? 'round' : undefined}
-              min="0"
-              max={heightUnit === 'ch1' ? '255' : undefined}
-              aria-label={`Chiều cao áp dụng cho các layer (${heightUnit === 'ch1' ? 'CH1' : 'm'})`}
-              value={globalHeight}
-              key={`${btn.id}-${heightUnit}`}
-              onCommit={(value) => setGlobalHeight(String(value))}
-              className="w-full min-w-0 border-0 bg-transparent text-center text-xs text-fg tabular-nums outline-none"
-            />
-            <button
-              type="button"
-              onClick={() => switchHeightUnit(heightUnit === 'm' ? 'ch1' : 'm')}
-              title="Đổi đơn vị m / CH1"
-              className="shrink-0 cursor-pointer pl-1 text-[11px] font-medium text-muted hover:text-fg"
-            >
-              {heightUnit === 'ch1' ? 'CH1' : 'm'}
-            </button>
-          </div>
-          <button
-            type="button"
-            onClick={() => applyAllSelectedLayersHeight(Number(globalHeight) || 0)}
-            className="kiln-btn kiln-btn-cue h-8 flex-1 justify-start px-3.5 text-[11.5px] font-semibold"
-          >
-            Áp dụng cho các layer
-          </button>
         </div>
 
         <div className="space-y-2.5">
