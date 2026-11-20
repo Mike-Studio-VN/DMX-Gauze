@@ -15,18 +15,11 @@ import {
 import { ARTNET_PORT, isLoopbackTarget, isValidIPv4 } from '@shared/dmx'
 import { DMX_TRANSPORT_RATES } from '@shared/dmxTransport'
 import { KINET_PORT, SACN_PORT, sacnMulticastIp } from '@shared/protocols'
-import {
-  FPS_OPTIONS,
-  LTC_FPS_OPTIONS,
-  formatTc,
-  isStandardLtcFps,
-  parseTc,
-  resolveLtcFps,
-} from '@shared/timecode'
-import type { DriverId, Fps, LtcFps } from '@shared/types'
+import type { DriverId } from '@shared/types'
 import { getBridge } from '../services/bridge'
 import { type SettingsTab, useAppStore } from '../store/useAppStore'
 import { KilnSelect, type KilnSelectOption } from './KilnSelect'
+import { LtcSettingsPanel } from './LtcSettingsPanel'
 
 const dmxRateOptions = DMX_TRANSPORT_RATES.map((hz) => ({
   value: String(hz),
@@ -37,18 +30,15 @@ export function SettingsModal(props: {
   overrideState?: Partial<ReturnType<typeof useAppStore.getState>>
 }) {
   const storeState = useAppStore()
+  const state = props.overrideState ? { ...storeState, ...props.overrideState } : storeState
   const {
     info,
     project,
-    ltcActive,
-    ltcDropFrame,
     snapshot,
     settingsOpen,
     settingsTab,
     setSettingsOpen,
     updateOutputSettings,
-    updateLtcSettings,
-    updateTimelineSettings,
     setLockValue,
     setAddressMode,
     pollNow,
@@ -56,18 +46,11 @@ export function SettingsModal(props: {
     notificationSettings,
     updateNotificationSettings,
     notify,
-  } = props.overrideState ? { ...storeState, ...props.overrideState } : storeState
+  } = state
 
   const out = project.settings.output
-  const tl = project.settings.timeline
-  const ltcMatched = isStandardLtcFps(tl.fps)
-  const effectiveLtcFps = resolveLtcFps(tl.fps, project.settings.ltc.fps)
-  const fps = ltcActive ? effectiveLtcFps : tl.fps
-  const dropFrame = ltcActive ? ltcDropFrame : undefined
   const [ipText, setIpText] = useState(out.ip)
   const [ipErr, setIpErr] = useState<string | null>(null)
-  const [startTcText, setStartTcText] = useState(() => formatTc(tl.startTime, fps, dropFrame))
-  const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([])
   const [serialPorts, setSerialPorts] = useState<string[]>([])
 
   const refreshSerialPorts = () => {
@@ -83,17 +66,7 @@ export function SettingsModal(props: {
   }, [out.ip, settingsOpen])
 
   useEffect(() => {
-    setStartTcText(formatTc(tl.startTime, fps, dropFrame))
-  }, [tl.startTime, fps, dropFrame, settingsOpen])
-
-  useEffect(() => {
-    if (!settingsOpen) return
-    refreshSerialPorts()
-    if (!navigator.mediaDevices?.enumerateDevices) return
-    navigator.mediaDevices
-      .enumerateDevices()
-      .then((list) => setAudioInputs(list.filter((d) => d.kind === 'audioinput')))
-      .catch(() => {})
+    if (settingsOpen) refreshSerialPorts()
   }, [settingsOpen])
 
   if (!settingsOpen) return null
@@ -106,16 +79,6 @@ export function SettingsModal(props: {
     }
     setIpErr(null)
     updateOutputSettings({ ip: nextIp.trim() })
-  }
-
-  const applyStartTc = () => {
-    const sec = parseTc(startTcText, fps, dropFrame)
-    if (sec === null) {
-      notify('Timecode không hợp lệ (định dạng hh:mm:ss:ff)', 'warn')
-      setStartTcText(formatTc(tl.startTime, fps, dropFrame))
-      return
-    }
-    updateTimelineSettings({ startTime: sec })
   }
 
   const nodes = snapshot?.status.nodes ?? []
@@ -274,7 +237,7 @@ export function SettingsModal(props: {
           </nav>
 
           {/* Nội dung phải */}
-          <div className="min-h-0 overflow-y-auto p-5 text-xs">
+          <div className={`min-h-0 overflow-y-auto p-5 text-xs ${tab === 'ltc' ? 'min-w-0' : ''}`}>
             {tab === 'network' && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between gap-2">
@@ -749,138 +712,7 @@ export function SettingsModal(props: {
               </div>
             )}
 
-            {tab === 'ltc' && (
-              <div className="space-y-4">
-                <div className="text-[11px] font-semibold tracking-wide text-muted uppercase">
-                  Đồng bộ Timecode &amp; LTC Audio
-                </div>
-
-                {!ltcActive && !ltcMatched && (
-                  <div className="flex items-start gap-2 rounded-xl bg-warn/10 px-3 py-2 text-[11px] text-warn shadow-[inset_0_0_0_1px_rgba(255,203,114,0.35)]">
-                    <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                    <div>
-                      <div className="font-semibold">Timeline {tl.fps} fps không khớp chuẩn LTC SMPTE</div>
-                      <div className="text-[#E7D4B5]">
-                        LTC In hỗ trợ 24 / 25 / 29.97 / 30 fps và đang dùng{' '}
-                        <strong className="kiln-readout">{effectiveLtcFps} fps</strong>.
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-[11px] leading-4 text-[#C2B3A4]">Tốc độ khung hình Timeline (FPS)</span>
-                    <KilnSelect
-                      ariaLabel="Tốc độ khung hình Timeline"
-                      tabular
-                      disabled={ltcActive}
-                      value={String(fps)}
-                      options={FPS_OPTIONS.map((f) => ({
-                        value: String(f),
-                        label: `${f} fps`,
-                        badge: f === 29.97 ? 'Drop Frame' : f > 30 ? 'High FPS' : undefined,
-                      }))}
-                      onChange={(val) => updateTimelineSettings({ fps: Number(val) as Fps })}
-                    />
-                    {ltcActive && (
-                      <span className="kiln-readout text-[11px]">Đang link theo LTC: {fps} fps</span>
-                    )}
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-[11px] leading-4 text-[#C2B3A4]">Tốc độ khung LTC In (chuẩn SMPTE)</span>
-                    <KilnSelect
-                      ariaLabel="Tốc độ khung LTC In"
-                      tabular
-                      value={project.settings.ltc.fps !== undefined ? String(project.settings.ltc.fps) : 'auto'}
-                      options={[
-                        {
-                          value: 'auto',
-                          label: ltcActive || ltcMatched ? 'Theo Timeline' : 'Giữ rate riêng',
-                          badge: `${resolveLtcFps(tl.fps)} fps`,
-                        },
-                        ...LTC_FPS_OPTIONS.map((f) => ({
-                          value: String(f),
-                          label: `${f} fps`,
-                          badge: f === 29.97 ? 'DF / NDF' : undefined,
-                        })),
-                      ]}
-                      onChange={(val) =>
-                        updateLtcSettings({ fps: val === 'auto' ? undefined : (Number(val) as LtcFps) })
-                      }
-                    />
-                    {ltcActive && !ltcMatched && (
-                      <span className="kiln-readout text-[11px]">Theo Timeline dùng 30 fps khi FPS đã lưu là {tl.fps}.</span>
-                    )}
-                  </div>
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-[11px] leading-4 text-[#C2B3A4]">Timecode bắt đầu (hh:mm:ss:ff)</span>
-                    <input
-                      value={startTcText}
-                      onChange={(e) => setStartTcText(e.target.value)}
-                      onBlur={applyStartTc}
-                      onKeyDown={(e) => e.key === 'Enter' && applyStartTc()}
-                      placeholder="00:00:00:00"
-                      className="kiln-field h-9 w-full px-3 font-mono text-xs tabular-nums"
-                    />
-                  </label>
-
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-[11px] leading-4 text-[#C2B3A4]">Thiết bị thu âm (Line-in / USB)</span>
-                    <KilnSelect
-                      ariaLabel="Thiết bị thu âm"
-                      value={project.settings.ltc.deviceId}
-                      options={[
-                        { value: '', label: 'Thiết bị mặc định hệ thống' },
-                        ...audioInputs.map((d) => ({
-                          value: d.deviceId,
-                          label: d.label || `Audio Input (${d.deviceId.slice(0, 6)})`,
-                        })),
-                      ]}
-                      onChange={(val) => updateLtcSettings({ deviceId: val })}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-[11px] leading-4 text-[#C2B3A4]">Kênh âm thanh</span>
-                    <KilnSelect
-                      ariaLabel="Kênh âm thanh"
-                      value={project.settings.ltc.channel}
-                      options={[
-                        { value: 'left', label: 'Trái (Left)' },
-                        { value: 'right', label: 'Phải (Right)' },
-                      ]}
-                      onChange={(val) => updateLtcSettings({ channel: val as 'left' | 'right' })}
-                    />
-                  </div>
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-[11px] leading-4 text-[#C2B3A4]">Freewheel khi mất tín hiệu (frames)</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="120"
-                      value={project.settings.ltc.freewheelFrames}
-                      onChange={(e) => {
-                        if (Number.isFinite(e.target.valueAsNumber)) {
-                          updateLtcSettings({ freewheelFrames: e.target.valueAsNumber })
-                        }
-                      }}
-                      className="kiln-field h-9 w-full px-3 text-xs tabular-nums"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-[11px] leading-4 text-[#C2B3A4]">Bù trễ (Offset frames)</span>
-                    <input
-                      type="number"
-                      min="-60"
-                      max="60"
-                      value={project.settings.ltc.offsetFrames}
-                      onChange={(e) => updateLtcSettings({ offsetFrames: Number(e.target.value) || 0 })}
-                      className="kiln-field h-9 w-full px-3 text-xs tabular-nums"
-                    />
-                  </label>
-                </div>
-              </div>
-            )}
+            {tab === 'ltc' && <LtcSettingsPanel state={state} />}
 
             {tab === 'notifications' && (
               <div className="space-y-4">
@@ -983,7 +815,9 @@ export function SettingsModal(props: {
 
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-line px-5 text-xs text-muted">
-          <span>Thay đổi được áp dụng và tự động lưu ngay</span>
+          <span>
+            {tab === 'ltc' ? 'Cấu hình tự lưu. Nhận LTC luôn tắt khi mở ứng dụng.' : 'Thay đổi được áp dụng và tự động lưu ngay'}
+          </span>
           <div className="flex items-center gap-2">
             <button
               type="button"
