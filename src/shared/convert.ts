@@ -25,6 +25,11 @@ export function posToCh1(pos: number, m: PosRange): number {
   return clamp(raw, lo, hi)
 }
 
+/** Vị trí (m) của một bước cue theo đơn vị đã lưu: ch1 → ch1ToPos (không kẹp min–max), m → nguyên số. */
+export function stepPositionM(step: { position: number; unit?: 'm' | 'ch1' }, length: number): number {
+  return step.unit === 'ch1' ? ch1ToPos(clamp(Math.round(step.position), 0, 255), length) : step.position
+}
+
 export function ch1ToPos(ch1: number, length: number): number {
   return Math.round((ch1 / 255) * length * 1e6) / 1e6 // bỏ nhiễu dấu phẩy động (1.4999999999999998)
 }
@@ -144,7 +149,7 @@ export function computeManualMotionProgress(
  * để slider chạy tiếp từ % đang tạm dừng thay vì nhảy về 0%.
  */
 export function resolveCueButtonBaselines(
-  steps: ReadonlyArray<{ moduleId: string; position: number }>,
+  steps: ReadonlyArray<{ moduleId: string; position: number; unit?: 'm' | 'ch1' }>,
   modules: ModuleCfg[],
   snapshot: Pick<Snapshot, 'modules'> | null,
   previous?: Record<string, ManualMotionBaseline> | null,
@@ -157,7 +162,7 @@ export function resolveCueButtonBaselines(
     const hi = Math.min(m.maxHeight, m.length)
     const lo = Math.min(Math.max(m.minHeight, 0), hi)
     const curPos = snapshot?.modules[m.id]?.pos ?? lo
-    const goal = clamp(s.position, lo, hi)
+    const goal = clamp(stepPositionM(s, m.length), lo, hi)
     const prev = previous?.[m.id]
     const sameGoal = prev !== undefined && Math.abs(prev.goal - goal) < 1e-4
     const minBound = Math.min(prev?.start ?? curPos, goal)

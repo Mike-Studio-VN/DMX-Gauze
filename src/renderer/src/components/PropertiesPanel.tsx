@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import { getBridge } from '../services/bridge'
 import { layerLoopAddress } from '@shared/addressing'
-import { ch1ToPos, ch3ToCms, clamp, cmsToCh3, speedCap } from '@shared/convert'
+import { ch1Range, ch1ToPos, ch3ToCms, clamp, cmsToCh3, speedCap, stepPositionM } from '@shared/convert'
 import { CH, H2_MAX_SPEED_CMS, MODULE_MAX_SPEED_LIMIT_CMS, SENT_CH4_PULSE_VALUE, SENT_PULSE_MS, addressRange } from '@shared/dmx'
 import { defaultLayerTransform, defaultModuleTransform } from '@shared/preset'
 import {
@@ -43,10 +43,10 @@ import {
   resolveClipBoundsNoOverlap,
   cmsToSeconds,
   cueRepDistanceCm,
-  cueSpeedDisplay,
-  cueSpeedFromInput,
-  cueSpeedSwitch,
   cueSpeedView,
+  speedStoredFromInput,
+  storedSpeedAsCms,
+  speedDisplayValue,
   momentSpeedValue,
   retimeSegmentToSpeed,
   representativeSegmentIndex,
@@ -58,7 +58,7 @@ import {
   updateClipKeyframeTimelineTime,
   updateClipStartTime,
 } from '@shared/timeline'
-import type { ClipKeyframe, CueButton, Layer, ModuleCfg, TimelineClip, Transform3D } from '@shared/types'
+import type { ClipKeyframe, CueButton, CueStep, Layer, ModuleCfg, TimelineClip, Transform3D } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 
 function TransformEditor({
@@ -439,7 +439,7 @@ function MomentEditor({
   const [draftTime, setDraftTime] = useState<{ id: string; raw: string } | null>(null)
   const [draftPct, setDraftPct] = useState<{ id: string; raw: string } | null>(null)
   const [draftSpd, setDraftSpd] = useState<{ id: string; unit: string; raw: string } | null>(null)
-  const pUnit = clip.speedUnit ?? 'cms'
+  const pUnit = clip.speedView ?? clip.speedUnit ?? 'cms'
   const pCap = speedCap(mod)
 
   const commitStartTime = (rawVal: number) => {
@@ -463,7 +463,7 @@ function MomentEditor({
     if (!Number.isFinite(raw)) return
     const ch3 = clamp(Math.round(raw), 1, 255)
     if (clip.speedMode === 'manual') {
-      onUpdate({ speedMode: 'manual', speedUnit: pUnit, speedValue: pUnit === 'ch3' ? ch3 : clamp(raw, 1, pCap) }, `momspd-${clip.id}`)
+      onUpdate({ speedMode: 'manual', speedUnit: pUnit, speedValue: pUnit === 'ch3' ? ch3 : clamp(raw, 1, pCap), speedView: pUnit }, `momspd-${clip.id}`)
     } else if (clip.speedMode === 'auto') {
       const patch = retimeSegmentToSpeed(clip, kfId, pUnit === 'ch3' ? ch3ToCms(ch3, pCap) : raw, mod, bounds)
       if (patch) onUpdate(patch, `kfspd-${kfId}`)
@@ -760,8 +760,16 @@ function MomentEditor({
                 ) : (
                   (() => {
                     const segIn = idx > 0 ? resolveClipSegmentSpeed(clip, sorted[idx - 1], kf, mod) : null
+                    // Manual + đã lưu CH3: hiện đúng CH3 đã nhập (không quy đổi qua cm/s).
+                    const exactCh3 = clip.speedMode === 'manual' && clip.speedUnit === 'ch3' && pUnit === 'ch3' && clip.speedValue !== undefined
                     const shownVal =
-                      segIn === null ? '—' : pUnit === 'cms' ? String(Number(segIn.cms.toFixed(1))) : String(cmsToCh3(segIn.cms, pCap))
+                      segIn === null
+                        ? '—'
+                        : exactCh3
+                          ? String(clamp(Math.round(clip.speedValue as number), 1, 255))
+                          : pUnit === 'cms'
+                            ? String(Number(segIn.cms.toFixed(1)))
+                            : String(cmsToCh3(segIn.cms, pCap))
                     const editableCell = segIn !== null && clip.speedMode !== undefined
                     const label = pUnit === 'cms' ? 'cm/s' : 'CH3'
                     const cellTitle =
@@ -895,7 +903,8 @@ function MomentSpeedEditor({
   const rep = segs[repIdx]
   const legacy = clip.speedMode === undefined
   const mode = clip.speedMode
-  const unit = clip.speedUnit ?? 'cms'
+  const unit = clip.speedView ?? clip.speedUnit ?? 'cms' // menu đang chọn (chỉ hiển thị)
+  const storedUnit = clip.speedUnit ?? 'cms'
   const clearPointSpeeds = sorted.map((k) => ({ ...k, speedMode: undefined, manualSpeedCms: undefined }))
   const apply = (patch: Partial<TimelineClip>) => onUpdate({ ...patch, keyframes: clearPointSpeeds }, `momspd-${clip.id}`)
   const repCms = rep.res.cms
@@ -903,26 +912,22 @@ function MomentSpeedEditor({
   const valueFor = (u: 'cms' | 'sec' | 'ch3', cms: number): number | null => momentSpeedValue(u, cms, rep.dist, cap)
   const setMode = (m: 'auto' | 'manual') => {
     if (m === mode) return
-    if (m === 'auto') apply({ speedMode: 'auto', speedUnit: unit, speedValue: undefined })
-    else apply({ speedMode: 'manual', speedUnit: unit, speedValue: valueFor(unit, repCms) ?? Number(repCms.toFixed(1)) })
+    if (m === 'auto') apply({ speedMode: 'auto', speedUnit: undefined, speedValue: undefined, speedView: unit })
+    else apply({ speedMode: 'manual', speedUnit: unit, speedValue: valueFor(unit, repCms) ?? Number(repCms.toFixed(1)), speedView: unit })
   }
+  // Đổi menu CHỈ đổi cách hiển thị: giá trị đã lưu (speedUnit + speedValue) không bị quy đổi/ghi đè cho tới khi sửa ô.
   const setUnit = (u: 'cms' | 'sec' | 'ch3') => {
-    if (u === unit) return
-    if (mode !== 'manual') {
-      onUpdate({ speedUnit: u }, `momunit-${clip.id}`) // Auto / moment cũ: chỉ đổi đơn vị hiển thị
-      return
-    }
-    const v = valueFor(u, repCms)
-    apply({ speedMode: 'manual', speedUnit: u, speedValue: v ?? (u === 'sec' ? clip.speedValue ?? 1 : Number(repCms.toFixed(1))) })
+    if (u !== unit) onUpdate({ speedView: u }, `momunit-${clip.id}`)
   }
+  const shownManual = mode === 'manual' && clip.speedValue !== undefined ? speedDisplayValue(unit, storedUnit, clip.speedValue, rep.dist, cap) : null
   const commit = (raw: number) => {
     if (!Number.isFinite(raw)) return
     const v = unit === 'ch3' ? clamp(Math.round(raw), 1, 255) : unit === 'cms' ? clamp(raw, 1, cap) : Math.max(0.05, raw)
-    if (v !== clip.speedValue) apply({ speedMode: 'manual', speedUnit: unit, speedValue: v })
+    if (v !== shownManual) apply({ speedMode: 'manual', speedUnit: unit, speedValue: v, speedView: unit }) // lưu NGUYÊN theo đơn vị đang chọn
   }
   const over = segs.some((s) => s.res.mode === 'manual' && s.res.overMax)
   const slow = segs.filter((s) => s.res.mode === 'manual' && s.res.tooSlow)
-  const cmsLabel = unit === 'ch3' ? `${ch3ToCms(clamp(Math.round(clip.speedValue ?? 0), 1, 255), cap).toFixed(1)} cm/s` : null
+  const cmsLabel = storedUnit === 'ch3' ? `${ch3ToCms(clamp(Math.round(clip.speedValue ?? 0), 1, 255), cap).toFixed(1)} cm/s` : null
   const editable = mode === 'manual'
   const readValue = valueFor(unit, repCms)
   const unitLabel = unit === 'cms' ? 'cm/s' : unit === 'sec' ? 's' : 'CH3'
@@ -946,12 +951,12 @@ function MomentSpeedEditor({
       {legacy && <p className="text-[10.5px] text-muted">Moment cũ: đang dùng tốc độ theo từng điểm. Chọn Auto/Manual để áp cho cả moment.</p>}
       {editable ? (
         <input
-          key={`${clip.id}-${unit}-${clip.speedValue}`}
+          key={`${clip.id}-${unit}-${storedUnit}-${clip.speedValue}`}
           type="number"
           min={unit === 'ch3' ? 1 : unit === 'sec' ? 0.05 : 1}
           max={unit === 'ch3' ? 255 : unit === 'cms' ? cap : undefined}
           step={unit === 'sec' ? 0.1 : 1}
-          defaultValue={clip.speedValue}
+          defaultValue={shownManual ?? ''}
           aria-label={unit === 'cms' ? 'Tốc độ chung (cm/s)' : unit === 'sec' ? 'Thời gian mỗi đoạn (s)' : 'CH3 chung (1–255)'}
           onBlur={(e) => commit(e.currentTarget.valueAsNumber)}
           onKeyDown={(e) => {
@@ -982,9 +987,10 @@ function MomentSpeedEditor({
       {mode === 'manual' && (
         <div className="space-y-1">
           <div className="text-[10.5px] text-muted tabular-nums">
-            {unit === 'cms' && `Mọi đoạn ${clip.speedValue ?? '—'} cm/s · CH3 ${cmsToCh3(clip.speedValue ?? 0, cap)}`}
-            {unit === 'ch3' && `Mọi đoạn CH3 ${clip.speedValue ?? '—'} ≈ ${cmsLabel} (255 = ${cap} cm/s)`}
-            {unit === 'sec' && `Mỗi đoạn đi trong ${clip.speedValue ?? '—'} s (cm/s = quãng ÷ s; không dời điểm)`}
+            {storedUnit === 'cms' && `Đã lưu: mọi đoạn ${clip.speedValue ?? '—'} cm/s`}
+            {storedUnit === 'ch3' && `Đã lưu: mọi đoạn CH3 ${clip.speedValue ?? '—'} ≈ ${cmsLabel} (255 = ${cap} cm/s)`}
+            {storedUnit === 'sec' && `Đã lưu: mỗi đoạn đi trong ${clip.speedValue ?? '—'} s (cm/s = quãng ÷ s; không dời điểm)`}
+            {unit !== storedUnit && ' · đang hiển thị quy đổi tạm, sửa ô để lưu theo đơn vị đang chọn'}
           </div>
           <div className="text-[10.5px] text-muted tabular-nums">
             Đại diện P{repIdx + 1}→P{repIdx + 2} ({rep.dist.toFixed(1)} cm): {rep.res.cms.toFixed(1)} cm/s · {cmsToSeconds(rep.dist, rep.res.cms)?.toFixed(2) ?? '—'} s · CH3 {cmsToCh3(rep.res.cms, cap)}
@@ -1027,15 +1033,30 @@ function CueButtonEditor({
 }) {
   const heightUnit = btn.positionUnit ?? 'm'
   const [globalHeight, setGlobalHeight] = useState('1')
-  const stepMap = new Map(btn.steps.map((s) => [s.moduleId, s.position]))
+  const stepById = new Map(btn.steps.map((s) => [s.moduleId, s]))
   const refMod = modules[0] ?? { minHeight: 0, maxHeight: 1, length: 1 }
   const refMax = modules.find((m) => m.id === btn.steps[0]?.moduleId)?.maxSpeedCms ?? modules[0]?.maxSpeedCms ?? H2_MAX_SPEED_CMS
   const repDist = cueRepDistanceCm(btn.steps, modules, (id) => snapshotModules[id]?.pos)
   const speedView = cueSpeedView(btn)
-  const speedShown = cueSpeedDisplay(btn, refMax, repDist)
+  const speedShown = speedDisplayValue(speedView, btn.speedUnit, btn.speedValue, repDist, refMax)
 
-  // Đơn vị vị trí chỉ là cách hiển thị/nhập: step.position luôn là m. CH1 = round(m / length × 255).
+  // Giá trị lưu GIỮ NGUYÊN theo đơn vị nhập (step.unit); đổi menu m/CH1 chỉ đổi hiển thị cho tới khi sửa ô. CH1 = round(m ÷ length × 255).
   const mToCh1 = (m: number, length: number) => clamp(Math.round((m / Math.max(0.001, length)) * 255), 0, 255)
+  const stepDisplay = (step: CueStep, m: ModuleCfg): number =>
+    (step.unit ?? 'm') === heightUnit
+      ? step.position
+      : heightUnit === 'ch1'
+        ? mToCh1(stepPositionM(step, m.length), m.length)
+        : Number(stepPositionM(step, m.length).toFixed(3))
+  const storeFromInput = (raw: number, m: ModuleCfg): CueStep => {
+    if (heightUnit === 'ch1') {
+      const [lo, hi] = ch1Range(m)
+      return { moduleId: m.id, position: clamp(Math.round(raw), lo, hi), unit: 'ch1' }
+    }
+    return { moduleId: m.id, position: Number(clamp(raw, m.minHeight, m.maxHeight).toFixed(2)) }
+  }
+  const currentStep = (m: ModuleCfg): CueStep =>
+    storeFromInput(heightUnit === 'ch1' ? mToCh1(snapshotModules[m.id]?.pos ?? m.minHeight, m.length) : (snapshotModules[m.id]?.pos ?? m.minHeight), m)
   const switchHeightUnit = (nextUnit: 'm' | 'ch1') => {
     if (nextUnit === heightUnit) return
     const cur = Number(globalHeight)
@@ -1047,58 +1068,43 @@ function CueButtonEditor({
 
   const toggleModule = (m: ModuleCfg) => {
     const exists = btn.steps.some((s) => s.moduleId === m.id)
-    const steps = exists
-      ? btn.steps.filter((s) => s.moduleId !== m.id)
-      : [...btn.steps, { moduleId: m.id, position: Number((snapshotModules[m.id]?.pos ?? m.minHeight).toFixed(2)) }]
+    const steps = exists ? btn.steps.filter((s) => s.moduleId !== m.id) : [...btn.steps, currentStep(m)]
     onSave({ ...btn, steps })
   }
 
   const setModuleHeight = (m: ModuleCfg, rawPos: number) => {
-    // CH1 nhập: giữ 4 chữ số để m ↔ CH1 khớp hai chiều (0,01 m ≈ 2,5 bước CH1 với length 1 m).
-    const pos = Number(clamp(rawPos, m.minHeight, m.maxHeight).toFixed(heightUnit === 'ch1' ? 4 : 2))
+    const next = storeFromInput(rawPos, m)
     const exists = btn.steps.some((s) => s.moduleId === m.id)
-    const steps = exists
-      ? btn.steps.map((s) => (s.moduleId === m.id ? { ...s, position: pos } : s))
-      : [...btn.steps, { moduleId: m.id, position: pos }]
+    const steps = exists ? btn.steps.map((s) => (s.moduleId === m.id ? next : s)) : [...btn.steps, next]
     onSave({ ...btn, steps }, `cue-mod-${btn.id}-${m.id}`)
   }
 
   const toggleLayerInButton = (layerId: string) => {
     const mods = modules.filter((m) => m.layerId === layerId)
     const modIds = new Set(mods.map((m) => m.id))
-    const allChecked = mods.length > 0 && mods.every((m) => stepMap.has(m.id))
+    const allChecked = mods.length > 0 && mods.every((m) => stepById.has(m.id))
     if (allChecked) {
       onSave({ ...btn, steps: btn.steps.filter((s) => !modIds.has(s.moduleId)) })
       return
     }
     const nextSteps = [...btn.steps]
     for (const m of mods) {
-      if (!nextSteps.some((s) => s.moduleId === m.id)) {
-        nextSteps.push({ moduleId: m.id, position: Number((snapshotModules[m.id]?.pos ?? m.minHeight).toFixed(2)) })
-      }
+      if (!nextSteps.some((s) => s.moduleId === m.id)) nextSteps.push(currentStep(m))
     }
     onSave({ ...btn, steps: nextSteps })
   }
 
   const applyAllSelectedLayersHeight = (rawVal: number) => {
     const modById = new Map(modules.map((m) => [m.id, m]))
-    const toTargetHeight = (m: ModuleCfg) => {
-      const nextPos = heightUnit === 'ch1' ? ch1ToPos(clamp(Math.round(rawVal), 0, 255), m.length) : rawVal
-      return Number(clamp(nextPos, m.minHeight, m.maxHeight).toFixed(heightUnit === 'ch1' ? 4 : 2))
-    }
     if (btn.steps.length > 0) {
       const steps = btn.steps.map((s) => {
         const m = modById.get(s.moduleId)
-        return m ? { ...s, position: toTargetHeight(m) } : s
+        return m ? storeFromInput(rawVal, m) : s
       })
       onSave({ ...btn, steps })
       return
     }
-    const steps = modules.map((m) => ({
-      moduleId: m.id,
-      position: toTargetHeight(m),
-    }))
-    onSave({ ...btn, steps })
+    onSave({ ...btn, steps: modules.map((m) => storeFromInput(rawVal, m)) })
   }
 
   return (
@@ -1147,28 +1153,24 @@ function CueButtonEditor({
                 ['sec', 's'],
                 ['ch3', 'CH3'],
               ] as const
-            ).map(([unit, label]) => {
-              const patch = cueSpeedSwitch(btn, unit, repDist)
-              return (
-                <button
-                  key={unit}
-                  type="button"
-                  disabled={patch === null}
-                  title={patch === null ? 'Chưa đổi được: quãng đường các module = 0' : undefined}
-                  aria-pressed={speedView === unit}
-                  onClick={() => {
-                    if (patch && unit !== speedView) onSave({ ...btn, ...patch, autoSpeedLimitCms: undefined })
-                  }}
-                  className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] disabled:opacity-40 ${speedView === unit ? 'on' : ''}`}
-                >
-                  {label}
-                </button>
-              )
-            })}
+            ).map(([unit, label]) => (
+              <button
+                key={unit}
+                type="button"
+                aria-pressed={speedView === unit}
+                title="Chỉ đổi cách hiển thị: giá trị đã lưu không bị quy đổi cho tới khi bạn sửa ô"
+                onClick={() => {
+                  if (unit !== speedView) onSave({ ...btn, speedView: unit })
+                }}
+                className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${speedView === unit ? 'on' : ''}`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
           <input
-            key={`${btn.id}-${speedView}-${speedShown}`}
+            key={`${btn.id}-${speedView}-${btn.speedUnit}-${btn.speedValue}`}
             type="number"
             min={speedView === 'ch3' ? 1 : '0.5'}
             max={speedView === 'ch3' ? 255 : undefined}
@@ -1178,7 +1180,8 @@ function CueButtonEditor({
             onBlur={(e) => {
               const v = e.currentTarget.valueAsNumber
               if (!Number.isFinite(v) || v === speedShown) return
-              onSave({ ...btn, ...cueSpeedFromInput(btn, v, refMax), autoSpeedLimitCms: undefined }, `cue-spd-${btn.id}`)
+              // Lưu NGUYÊN theo đơn vị đang chọn (CH3 nhập 100 lưu 100, không qua cm/s).
+              onSave({ ...btn, speedUnit: speedView, speedValue: speedStoredFromInput(speedView, v), speedView, autoSpeedLimitCms: undefined }, `cue-spd-${btn.id}`)
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') e.currentTarget.blur()
@@ -1186,9 +1189,16 @@ function CueButtonEditor({
             className="kiln-field h-8 w-24 px-3 text-right text-xs tabular-nums"
           />
         </div>
-        {speedView === 'ch3' && (
+        {(btn.speedUnit === 'ch3' || speedView === 'ch3') && (
           <p className="text-[10.5px] text-muted tabular-nums">
-            ≈ {btn.speedValue.toFixed(1)} cm/s (255 = {refMax} cm/s của module đầu tiên)
+            255 = {refMax} cm/s (module đầu tiên của cue)
+            {storedSpeedAsCms(btn.speedUnit, btn.speedValue, repDist, refMax) !== null &&
+              ` · đã lưu ≈ ${Number(storedSpeedAsCms(btn.speedUnit, btn.speedValue, repDist, refMax)!.toFixed(1))} cm/s`}
+          </p>
+        )}
+        {speedView !== btn.speedUnit && (
+          <p className="text-[10.5px] text-muted">
+            Đã lưu theo {btn.speedUnit === 'cms' ? 'cm/s' : btn.speedUnit === 'sec' ? 's' : 'CH3'}; đang hiển thị quy đổi tạm, sửa ô để lưu theo đơn vị đang chọn.
           </p>
         )}
       </div>
@@ -1205,10 +1215,7 @@ function CueButtonEditor({
               onClick={() =>
                 onSave({
                   ...btn,
-                  steps: modules.map((m) => ({
-                    moduleId: m.id,
-                    position: Number((stepMap.get(m.id) ?? snapshotModules[m.id]?.pos ?? m.minHeight).toFixed(2)),
-                  })),
+                  steps: modules.map((m) => stepById.get(m.id) ?? currentStep(m)),
                 })
               }
               className="kiln-btn kiln-btn-cue h-7 px-3 text-[11px]"
@@ -1277,7 +1284,7 @@ function CueButtonEditor({
         <div className="space-y-2.5">
           {layers.map((layer) => {
             const mods = modules.filter((m) => m.layerId === layer.id)
-            const selectedCount = mods.filter((m) => stepMap.has(m.id)).length
+            const selectedCount = mods.filter((m) => stepById.has(m.id)).length
             const allChecked = mods.length > 0 && selectedCount === mods.length
 
             return (
@@ -1299,9 +1306,10 @@ function CueButtonEditor({
 
                 <div className="space-y-1.5">
                   {mods.map((m) => {
-                    const checked = stepMap.has(m.id)
-                    const pos = stepMap.get(m.id) ?? m.minHeight
-                    const displayVal = heightUnit === 'ch1' ? mToCh1(pos, m.length) : pos
+                    const checked = stepById.has(m.id)
+                    const step = stepById.get(m.id)
+                    const pos = step ? stepPositionM(step, m.length) : m.minHeight
+                    const displayVal = step ? stepDisplay(step, m) : heightUnit === 'ch1' ? mToCh1(m.minHeight, m.length) : m.minHeight
                     return (
                       <div
                         key={m.id}
