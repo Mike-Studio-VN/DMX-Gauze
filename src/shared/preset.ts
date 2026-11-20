@@ -1,5 +1,5 @@
 import { autoAssign } from './addressing'
-import { ARTNET_PORT, DEFAULT_SPEED, DEFAULT_TARGET_IP, H2_MAX_SPEED_CMS, LOCK_VALUE } from './dmx'
+import { ARTNET_PORT, DEFAULT_SPEED, DEFAULT_TARGET_IP, H2_MAX_SPEED_CMS, LOCK_VALUE, MODULE_MAX_SPEED_LIMIT_CMS } from './dmx'
 import { DEFAULT_DMX_TRANSPORT_HZ, normalizeDmxTransportRate } from './dmxTransport'
 import { KINET_PORT, SACN_PORT, defaultPortForDriver } from './protocols'
 import { FPS_OPTIONS, LTC_FPS_OPTIONS } from './timecode'
@@ -251,7 +251,7 @@ export function normalizeProject(raw: unknown): Project {
       minHeight,
       maxHeight: Math.min(length, maxHeight),
       startAddress: reqFinite(item.startAddress, `modules[${idx}].startAddress`, 1, 509, true),
-      maxSpeedCms: reqFinite(item.maxSpeedCms, `modules[${idx}].maxSpeedCms`, 1, 10000),
+      maxSpeedCms: reqFinite(item.maxSpeedCms, `modules[${idx}].maxSpeedCms`, 1, MODULE_MAX_SPEED_LIMIT_CMS),
       // fineTune (±255 bước, v1.0.4) bị bỏ qua. homeOffsetMm (v1.0.5–1.0.7) được giữ nguyên nhưng không còn tác dụng.
       ...(item.ch2Fine === undefined ? {} : { ch2Fine: reqFinite(item.ch2Fine, `modules[${idx}].ch2Fine`, 0, 255, true) }),
       ...(item.homeOffsetMm === undefined
@@ -344,7 +344,7 @@ export function normalizeProject(raw: unknown): Project {
         duration,
         curveMode: c.curveMode,
         ...(c.autoSpeedLimitCms === undefined ? {} : {
-          autoSpeedLimitCms: reqFinite(c.autoSpeedLimitCms, `clips[${idx}].autoSpeedLimitCms`, 1, H2_MAX_SPEED_CMS),
+          autoSpeedLimitCms: reqFinite(c.autoSpeedLimitCms, `clips[${idx}].autoSpeedLimitCms`, 1, MODULE_MAX_SPEED_LIMIT_CMS),
         }),
         ...parseClipSpeed(c, `clips[${idx}]`),
         keyframes,

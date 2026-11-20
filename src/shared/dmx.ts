@@ -8,6 +8,8 @@ export const SENT_PULSE_MS = 500
 export const DEFAULT_SPEED = 100
 /** Tốc độ tối đa MẶC ĐỊNH cho module mới (H2, cm/s). Thang CH3 thực tế lấy từ `maxSpeedCms` của từng module (255 = maxSpeedCms). */
 export const H2_MAX_SPEED_CMS = 120
+/** Trần hợp lý cho ô Tốc độ max của module (cm/s), khớp validate preset 1..10000. Trên H2_MAX_SPEED_CMS chỉ để test. */
+export const MODULE_MAX_SPEED_LIMIT_CMS = 10000
 export const DMX_UNIVERSE_SIZE = 512
 export const DEFAULT_TARGET_IP = '255.255.255.255'
 export const ARTNET_PORT = 6454
