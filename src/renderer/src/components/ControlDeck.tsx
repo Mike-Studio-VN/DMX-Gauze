@@ -277,8 +277,8 @@ export function ModeButtons(props: {
     setLastFiredButton(b.id, baselines)
     for (const s of b.steps) {
       if (cueRun.current !== run) break
-      // Tốc độ của module này: riêng của bước (nếu có, chỉ khi Manual) hoặc tốc độ chung của cue.
-      const eff = b.autoSpeedLimitCms !== undefined ? { unit: b.speedUnit, value: b.speedValue } : stepSpeed(b, s)
+      // Cue luôn Manual: tốc độ của module này = riêng của bước (nếu có) hoặc tốc độ chung của cue; không còn giới hạn auto.
+      const eff = stepSpeed(b, s)
       let speedVal = eff.value
       if (eff.unit === 'sec' && isResumingSameCue) {
         const base = baselines[s.moduleId]
@@ -296,7 +296,7 @@ export function ModeButtons(props: {
         ids: [s.moduleId],
         // CH1 nhập thẳng → target {ch1} (đúng byte, kẹp theo min–max); CH3 nhập thẳng → unit 'ch3' (đúng byte, 1..255).
         target: s.unit === 'ch1' ? { ch1: s.position } : s.position,
-        speed: { unit: eff.unit, value: speedVal, limitCms: b.autoSpeedLimitCms },
+        speed: { unit: eff.unit, value: speedVal },
       }, { source: 'buttons' })
       if (!res.ok) break
     }

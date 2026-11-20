@@ -320,16 +320,6 @@ export function normalizeProject(raw: unknown): Project {
             ? { positionUnit: 'ch1' as const }
             : failProject(`buttons[${idx}].positionUnit phải là 'm' hoặc 'ch1'`)),
         ...(speedView === undefined ? {} : { speedView }),
-        ...(b.manualSpeed === undefined
-          ? {}
-          : isRecord(b.manualSpeed) && reqSpeedUnit(b.manualSpeed.unit, `buttons[${idx}].manualSpeed.unit`) !== undefined
-            ? {
-                manualSpeed: {
-                  unit: b.manualSpeed.unit as SpeedUnitId,
-                  value: reqFinite(b.manualSpeed.value, `buttons[${idx}].manualSpeed.value`, 0.01, b.manualSpeed.unit === 'ch3' ? 255 : undefined),
-                },
-              }
-            : failProject(`buttons[${idx}].manualSpeed không hợp lệ`)),
         ...(b.autoSpeedLimitCms === undefined ? {} : {
           autoSpeedLimitCms: reqFinite(b.autoSpeedLimitCms, `buttons[${idx}].autoSpeedLimitCms`, 1, DEFAULT_MOTION_SPEED_CMS),
         }),
