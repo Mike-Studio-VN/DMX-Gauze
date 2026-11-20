@@ -1664,6 +1664,44 @@ describe('Đơn vị tốc độ: moment (Auto/Manual luôn hiện) và cue (m|C
     expect(h).toMatch(/aria-label="Độ cao P3 \(CH1\)"[^>]*value="50"/); // 0,5 m quy đổi tạm
   });
 
+  it('Auto: ô tốc độ readOnly, ô độ cao/thời điểm vẫn sửa được; Manual: tất cả sửa được', () => {
+    const ro = (h: string, label: string) => new RegExp(`<input[^>]*readOnly=""[^>]*aria-label="${label}"`).test(h);
+    const editable = (h: string, label: string) => new RegExp(`<input(?![^>]*readOnly)[^>]*aria-label="${label}"`).test(h);
+    const auto = html(clipWith({ speedMode: 'auto', speedUnit: 'cms', speedView: 'cms' }));
+    expect(ro(auto, 'cm/s tới P2')).toBe(true);
+    expect(ro(auto, 'cm/s tới P3')).toBe(true);
+    expect(editable(auto, 'Độ cao P2 \\(m\\)')).toBe(true);
+    const autoCh3 = html(clipWith({ speedMode: 'auto', speedView: 'ch3' }));
+    expect(ro(autoCh3, 'CH3 tới P2')).toBe(true);
+    const autoCh1 = html(clipWith({ speedMode: 'auto', positionUnit: 'ch1' }));
+    expect(editable(autoCh1, 'Độ cao P2 \\(CH1\\)')).toBe(true);
+    // đơn vị s ở Auto: thời điểm vẫn sửa được
+    expect(html(clipWith({ speedMode: 'auto', speedView: 'sec' }))).toContain('Thời gian của điểm trên Timeline (s)');
+    const manual = html(clipWith({ speedMode: 'manual', speedUnit: 'cms', speedValue: 40 }));
+    expect(editable(manual, 'cm/s tới P2')).toBe(true);
+    expect(editable(manual, 'Độ cao P2 \\(m\\)')).toBe(true);
+    // nút đơn vị vẫn bấm được ở Auto (không disabled)
+    expect(auto).not.toMatch(/<button[^>]*disabled=""[^>]*>CH3</);
+  });
+
+  it('cue: Auto → ô tốc độ readOnly, ô vị trí sửa được; Manual → cả hai sửa được; Auto/Manual giữ giá trị', () => {
+    setupBrowserEnv();
+    const project = createDefaultProject();
+    const modId = project.modules[0].id;
+    const render = (over: object) => {
+      project.buttons = [{ ...project.buttons[0], steps: [{ moduleId: modId, position: 0.5 }], speedUnit: 'cms', speedValue: 30, ...over }];
+      return renderToStaticMarkup(
+        React.createElement(PropertiesPanel, { overrideState: { ...useAppStore.getState(), project, selectedButtonId: project.buttons[0].id, selectedClipId: null, selectedClipIds: [], selectedIds: [], selectedLayerId: null } }),
+      );
+    };
+    const auto = render({ autoSpeedLimitCms: 50 });
+    expect(auto).toMatch(/<input[^>]*readOnly=""[^>]*aria-label="Tốc độ áp dụng \(cm\/s\)"/);
+    expect(auto).toMatch(/<input(?![^>]*readOnly)[^>]*aria-label="Vị trí áp dụng cho module đang tích \(m\)"/);
+    const manual = render({ autoSpeedLimitCms: undefined });
+    expect(manual).toMatch(/<input(?![^>]*readOnly)[^>]*aria-label="Tốc độ áp dụng \(cm\/s\)"/);
+    expect(manual).toMatch(/<input(?![^>]*readOnly)[^>]*aria-label="Vị trí áp dụng cho module đang tích \(m\)"/);
+  });
+
   it('cue: hiện m|CH1 và cm/s|s|CH3; CH1 lưu lại và hiện tương đương m', () => {
     setupBrowserEnv();
     const project = createDefaultProject();

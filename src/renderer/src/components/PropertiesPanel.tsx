@@ -45,6 +45,7 @@ import {
   cmsToSeconds,
   DEFAULT_MOTION_SPEED_CMS,
   applyCueValues,
+  cueModeSwitch,
   cueRepDistanceCm,
   defaultCueSpeedCms,
   cueSpeedView,
@@ -54,6 +55,7 @@ import {
   keyframeCh1,
   keyframeHeightDisplay,
   keyframeHeightFromInput,
+  momentModePatch,
   momentSpeedValue,
   representativeSegmentIndex,
   resolveClipSegmentSpeed,
@@ -849,8 +851,10 @@ function momentSpeedPanels({
   const valueFor = (u: 'cms' | 'sec' | 'ch3', cms: number): number | null => momentSpeedValue(u, cms, rep.dist, cap)
   const setMode = (m: 'auto' | 'manual') => {
     if (m === mode) return
-    if (m === 'auto') apply({ speedMode: 'auto', speedUnit: undefined, speedValue: undefined, speedView: unit })
-    else apply({ speedMode: 'manual', speedUnit: unit, speedValue: valueFor(unit, repCms) ?? Number(repCms.toFixed(1)), speedView: unit })
+    // Auto giữ speedUnit/speedValue đã nhập; Manual dùng lại giá trị đó (chưa có thì lấy giá trị tự tính hiện tại).
+    const patch = momentModePatch(clip, m, { unit, value: valueFor(unit, repCms) ?? Number(repCms.toFixed(1)) })
+    if (m === 'auto') onUpdate({ speedMode: 'auto', speedView: unit, keyframes: clearPointSpeeds }, `momspd-${clip.id}`)
+    else apply({ ...patch, speedView: unit })
   }
   // Đổi menu CHỈ đổi cách hiển thị: giá trị đã lưu (speedUnit + speedValue) không bị quy đổi/ghi đè cho tới khi sửa ô.
   const setUnit = (u: 'cms' | 'sec' | 'ch3') => {
@@ -1067,10 +1071,8 @@ function CueButtonEditor({
               title={m === 'auto' ? 'Auto: tốc độ tự tính, giới hạn theo cue mặc định' : 'Manual: nhập tốc độ'}
               onClick={() => {
                 if ((m === 'auto') === isAuto) return
-                if (m === 'auto') {
-                  const mods = btn.steps.length > 0 ? modules.filter((x) => stepById.has(x.id)) : modules
-                  onSave({ ...btn, speedUnit: 'cms', speedValue: defaultCueSpeedCms(mods), speedView: undefined, autoSpeedLimitCms: DEFAULT_MOTION_SPEED_CMS })
-                } else onSave({ ...btn, autoSpeedLimitCms: undefined })
+                const mods = btn.steps.length > 0 ? modules.filter((x) => stepById.has(x.id)) : modules
+                onSave(cueModeSwitch(btn, m, defaultCueSpeedCms(mods), DEFAULT_MOTION_SPEED_CMS))
               }}
               className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${(m === 'auto') === isAuto ? 'on' : ''}`}
             >

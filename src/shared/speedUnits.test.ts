@@ -19,6 +19,8 @@ import {
   keyframeHeightFromInput,
   mToCh1Raw,
   applyCueValues,
+  cueModeSwitch,
+  momentModePatch,
   updateClipKeyframeHeight,
 } from './timeline'
 import type { CueButton, ModuleCfg, TimelineClip } from './types'
@@ -340,5 +342,44 @@ describe('cue: áp dụng chung vị trí + tốc độ cho module đang tích',
     const back = normalizeProject(JSON.parse(JSON.stringify(normalizeProject(p))))
     expect(back.buttons[0].steps[0]).toMatchObject({ position: 128, unit: 'ch1' })
     expect(back.buttons[1].steps.every((s) => s.unit === undefined)).toBe(true)
+  })
+})
+
+describe('Auto ⇄ Manual không mất giá trị Manual đã nhập', () => {
+  it('moment: Auto giữ speedUnit/speedValue; về Manual dùng lại đúng giá trị (CH3 100 vẫn 100)', () => {
+    const manual = { speedMode: 'manual' as const, speedUnit: 'ch3' as const, speedValue: 100 }
+    const toAuto = momentModePatch(manual, 'auto', { unit: 'cms', value: 25 })
+    expect(toAuto).toEqual({ speedMode: 'auto' }) // không đụng speedUnit/speedValue ⇒ giữ nguyên
+    const asAuto = { ...manual, ...toAuto }
+    expect(momentModePatch(asAuto, 'manual', { unit: 'cms', value: 25 })).toEqual({ speedMode: 'manual', speedUnit: 'ch3', speedValue: 100 })
+    // chưa từng nhập: lấy giá trị tự tính
+    expect(momentModePatch({ speedMode: 'auto' }, 'manual', { unit: 'cms', value: 25 })).toEqual({ speedMode: 'manual', speedUnit: 'cms', speedValue: 25 })
+  })
+  it('moment: lưu/đọc giữ giá trị Manual khi đang Auto', () => {
+    const p = createDefaultProject()
+    p.clips = [{ ...clip(), speedMode: 'auto', speedUnit: 'ch3', speedValue: 100 }]
+    const back = normalizeProject(JSON.parse(JSON.stringify(normalizeProject(p))))
+    expect(back.clips?.[0]).toMatchObject({ speedMode: 'auto', speedUnit: 'ch3', speedValue: 100 })
+    // planner ở Auto bỏ qua giá trị đã cất
+    const m = { ...mod(120), startAddress: 1 }
+    const cmd = planTimelineFollow([m], [back.clips![0]], [], 10, 0.06, null, new LinearFollowPlanner()).commands[0]
+    expect(cmd).toMatchObject({ speed: { unit: 'cms' } })
+  })
+  it('cue: Auto cất tốc độ Manual; về Manual khôi phục đúng đơn vị + số; round-trip', () => {
+    const b: CueButton = { id: 'q', name: 'Q', steps: [], speedUnit: 'ch3', speedValue: 100 }
+    const auto = cueModeSwitch(b, 'auto', 47, 50)
+    expect(auto).toMatchObject({ speedUnit: 'cms', speedValue: 47, autoSpeedLimitCms: 50, manualSpeed: { unit: 'ch3', value: 100 } })
+    const again = cueModeSwitch(auto, 'auto', 47, 50)
+    expect(again).toBe(auto) // đã Auto: không đổi
+    const back = cueModeSwitch(auto, 'manual', 47, 50)
+    expect(back).toMatchObject({ speedUnit: 'ch3', speedValue: 100, autoSpeedLimitCms: undefined })
+    expect(back).not.toHaveProperty('manualSpeed')
+    const p = createDefaultProject()
+    p.buttons = [{ ...p.buttons[0], ...auto, steps: p.buttons[0].steps }]
+    const rt = normalizeProject(JSON.parse(JSON.stringify(normalizeProject(p))))
+    expect(rt.buttons[0].manualSpeed).toEqual({ unit: 'ch3', value: 100 })
+    const bad = JSON.parse(JSON.stringify(normalizeProject(p)))
+    bad.buttons[0].manualSpeed = { unit: 'kmh', value: 1 }
+    expect(() => normalizeProject(bad)).toThrow(/manualSpeed/)
   })
 })

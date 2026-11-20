@@ -94,6 +94,8 @@ export interface CueButton {
   autoSpeedLimitCms?: number
   /** Menu đơn vị vị trí đang chọn (chỉ hiển thị; không ghi đè giá trị đã lưu cho tới khi sửa ô). Mặc định 'm'. */
   positionUnit?: 'm' | 'ch1'
+  /** Tốc độ Manual được cất khi chuyển sang Auto, để chuyển lại Manual không mất giá trị đã nhập. */
+  manualSpeed?: { unit: SpeedUnit | 'ch3'; value: number }
   /** Menu đơn vị tốc độ đang chọn (chỉ hiển thị). Mặc định = speedUnit. */
   speedView?: 'cms' | 'sec' | 'ch3'
   /** Vị trí ô (0-based) trong lưới Cue Custom. */

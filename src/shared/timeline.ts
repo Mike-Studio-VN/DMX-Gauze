@@ -1648,3 +1648,38 @@ export function applyCueValues(
   }
   return { btn: next, clamped }
 }
+
+// ---- Chuyển Auto ⇄ Manual không mất giá trị Manual đã nhập ----
+
+/** Patch khi đổi chế độ tốc độ moment. Auto giữ speedUnit/speedValue; Manual dùng lại giá trị đã lưu, nếu chưa có thì `fallback`. */
+export function momentModePatch(
+  clip: Pick<TimelineClip, 'speedMode' | 'speedUnit' | 'speedValue'>,
+  target: 'auto' | 'manual',
+  fallback: { unit: 'cms' | 'sec' | 'ch3'; value: number },
+): Partial<Pick<TimelineClip, 'speedMode' | 'speedUnit' | 'speedValue'>> {
+  if (target === 'auto') return { speedMode: 'auto' }
+  if (clip.speedValue !== undefined && Number.isFinite(clip.speedValue)) {
+    return { speedMode: 'manual', speedUnit: clip.speedUnit ?? 'cms', speedValue: clip.speedValue }
+  }
+  return { speedMode: 'manual', speedUnit: fallback.unit, speedValue: fallback.value }
+}
+
+/** Cue: Auto cất tốc độ Manual vào `manualSpeed` rồi dùng tốc độ mặc định; Manual khôi phục lại. */
+export function cueModeSwitch(btn: CueButton, target: 'auto' | 'manual', defaultCms: number, autoLimitCms: number): CueButton {
+  const isAuto = btn.autoSpeedLimitCms !== undefined
+  if ((target === 'auto') === isAuto) return btn
+  if (target === 'auto') {
+    return {
+      ...btn,
+      manualSpeed: { unit: btn.speedUnit, value: btn.speedValue },
+      speedUnit: 'cms',
+      speedValue: defaultCms,
+      speedView: undefined,
+      autoSpeedLimitCms: autoLimitCms,
+    }
+  }
+  const { manualSpeed, ...rest } = btn
+  return manualSpeed
+    ? { ...rest, speedUnit: manualSpeed.unit, speedValue: manualSpeed.value, speedView: undefined, autoSpeedLimitCms: undefined }
+    : { ...rest, autoSpeedLimitCms: undefined }
+}
