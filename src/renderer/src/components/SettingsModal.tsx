@@ -20,6 +20,7 @@ import { getBridge } from '../services/bridge'
 import { type SettingsTab, useAppStore } from '../store/useAppStore'
 import { KilnSelect, type KilnSelectOption } from './KilnSelect'
 import { LtcSettingsPanel } from './LtcSettingsPanel'
+import { DraftInput, NumberField } from './DraftInput'
 
 const dmxRateOptions = DMX_TRANSPORT_RATES.map((hz) => ({
   value: String(hz),
@@ -49,7 +50,6 @@ export function SettingsModal(props: {
   } = state
 
   const out = project.settings.output
-  const [ipText, setIpText] = useState(out.ip)
   const [ipErr, setIpErr] = useState<string | null>(null)
   const [serialPorts, setSerialPorts] = useState<string[]>([])
 
@@ -61,7 +61,6 @@ export function SettingsModal(props: {
   }
 
   useEffect(() => {
-    setIpText(out.ip)
     setIpErr(null)
   }, [out.ip, settingsOpen])
 
@@ -71,15 +70,16 @@ export function SettingsModal(props: {
 
   if (!settingsOpen) return null
 
-  const applyIp = (nextIp: string) => {
-    setIpText(nextIp)
+  const parseIp = (nextIp: string) => {
     if (!isValidIPv4(nextIp)) {
       setIpErr('Địa chỉ IPv4 không hợp lệ (vd: 255.255.255.255 hoặc 192.168.1.50)')
-      return
+      return null
     }
     setIpErr(null)
-    updateOutputSettings({ ip: nextIp.trim() })
+    return nextIp.trim()
   }
+
+  const applyIp = (ip: string) => updateOutputSettings({ ip })
 
   const nodes = snapshot?.status.nodes ?? []
 
@@ -370,9 +370,10 @@ export function SettingsModal(props: {
                             </button>
                           </div>
                         </div>
-                        <input
-                          value={ipText}
-                          onChange={(e) => applyIp(e.target.value)}
+                        <DraftInput
+                          value={out.ip}
+                          parse={parseIp}
+                          onCommit={applyIp}
                           placeholder="255.255.255.255"
                           className={`kiln-field h-9 w-full px-3 font-mono text-[13px] ${
                             ipErr ? 'shadow-[inset_0_0_0_1.5px_var(--danger)]' : ''
@@ -386,42 +387,35 @@ export function SettingsModal(props: {
                       <div className="grid grid-cols-3 gap-2.5">
                         <label className="flex flex-col gap-1.5">
                           <span className="text-[11px] leading-4 text-[#C2B3A4]">Port UDP sACN</span>
-                          <input
-                            type="number"
+                          <NumberField
+                            key={out.driver}
+                            integer="round"
                             min="1"
                             max="65535"
                             value={out.port || SACN_PORT}
-                            onChange={(e) => updateOutputSettings({ port: Number(e.target.value) || SACN_PORT })}
+                            onCommit={(port) => updateOutputSettings({ port })}
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
                         <label className="flex flex-col gap-1.5">
                           <span className="text-[11px] leading-4 text-[#C2B3A4]">sACN Universe (1–63999)</span>
-                          <input
-                            type="number"
+                          <NumberField
+                            integer="round"
                             min="1"
                             max="63999"
                             value={out.sacnUniverse ?? out.universe + 1}
-                            onChange={(e) =>
-                              updateOutputSettings({
-                                sacnUniverse: Math.min(63999, Math.max(1, Number(e.target.value) || 1)),
-                              })
-                            }
+                            onCommit={(sacnUniverse) => updateOutputSettings({ sacnUniverse })}
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
                         <label className="flex flex-col gap-1.5">
                           <span className="text-[11px] leading-4 text-[#C2B3A4]">Ưu tiên (Priority 0–200)</span>
-                          <input
-                            type="number"
+                          <NumberField
+                            integer="round"
                             min="0"
                             max="200"
                             value={out.sacnPriority ?? 100}
-                            onChange={(e) =>
-                              updateOutputSettings({
-                                sacnPriority: Math.min(200, Math.max(0, Number(e.target.value) || 100)),
-                              })
-                            }
+                            onCommit={(sacnPriority) => updateOutputSettings({ sacnPriority })}
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
@@ -430,12 +424,13 @@ export function SettingsModal(props: {
                       <div className="grid grid-cols-4 gap-2.5">
                         <label className="flex flex-col gap-1.5">
                           <span className="text-[11px] leading-4 text-[#C2B3A4]">Port UDP KiNET</span>
-                          <input
-                            type="number"
+                          <NumberField
+                            key={out.driver}
+                            integer="round"
                             min="1"
                             max="65535"
                             value={out.port || KINET_PORT}
-                            onChange={(e) => updateOutputSettings({ port: Number(e.target.value) || KINET_PORT })}
+                            onCommit={(port) => updateOutputSettings({ port })}
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
@@ -454,27 +449,24 @@ export function SettingsModal(props: {
                         </div>
                         <label className="flex flex-col gap-1.5">
                           <span className="text-[11px] leading-4 text-[#C2B3A4]">Cổng Port (1–16)</span>
-                          <input
-                            type="number"
+                          <NumberField
+                            integer="round"
                             min="1"
                             max="16"
                             value={out.kinetPort ?? 1}
-                            onChange={(e) =>
-                              updateOutputSettings({ kinetPort: Math.min(16, Math.max(1, Number(e.target.value) || 1)) })
-                            }
+                            onCommit={(kinetPort) => updateOutputSettings({ kinetPort })}
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
                         <label className="flex flex-col gap-1.5">
                           <span className="text-[11px] leading-4 text-[#C2B3A4]">Universe</span>
-                          <input
-                            type="number"
+                          <NumberField
+                            key={out.driver}
+                            integer="round"
                             min="0"
                             max="15"
                             value={out.universe}
-                            onChange={(e) =>
-                              updateOutputSettings({ universe: Math.min(15, Math.max(0, Number(e.target.value) || 0)) })
-                            }
+                            onCommit={(universe) => updateOutputSettings({ universe })}
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
@@ -483,51 +475,47 @@ export function SettingsModal(props: {
                       <div className="grid grid-cols-4 gap-2.5">
                         <label className="flex flex-col gap-1.5">
                           <span className="text-[11px] leading-4 text-[#C2B3A4]">Port UDP Art-Net</span>
-                          <input
-                            type="number"
+                          <NumberField
+                            key={out.driver}
+                            integer="round"
                             min="1"
                             max="65535"
                             value={out.port || ARTNET_PORT}
-                            onChange={(e) => updateOutputSettings({ port: Number(e.target.value) || ARTNET_PORT })}
+                            onCommit={(port) => updateOutputSettings({ port })}
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
                         <label className="flex flex-col gap-1.5">
                           <span className="text-[11px] leading-4 text-[#C2B3A4]">Net (0–127)</span>
-                          <input
-                            type="number"
+                          <NumberField
+                            integer="round"
                             min="0"
                             max="127"
                             value={out.net}
-                            onChange={(e) =>
-                              updateOutputSettings({ net: Math.min(127, Math.max(0, Number(e.target.value) || 0)) })
-                            }
+                            onCommit={(net) => updateOutputSettings({ net })}
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
                         <label className="flex flex-col gap-1.5">
                           <span className="text-[11px] leading-4 text-[#C2B3A4]">Subnet (0–15)</span>
-                          <input
-                            type="number"
+                          <NumberField
+                            integer="round"
                             min="0"
                             max="15"
                             value={out.subnet}
-                            onChange={(e) =>
-                              updateOutputSettings({ subnet: Math.min(15, Math.max(0, Number(e.target.value) || 0)) })
-                            }
+                            onCommit={(subnet) => updateOutputSettings({ subnet })}
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
                         <label className="flex flex-col gap-1.5">
                           <span className="text-[11px] leading-4 text-[#C2B3A4]">Universe (0–15)</span>
-                          <input
-                            type="number"
+                          <NumberField
+                            key={out.driver}
+                            integer="round"
                             min="0"
                             max="15"
                             value={out.universe}
-                            onChange={(e) =>
-                              updateOutputSettings({ universe: Math.min(15, Math.max(0, Number(e.target.value) || 0)) })
-                            }
+                            onCommit={(universe) => updateOutputSettings({ universe })}
                             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums"
                           />
                         </label>
@@ -673,12 +661,12 @@ export function SettingsModal(props: {
 
                 <label className="block space-y-1.5">
                   <span className="text-[11px] text-[#C2B3A4]">Giá trị mở khoá CH4 (mặc định 77)</span>
-                  <input
-                    type="number"
+                  <NumberField
+                    integer="round"
                     min="0"
                     max="255"
                     value={project.settings.lockValue}
-                    onChange={(e) => setLockValue(Math.min(255, Math.max(0, Number(e.target.value) || 77)))}
+                    onCommit={setLockValue}
                     className="kiln-field h-9 w-full px-3 text-xs tabular-nums"
                   />
                 </label>

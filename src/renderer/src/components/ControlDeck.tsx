@@ -22,6 +22,7 @@ import { DEFAULT_MOTION_SPEED_CMS, defaultCueSpeedCms } from '@shared/timeline'
 import type { CueButton, SpeedUnit } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 import { TimelineEditor } from './TimelineEditor'
+import { NumberField } from './DraftInput'
 
 type ManualBtnPhase = 'idle' | 'run'
 
@@ -721,12 +722,11 @@ export function ModeManual(props: {
               Giây
             </button>
           </div>
-          <input
-            type="number"
-            min="0.5"
+          <NumberField
+            min="0.1"
             step="0.5"
             value={val}
-            onChange={(e) => setVal(Number(e.target.value) || 1)}
+            onCommit={setVal}
             aria-label="Giá trị tốc độ hoặc số giây"
             className="kiln-field h-8 w-16 rounded-full px-2.5 text-center text-xs font-semibold tabular-nums"
           />

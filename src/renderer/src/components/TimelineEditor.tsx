@@ -51,6 +51,7 @@ import {
 import type { ClipKeyframe, Fps, ModuleCfg, TimelineClip } from '@shared/types'
 import { ltcInputError, ltcStatusLabels } from '../services/ltcInput'
 import { useAppStore } from '../store/useAppStore'
+import { DraftInput, parseDraftNumber } from './DraftInput'
 
 const MIN_CLIP_DUR = 0.4
 const CLIP_MIN_W = 24
@@ -159,8 +160,6 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   const [snapToFrame, setSnapToFrame] = useState(true)
   const [pxPerSec, setPxPerSec] = useState(64)
   const [editingHead, setEditingHead] = useState(false)
-  const [headInput, setHeadInput] = useState('')
-  const headCanceledRef = useRef(false)
   const [collapsedLayers, setCollapsedLayers] = useState<Record<string, boolean>>({})
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null)
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
@@ -436,20 +435,11 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
   const quantizeTime = (sec: number) =>
     snapToFrame ? snapTimeToFps(sec, fps) : Math.max(0, Number(sec.toFixed(2)))
 
-  const commitHeadInput = () => {
-    if (headCanceledRef.current) {
-      headCanceledRef.current = false
-      setEditingHead(false)
-      return
-    }
-    const parsed = parseTimelineSecondsInput(headInput, fps, dropFrame)
-    if (parsed !== null) {
-      const targetSec = snapToFrame ? snapTimeToFps(parsed, fps) : Number(parsed.toFixed(4))
-      const clampedT = clamp(targetSec, 0, maxTime)
-      seekTo(clampedT, true)
-      previewTimelineAt(clampedT)
-    }
-    setEditingHead(false)
+  const commitHeadInput = (seconds: number) => {
+    const targetSec = snapToFrame ? snapTimeToFps(seconds, fps) : Number(seconds.toFixed(4))
+    const clampedT = clamp(targetSec, 0, maxTime)
+    seekTo(clampedT, true)
+    previewTimelineAt(clampedT)
   }
 
   const scrubRulerFromClientX = (clientX: number, rectLeft: number) => {
@@ -1179,15 +1169,11 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
                 onDoubleClick={(e) => {
                   e.stopPropagation()
                   if (followsLtc()) return
-                  headCanceledRef.current = false
-                  setHeadInput(time.toFixed(2))
                   setEditingHead(true)
                 }}
                 onKeyDown={(e) => {
                   if (!followsLtc() && !editingHead && (e.key === 'Enter' || e.key === 'F2')) {
                     e.preventDefault()
-                    headCanceledRef.current = false
-                    setHeadInput(time.toFixed(2))
                     setEditingHead(true)
                   }
                 }}
@@ -1196,24 +1182,14 @@ export function TimelineEditor({ modeTabs }: { modeTabs?: ReactNode }) {
                 style={{ left: editingHead ? Math.max(28, playheadX) : playheadX }}
               >
                 {editingHead ? (
-                  <input
+                  <DraftInput
                     autoFocus
                     aria-label="Nhập thời gian playhead (s)"
-                    value={headInput}
-                    onFocus={(e) => e.currentTarget.select()}
+                    value={time.toFixed(2)}
+                    parse={(raw) => parseTimelineSecondsInput(raw, fps, dropFrame) ?? parseDraftNumber(raw.trim().replace(/s$/i, ''))}
                     onPointerDown={(e) => e.stopPropagation()}
-                    onChange={(e) => setHeadInput(e.target.value)}
-                    onBlur={commitHeadInput}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        commitHeadInput()
-                      } else if (e.key === 'Escape') {
-                        e.preventDefault()
-                        headCanceledRef.current = true
-                        setEditingHead(false)
-                      }
-                    }}
+                    onCommit={commitHeadInput}
+                    onSettled={() => setEditingHead(false)}
                     className="w-12 bg-transparent text-center text-[10px] leading-none font-semibold text-[#172438] tabular-nums outline-none"
                   />
                 ) : (

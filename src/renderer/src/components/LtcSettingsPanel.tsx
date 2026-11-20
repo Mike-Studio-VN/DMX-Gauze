@@ -5,6 +5,7 @@ import type { LtcFps } from '@shared/types'
 import { formatReceivedLtc, ltcStatusLabels } from '../services/ltcInput'
 import type { useAppStore } from '../store/useAppStore'
 import { KilnSelect } from './KilnSelect'
+import { DraftInput, NumberField } from './DraftInput'
 
 type LtcPanelState = Pick<ReturnType<typeof useAppStore.getState>,
   'project' | 'ltcActive' | 'ltcDropFrame' | 'ltcReception' | 'setLtcActive' |
@@ -24,15 +25,9 @@ export function LtcSettingsPanel({ state }: { state: LtcPanelState }) {
   const ltcFps = resolveLtcFps(timeline.fps, ltc.fps)
   const timelineFps = ltcActive ? ltcFps : timeline.fps
   const dropFrame = ltcActive ? ltcDropFrame : undefined
-  const formatStart = () => formatTc(timeline.startTime, timelineFps, dropFrame)
-  const [startText, setStartText] = useState(formatStart)
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([])
   const [deviceError, setDeviceError] = useState<string | null>(null)
   const [refresh, setRefresh] = useState(0)
-
-  useEffect(() => {
-    setStartText(formatTc(timeline.startTime, timelineFps, dropFrame))
-  }, [timeline.startTime, timelineFps, dropFrame])
 
   useEffect(() => {
     const media = navigator.mediaDevices
@@ -55,16 +50,10 @@ export function LtcSettingsPanel({ state }: { state: LtcPanelState }) {
     }
   }, [refresh, ltcReception.inputOpen])
 
-  const applyStart = () => {
-    // Merely focusing and leaving a rounded timecode must not quantize the saved start time.
-    if (startText === formatStart()) return
-    const seconds = parseTc(startText, timelineFps, dropFrame)
-    if (seconds === null) {
-      notify('Timecode không hợp lệ (hh:mm:ss:ff).', 'warn')
-      setStartText(formatStart())
-      return
-    }
-    updateTimelineSettings({ startTime: seconds })
+  const parseStart = (raw: string) => {
+    const seconds = parseTc(raw, timelineFps, dropFrame)
+    if (seconds === null) notify('Timecode không hợp lệ (hh:mm:ss:ff).', 'warn')
+    return seconds
   }
 
   const status = ltcActive && ltcReception.status === 'off' ? 'waiting' : ltcReception.status
@@ -200,26 +189,24 @@ export function LtcSettingsPanel({ state }: { state: LtcPanelState }) {
         <h3 id="ltc-advanced-heading" className={headingClass}>Nâng cao</h3>
         <label className="block space-y-1">
           <span className={fieldLabel}>Timecode bắt đầu</span>
-          <input value={startText} onChange={(e) => setStartText(e.target.value)} onBlur={applyStart}
-            onKeyDown={(e) => e.key === 'Enter' && applyStart()} placeholder="00:00:00:00"
+          <DraftInput value={formatTc(timeline.startTime, timelineFps, dropFrame)} parse={parseStart}
+            onCommit={(startTime) => updateTimelineSettings({ startTime })} placeholder="00:00:00:00"
             aria-label="Timecode bắt đầu" className={`${fieldClass} font-mono`} />
           <span className="kiln-readout block text-[11px]">Mốc bắt đầu khi chạy Timeline thủ công (hh:mm:ss:ff).</span>
         </label>
         <div className="grid gap-3 min-[680px]:grid-cols-2">
           <label className="block min-w-0 space-y-1">
             <span className={fieldLabel}>Bù trễ (khung)</span>
-            <input type="number" min="-60" max="60" value={ltc.offsetFrames}
+            <NumberField min="-60" max="60" value={ltc.offsetFrames}
               aria-label="Bù trễ (khung)" className={fieldClass}
-              onChange={(e) => updateLtcSettings({ offsetFrames: Number(e.target.value) || 0 })} />
+              onCommit={(offsetFrames) => updateLtcSettings({ offsetFrames })} />
             <span className="kiln-readout block text-[11px]">{frameMs(ltc.offsetFrames)} ms · Dịch mốc timecode nhận vào.</span>
           </label>
           <label className="block min-w-0 space-y-1">
             <span className={fieldLabel}>Chạy trớn (khung)</span>
-            <input type="number" min="0" max="120" value={ltc.freewheelFrames}
+            <NumberField min="0" max="120" value={ltc.freewheelFrames}
               aria-label="Chạy trớn (khung)" className={fieldClass}
-              onChange={(e) => {
-                if (Number.isFinite(e.target.valueAsNumber)) updateLtcSettings({ freewheelFrames: e.target.valueAsNumber })
-              }} />
+              onCommit={(freewheelFrames) => updateLtcSettings({ freewheelFrames })} />
             <span className="kiln-readout block text-[11px]">{frameMs(ltc.freewheelFrames)} ms · Chạy tiếp khi tín hiệu gián đoạn, sau đó giữ module.</span>
           </label>
         </div>
