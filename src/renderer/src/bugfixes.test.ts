@@ -1377,7 +1377,8 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     expect(propsHtml).toContain('Đơn vị tốc độ nút Cue');
     expect(propsHtml).toMatch(/>cm\/s<[\s\S]*>s<[\s\S]*>CH3</);
     expect(propsHtml).toContain('text-center');
-    expect(propsHtml).toContain('Áp dụng cho các layer');
+    expect(propsHtml).toContain('Áp dụng cho module đã tích');
+    expect(propsHtml).toContain('Chế độ tốc độ nút Cue');
     expect(propsHtml).not.toContain('Lấy 3D');
     expect(propsHtml).not.toContain('LOOP');
     expect(propsHtml).toContain(project.layers[0].name);
@@ -1673,6 +1674,14 @@ describe('Đơn vị tốc độ: moment (Auto/Manual luôn hiện) và cue (m|C
     );
     expect(h).toMatch(/>CH1<[\s\S]*>CH1</);
     expect(h).toMatch(/≈0\.50m/);
-    expect(h).toContain('Giá trị tốc độ nút Cue (cm/s)');
+    expect(h).toContain('Tốc độ áp dụng (cm/s)');
+    // hàng 1 Auto|Manual → hàng 2 [vị trí m|CH1] trái, [tốc độ cm/s|s|CH3] phải → ô áp dụng
+    expect(h.indexOf('Chế độ tốc độ nút Cue')).toBeLessThan(h.indexOf('Đơn vị vị trí'));
+    expect(h.indexOf('Đơn vị vị trí')).toBeLessThan(h.indexOf('Đơn vị tốc độ nút Cue'));
+    expect(h.indexOf('Đơn vị tốc độ nút Cue')).toBeLessThan(h.indexOf('Vị trí áp dụng cho module đang tích'));
+    expect(h).not.toContain('Áp dụng cho các layer');
+    // cây Layer/Module có checkbox, đếm n/m vẫn còn
+    expect(h).toMatch(/type="checkbox"/);
+    expect(h).toMatch(/\d+\/\d+/);
   });
 });

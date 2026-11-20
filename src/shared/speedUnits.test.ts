@@ -18,9 +18,10 @@ import {
   keyframeHeightDisplay,
   keyframeHeightFromInput,
   mToCh1Raw,
+  applyCueValues,
   updateClipKeyframeHeight,
 } from './timeline'
-import type { ModuleCfg, TimelineClip } from './types'
+import type { CueButton, ModuleCfg, TimelineClip } from './types'
 
 const mod = (maxSpeedCms = 100): ModuleCfg => ({
   id: 'm', name: 'M', layerId: 'l', length: 2.55, width: 1, minHeight: 0, maxHeight: 2.55,
@@ -258,3 +259,86 @@ describe('độ cao điểm trong moment: lưu nguyên m hoặc CH1', () => {
 function modOf2(): ModuleCfg {
   return { ...mod(120), startAddress: 1, length: 2.55, minHeight: 0.1, maxHeight: 2.0 }
 }
+
+describe('cue: áp dụng chung vị trí + tốc độ cho module đang tích', () => {
+  const mk = (id: string, length: number, minHeight: number, maxHeight: number, maxSpeedCms = 120): ModuleCfg => ({
+    ...mod(maxSpeedCms), id, name: id.toUpperCase(), length, minHeight, maxHeight, startAddress: 1,
+  })
+  const mods = [mk('a', 1, 0, 1), mk('b', 3, 0.5, 2.5), mk('c', 2.55, 0, 2.55, 300)]
+  const base = (over: Partial<CueButton> = {}): CueButton => ({
+    id: 'q', name: 'Q', speedUnit: 'cms', speedValue: 30,
+    steps: [{ moduleId: 'a', position: 0.2 }, { moduleId: 'b', position: 1 }], // c bỏ tích
+    ...over,
+  })
+
+  it('tích nhiều module: Áp dụng m ghi đúng cho module tích, kẹp theo từng module, module bỏ tích giữ nguyên', () => {
+    const r = applyCueValues(base(), mods, { pos: 2, spd: null })
+    expect(r.btn.steps).toEqual([{ moduleId: 'a', position: 1 }, { moduleId: 'b', position: 2 }]) // a kẹp 1 m
+    expect(r.clamped).toEqual(['A'])
+    expect(r.btn.speedValue).toBe(30) // ô tốc độ trống = không đổi
+    expect(r.btn.steps.find((s) => s.moduleId === 'c')).toBeUndefined()
+    const r2 = applyCueValues(base(), mods, { pos: 0.1, spd: null })
+    expect(r2.btn.steps[1].position).toBe(0.5) // b: kẹp lên minHeight 0,5
+    expect(r2.clamped).toEqual(['B'])
+  })
+  it('CH1: lưu nguyên số (unit ch1), kẹp trong dải CH1 từng module; khác length cho m tương đương khác nhau', () => {
+    const b = base({ positionUnit: 'ch1' })
+    const r = applyCueValues(b, mods, { pos: 128, spd: null })
+    expect(r.btn.steps).toEqual([
+      { moduleId: 'a', position: 128, unit: 'ch1' },
+      { moduleId: 'b', position: 128, unit: 'ch1' },
+    ])
+    expect(r.clamped).toEqual([])
+    const hi = applyCueValues(b, mods, { pos: 250, spd: null })
+    expect(hi.btn.steps.map((s) => s.position)).toEqual([250, 212]) // a: trong dải; b: kẹp floor(2,5/3×255)=212
+    expect(hi.clamped).toEqual(['B'])
+    expect(stepPositionM(r.btn.steps[0], 1)).not.toBeCloseTo(stepPositionM(r.btn.steps[1], 3), 2)
+  })
+  it('tốc độ: Manual lưu nguyên theo đơn vị đang chọn; Auto bị bỏ qua; ô trống không đổi', () => {
+    const cms = applyCueValues(base({ speedView: 'cms' }), mods, { pos: null, spd: 45 })
+    expect(cms.btn).toMatchObject({ speedUnit: 'cms', speedValue: 45 })
+    const ch3 = applyCueValues(base({ speedView: 'ch3' }), mods, { pos: null, spd: 100 })
+    expect(ch3.btn).toMatchObject({ speedUnit: 'ch3', speedValue: 100, speedView: 'ch3' })
+    expect(applyCueValues(base({ speedView: 'sec' }), mods, { pos: null, spd: 2.5 }).btn).toMatchObject({ speedUnit: 'sec', speedValue: 2.5 })
+    const auto = applyCueValues(base({ autoSpeedLimitCms: 50 }), mods, { pos: null, spd: 99 })
+    expect(auto.reason).toBe('auto-speed')
+    expect(auto.btn.speedValue).toBe(30)
+    expect(applyCueValues(base(), mods, { pos: null, spd: null }).reason).toBe('nothing')
+    // cả hai cùng lúc
+    const both = applyCueValues(base({ positionUnit: 'ch1', speedView: 'ch3' }), mods, { pos: 100, spd: 100 })
+    expect(both.btn.steps.every((s) => s.position === 100 && s.unit === 'ch1')).toBe(true)
+    expect(both.btn).toMatchObject({ speedUnit: 'ch3', speedValue: 100, autoSpeedLimitCms: undefined })
+  })
+  it('không tích module nào: không áp dụng', () => {
+    expect(applyCueValues(base({ steps: [] }), mods, { pos: 1, spd: 5 }).reason).toBe('none-selected')
+  })
+  it('phát cue ra đúng CH1/CH3 từng module: m → posToCh1 theo length, CH1 nhập → đúng byte, CH3 nhập → đúng số, cm/s → theo max module', () => {
+    const run = (steps: CueButton['steps'], speed: { unit: 'cms' | 'sec' | 'ch3'; value: number }) => {
+      const core = new GauzeCore((_cfg, ev) => new MockDriver(ev))
+      const ms = mods.map((m, i) => ({ ...m, startAddress: 1 + i * 4 }))
+      core.configure({ modules: ms, output: createDefaultProject().settings.output, lockValue: LOCK_VALUE })
+      core.command({ type: 'lock', locked: false })
+      for (const s of steps) core.command({ type: 'move', ids: [s.moduleId], target: s.unit === 'ch1' ? { ch1: s.position } : s.position, speed })
+      core.tick()
+      const f = core.snapshot().frame
+      core.stop()
+      return f
+    }
+    const f = run([{ moduleId: 'a', position: 0.5 }, { moduleId: 'b', position: 128, unit: 'ch1' }, { moduleId: 'c', position: 1 }], { unit: 'ch3', value: 100 })
+    expect(f[0]).toBe(posToCh1(0.5, mods[0])) // 0,5/1×255 → 128
+    expect(f[4]).toBe(128) // CH1 nhập thẳng (trong dải b: 42..212)
+    expect(f[8]).toBe(posToCh1(1, mods[2])) // length 2,55
+    expect([f[2], f[6], f[10]]).toEqual([100, 100, 100]) // CH3 nhập thẳng
+    const g = run([{ moduleId: 'a', position: 0.5 }, { moduleId: 'c', position: 1 }], { unit: 'cms', value: 60 })
+    expect(g[2]).toBe(cmsToCh3(60, 120)) // module max 120 → 128
+    expect(g[10]).toBe(cmsToCh3(60, 300)) // module max 300 → 51
+  })
+  it('lưu/đọc: bước CH1 + project cũ (không unit) round-trip', () => {
+    const p = createDefaultProject()
+    const id = p.modules[0].id
+    p.buttons = [{ ...p.buttons[0], steps: [{ moduleId: id, position: 128, unit: 'ch1' }], positionUnit: 'ch1' }, { ...p.buttons[1], id: 'b2' }]
+    const back = normalizeProject(JSON.parse(JSON.stringify(normalizeProject(p))))
+    expect(back.buttons[0].steps[0]).toMatchObject({ position: 128, unit: 'ch1' })
+    expect(back.buttons[1].steps.every((s) => s.unit === undefined)).toBe(true)
+  })
+})
