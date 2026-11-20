@@ -19,7 +19,7 @@ import {
 import { getBridge } from '../services/bridge'
 import { layerLoopAddress } from '@shared/addressing'
 import { ch3ToCms, clamp, cmsToCh3, speedCap } from '@shared/convert'
-import { CH, SENT_CH4_PULSE_VALUE, SENT_PULSE_MS, addressRange } from '@shared/dmx'
+import { CH, H2_MAX_SPEED_CMS, MODULE_MAX_SPEED_LIMIT_CMS, SENT_CH4_PULSE_VALUE, SENT_PULSE_MS, addressRange } from '@shared/dmx'
 import { defaultLayerTransform, defaultModuleTransform } from '@shared/preset'
 import {
   computeModuleBasePositions,
@@ -2030,7 +2030,7 @@ export function PropertiesPanel(props: {
         <div className="grid grid-cols-2 gap-2 border-t border-line pt-3">
           {renderNumField('maxSpeedCms', 'Tốc độ max (cm/s)', commonMaxSpd, {
             min: '10',
-            max: '500',
+            max: String(MODULE_MAX_SPEED_LIMIT_CMS),
             onCommit: (v) => updateModulesBatch(selectedIdsList, { maxSpeedCms: v }),
           })}
           {renderNumField('defaultSpeed', 'CH3 mặc định', commonDefSpd, {
@@ -2039,6 +2039,9 @@ export function PropertiesPanel(props: {
             onCommit: (v) => updateModulesBatch(selectedIdsList, { defaultSpeed: v }),
           })}
         </div>
+        {selected.some((m) => m.maxSpeedCms > H2_MAX_SPEED_CMS) && (
+          <p className="text-[10px] text-warn">Có module vượt spec H2 ({H2_MAX_SPEED_CMS} cm/s): chỉ dùng khi test.</p>
+        )}
 
         <div className="space-y-2 border-t border-line pt-3">
           <div className="flex items-center justify-between text-[11px]">
@@ -2313,11 +2316,14 @@ export function PropertiesPanel(props: {
           <input
             type="number"
             min="10"
-            max="500"
+            max={MODULE_MAX_SPEED_LIMIT_CMS}
             value={single.maxSpeedCms}
-            onChange={(e) => updateModule(single.id, { maxSpeedCms: Number(e.target.value) || 120 }, `mod-spd-${single.id}`)}
+            onChange={(e) => updateModule(single.id, { maxSpeedCms: Number(e.target.value) || H2_MAX_SPEED_CMS }, `mod-spd-${single.id}`)}
             className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
+          {single.maxSpeedCms > H2_MAX_SPEED_CMS && (
+            <span className="block text-[10px] text-warn">Vượt spec H2 ({H2_MAX_SPEED_CMS} cm/s): chỉ dùng khi test.</span>
+          )}
         </label>
 
         <label className="space-y-1">
@@ -2352,8 +2358,9 @@ export function PropertiesPanel(props: {
 }
 
 /**
- * Giám sát 4 kênh. Chỉ CH2 (fine) nhập được; CH1/CH3/CH4 chỉ hiển thị. "Sent" TEST fine tune: lưu CH2 vào module,
- * gửi xung CH4=77 (SENT_PULSE_MS) rồi CH4 tự về 0; CH1 giữ nguyên, không bị khoá chặn.
+ * Giám sát 4 kênh. CH1/CH2/CH3 nhập được, CH4 chỉ đọc. "Sent" chỉ để TEST, không bị khoá nào chặn: gửi đúng giá trị đã nhập
+ * (không kẹp min/max, không quy đổi); CH4 xung 77 (SENT_PULSE_MS) rồi tự về 0. Ô trống / không đổi = giữ giá trị live.
+ * CH1 hoặc CH3 khác live ⇒ module CHẠY THẬT: Sent cần bấm 2 lần (xác nhận). "Dừng" = CH3 0 (phanh) giữ CH1 hiện tại.
  */
 function ChannelMonitor({
   moduleId,
@@ -2368,26 +2375,39 @@ function ChannelMonitor({
   maxSpeedCms: number
   onPersistCh2: (ch2: number) => void
 }) {
-  const [draft, setDraft] = useState<string | null>(null)
+  const [draft, setDraft] = useState<(string | null)[]>([null, null, null])
   const [phase, setPhase] = useState<'idle' | 'sending' | 'sent'>('idle')
+  const [confirming, setConfirming] = useState(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => () => {
     if (resetTimer.current) clearTimeout(resetTimer.current)
+    if (confirmTimer.current) clearTimeout(confirmTimer.current)
   }, [])
-  const shown = draft ?? String(live[1])
-  const ch2 = shown.trim() === '' ? NaN : Number(shown)
-  const valid = Number.isInteger(ch2) && ch2 >= 0 && ch2 <= 255
+  const cancelConfirm = () => {
+    if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    setConfirming(false)
+  }
+  // Ô trống (hoặc chưa sửa) = giữ live.
+  const given = (i: number) => draft[i] !== null && draft[i]!.trim() !== ''
+  const shown = [0, 1, 2].map((i) => draft[i] ?? String(live[i]))
+  const nums = [0, 1, 2].map((i) => (given(i) ? Number(draft[i]) : live[i]))
+  const valid = nums.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)
+  const runs = valid && ((given(0) && nums[0] !== live[0]) || (given(2) && nums[2] !== live[2]))
   const notify = useAppStore.getState().notify
-  const send = async () => {
-    if (!valid || phase === 'sending') return
+  const edit = (i: number, raw: string) => {
+    cancelConfirm()
+    setDraft((d) => d.map((v, j) => (j === i ? raw : v)))
+  }
+  const dispatch = async (cmd: { ch1?: number; ch2: number; ch3?: number }, persist: boolean, msg: string) => {
     setPhase('sending')
-    onPersistCh2(ch2)
+    if (persist) onPersistCh2(cmd.ch2)
     try {
-      const res = await getBridge().command({ type: 'sendFine', id: moduleId, ch2 })
+      const res = await getBridge().command({ type: 'sendFine', id: moduleId, ...cmd })
       if (!res.ok) throw new Error(res.message ?? 'Gửi thất bại')
-      setDraft(null)
+      setDraft([null, null, null])
       setPhase('sent')
-      notify(`${moduleName}: CH2 = ${ch2}, CH4 77 → 0 (xung ${SENT_PULSE_MS / 1000}s)`, 'success', { title: 'Đã gửi Sent', icon: 'success' })
+      notify(msg, 'success', { title: 'Đã gửi Sent', icon: 'success' })
     } catch (err) {
       setPhase('idle')
       notify((err as Error).message, 'error', { title: 'Sent lỗi', icon: 'error' })
@@ -2396,11 +2416,30 @@ function ChannelMonitor({
     if (resetTimer.current) clearTimeout(resetTimer.current)
     resetTimer.current = setTimeout(() => setPhase('idle'), 1400)
   }
-  const cells: Array<{ label: string; value: string; title: string; editable?: boolean }> = [
-    { label: 'CH1 Pos', value: String(live[0]), title: 'CH1: vị trí 0–255 (0 → chiều dài tối đa), kẹp theo min–max; Sent không đổi' },
-    { label: 'CH2 Fine', value: shown, title: 'CH2: fine tĩnh 0–255, chỉ đổi khi bạn nhập / bấm Sent', editable: true },
-    { label: 'CH3 Spd', value: String(live[2]), title: `CH3: tốc độ (${ch3ToCms(live[2], maxSpeedCms).toFixed(0)} cm/s; 255 = ${maxSpeedCms} cm/s)` },
-    { label: 'CH4 Lock', value: String(live[3]), title: `CH4: khoá an toàn. Sent phát ${SENT_CH4_PULSE_VALUE} trong ${SENT_PULSE_MS} ms rồi tự về 0` },
+  const send = async () => {
+    if (!valid || phase === 'sending') return
+    if (runs && !confirming) {
+      setConfirming(true)
+      confirmTimer.current = setTimeout(() => setConfirming(false), 6000)
+      return
+    }
+    cancelConfirm()
+    const cmd = {
+      ch2: nums[1],
+      ...(given(0) && nums[0] !== live[0] ? { ch1: nums[0] } : {}),
+      ...(given(2) && nums[2] !== live[2] ? { ch3: nums[2] } : {}),
+    }
+    const parts = [cmd.ch1 !== undefined ? `CH1 ${cmd.ch1}` : null, `CH2 ${cmd.ch2}`, cmd.ch3 !== undefined ? `CH3 ${cmd.ch3}` : null].filter(Boolean)
+    await dispatch(cmd, true, `${moduleName}: ${parts.join(', ')}; CH4 77 → 0 (xung ${SENT_PULSE_MS / 1000}s)`)
+  }
+  const stop = () => {
+    cancelConfirm()
+    void dispatch({ ch1: live[0], ch2: live[1], ch3: 0 }, false, `${moduleName}: Dừng (CH3 0, CH1 giữ ${live[0]}); CH4 77 → 0`)
+  }
+  const cells: Array<{ label: string; i: number; title: string }> = [
+    { label: 'CH1 Pos', i: 0, title: 'CH1: vị trí 0–255 (0 → chiều dài tối đa). Sent gửi đúng số nhập, không kẹp min–max; module chạy thật' },
+    { label: 'CH2 Fine', i: 1, title: 'CH2: fine tĩnh 0–255, chỉ đổi khi bạn nhập / bấm Sent' },
+    { label: 'CH3 Spd', i: 2, title: `CH3: tốc độ 0–255 (0 = phanh), ${ch3ToCms(nums[2], maxSpeedCms).toFixed(0)} cm/s; 255 = ${maxSpeedCms} cm/s` },
   ]
   return (
     <div className="sticky bottom-0 z-10 mt-auto space-y-2 border-t border-line bg-[var(--glass)] pt-2.5 pb-1">
@@ -2411,46 +2450,71 @@ function ChannelMonitor({
             type="button"
             onClick={() => void send()}
             disabled={!valid || phase === 'sending'}
-            title={`Test fine tune: gửi CH2 = ${valid ? ch2 : '?'}, CH4 ${SENT_CH4_PULSE_VALUE} rồi về 0. Không bị khoá chặn, CH1 giữ nguyên.`}
+            title={`Test: gửi CH1/CH2/CH3 đã nhập, CH4 ${SENT_CH4_PULSE_VALUE} rồi về 0. Không bị khoá chặn. CH1/CH3 khác live ⇒ module chạy thật.`}
             aria-live="polite"
             className={`inline-flex h-5 min-w-[46px] cursor-pointer items-center justify-center gap-1 rounded-full px-2 text-[10px] font-semibold whitespace-nowrap transition-all duration-200 disabled:cursor-default disabled:opacity-40 ${
               phase === 'sent'
                 ? 'bg-ok/25 text-ok'
                 : phase === 'sending'
                   ? 'scale-95 animate-pulse bg-brand/35 text-[#FFD08A]'
-                  : 'bg-brand/20 text-[#FFB26B] hover:bg-brand/30'
+                  : confirming
+                    ? 'bg-warn/25 text-warn'
+                    : 'bg-brand/20 text-[#FFB26B] hover:bg-brand/30'
             }`}
           >
             {phase === 'sent' ? <Check size={11} strokeWidth={3} /> : null}
-            {phase === 'sent' ? 'Đã gửi' : phase === 'sending' ? '…' : 'Sent'}
+            {phase === 'sent' ? 'Đã gửi' : phase === 'sending' ? '…' : confirming ? 'Xác nhận' : 'Sent'}
           </button>
         </span>
       </div>
 
       <div className="grid grid-cols-4 gap-1.5 text-center tabular-nums">
         {cells.map((c) => (
-          <label key={c.label} className={`min-w-0 p-1.5 ${c.editable ? 'kiln-field' : 'kiln-readout'}`} title={c.title}>
+          <label key={c.label} className="kiln-field min-w-0 p-1.5" title={c.title}>
             <div className="truncate text-[9.5px] text-muted">{c.label}</div>
-            {c.editable ? (
-              <input
-                type="number"
-                min={0}
-                max={255}
-                step={1}
-                value={c.value}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void send()
-                }}
-                className={`w-full bg-transparent text-center font-semibold outline-none ${valid ? 'text-fg' : 'text-danger'}`}
-              />
-            ) : (
-              <div className="font-semibold">{c.value}</div>
-            )}
+            <input
+              type="number"
+              min={0}
+              max={255}
+              step={1}
+              value={shown[c.i]}
+              onChange={(e) => edit(c.i, e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void send()
+              }}
+              className={`w-full bg-transparent text-center font-semibold outline-none ${
+                Number.isInteger(nums[c.i]) && nums[c.i] >= 0 && nums[c.i] <= 255 ? 'text-fg' : 'text-danger'
+              }`}
+            />
           </label>
         ))}
+        <div className="kiln-readout min-w-0 p-1.5" title={`CH4: khoá an toàn, chỉ đọc. Sent phát ${SENT_CH4_PULSE_VALUE} trong ${SENT_PULSE_MS} ms rồi tự về 0`}>
+          <div className="truncate text-[9.5px] text-muted">CH4 Lock</div>
+          <div className="font-semibold">{live[3]}</div>
+        </div>
       </div>
-      {!valid && <p className="text-[10.5px] text-danger">CH2 phải là số nguyên 0–255.</p>}
+      {!valid && <p className="text-[10.5px] text-danger">CH1/CH2/CH3 phải là số nguyên 0–255.</p>}
+      {confirming ? (
+        <div className="space-y-1">
+          <p className="flex items-start gap-1 text-[10.5px] text-warn">
+            <AlertTriangle size={11} className="mt-px shrink-0" />
+            Module sẽ chạy thật tới CH1={nums[0]} với CH3={nums[2]} (≈{ch3ToCms(nums[2], maxSpeedCms).toFixed(0)} cm/s), kể cả khi đang khoá. Bấm Xác nhận để gửi.
+          </p>
+          <button type="button" onClick={cancelConfirm} className="cursor-pointer text-[10.5px] text-muted underline hover:text-fg">
+            Huỷ
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={stop}
+          disabled={phase === 'sending'}
+          title="Phanh tại chỗ: gửi CH3 = 0, giữ CH1 hiện tại (kể cả khi đang khoá)"
+          className="cursor-pointer text-[10.5px] text-muted underline hover:text-fg disabled:cursor-default disabled:opacity-40"
+        >
+          Dừng (CH3 = 0)
+        </button>
+      )}
     </div>
   )
 }

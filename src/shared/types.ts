@@ -224,10 +224,11 @@ export type Command =
   | { type: 'estop' }
   | { type: 'lock'; locked: boolean }
   /**
-   * Nút Sent (test fine tune): giữ CH1/CH3 như hiện có, CH2 = `ch2` (0–255), CH4 = 77 trong SENT_PULSE_MS rồi về 0 và giữ 0
-   * (tới khi module nhận lệnh move kế tiếp). Không đặt đích mới và KHÔNG bị chặn bởi khoá tổng.
+   * Nút Sent (chỉ để TEST): CH2 = `ch2` (0–255); CH4 = 77 trong SENT_PULSE_MS rồi về 0 và giữ 0 (tới khi module nhận lệnh move
+   * kế tiếp). Không bị chặn bởi khoá tổng. `ch1`/`ch3` (0–255) tuỳ chọn: có thì phát ĐÚNG giá trị đó (không kẹp min/max,
+   * không quy đổi; ch3=0 là phanh) và giữ sau xung — module chạy thật; thiếu thì giữ chỗ như cũ (CH1 hiện tại, CH3 hiện có).
    */
-  | { type: 'sendFine'; id: string; ch2: number }
+  | { type: 'sendFine'; id: string; ch2: number; ch1?: number; ch3?: number }
 
 export interface CommandResult {
   ok: boolean
