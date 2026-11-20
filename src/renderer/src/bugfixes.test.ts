@@ -1615,6 +1615,43 @@ describe('Đơn vị tốc độ: moment (Auto/Manual luôn hiện) và cue (m|C
     expect(html(clipWith({ speedUnit: 'cms' }))).toMatch(/<input[^>]*readOnly=""[^>]*aria-label="cm\/s tới P2"/);
   });
 
+  it('bố cục moment: nút Auto/Manual + cm/s|s|CH3 + m|CH1 nằm TRÊN danh sách điểm; hàng = [Pn] [độ cao] · [tốc độ]', () => {
+    const h = html(clipWith({ speedMode: 'manual', speedUnit: 'cms', speedValue: 40 }));
+    const iHead = h.indexOf('Các điểm');
+    const iValid = h.indexOf('Độ cao hợp lệ');
+    const iAuto = h.indexOf('Chế độ tốc độ moment');
+    const iUnit = h.indexOf('Kiểu nhập tốc độ');
+    const iHeightUnit = h.indexOf('Đơn vị độ cao');
+    const iRow = h.indexOf('Độ cao P1');
+    expect(iHead).toBeGreaterThan(-1);
+    expect(iHead).toBeLessThan(iValid);
+    expect(iValid).toBeLessThan(iAuto);
+    expect(iAuto).toBeLessThan(iUnit);
+    expect(iUnit).toBeLessThan(iHeightUnit);
+    expect(iHeightUnit).toBeLessThan(iRow);
+    expect(h).not.toContain('Tốc độ moment</div>'); // không lặp tiêu đề/nút bên dưới
+    expect(h.match(/aria-label="Chế độ tốc độ moment"/g)).toHaveLength(1);
+    // cột: độ cao nằm TRƯỚC (bên trái) tốc độ trong cùng hàng
+    for (const n of [2, 3]) {
+      expect(h.indexOf(`Độ cao P${n} (m)`)).toBeLessThan(h.indexOf(`cm/s tới P${n}`));
+    }
+    // đơn vị s: cột phải là thời điểm, vẫn sau độ cao
+    const hs = html(clipWith({ speedMode: 'auto', speedUnit: 'sec', speedView: 'sec' }));
+    expect(hs.indexOf('Độ cao P1 (m)')).toBeLessThan(hs.indexOf('Thời gian của điểm trên Timeline (s)'));
+  });
+
+  it('m|CH1 cho moment: CH1 hiện dải CH1, hiển thị CH1 đã lưu đúng số; menu luôn có cả hai nút', () => {
+    const h = html(clipWith({ speedMode: 'auto', positionUnit: 'ch1', keyframes: [
+      { id: 'a', offset: 0, height: 0 },
+      { id: 'b', offset: 4, height: 1, ch1: 100 }, // 100/255 × 2.55 = 1.0 m
+      { id: 'c', offset: 8, height: 0.5 },
+    ] }));
+    expect(h).toMatch(/aria-pressed="false"[^>]*>m<[\s\S]*aria-pressed="true"[^>]*>CH1</);
+    expect(h).toContain('Độ cao hợp lệ: 0–255 (CH1');
+    expect(h).toMatch(/aria-label="Độ cao P2 \(CH1\)"[^>]*value="100"/); // số đã lưu
+    expect(h).toMatch(/aria-label="Độ cao P3 \(CH1\)"[^>]*value="50"/); // 0,5 m quy đổi tạm
+  });
+
   it('cue: hiện m|CH1 và cm/s|s|CH3; CH1 lưu lại và hiện tương đương m', () => {
     setupBrowserEnv();
     const project = createDefaultProject();

@@ -354,6 +354,7 @@ export function normalizeProject(raw: unknown): Project {
           id: reqString(kf.id, `clips[${idx}].keyframes[${kIdx}].id`, false),
           offset: Math.min(duration, reqFinite(kf.offset, `clips[${idx}].keyframes[${kIdx}].offset`, 0, duration + 0.05)),
           height: reqFinite(kf.height, `clips[${idx}].keyframes[${kIdx}].height`, 0),
+          ...(kf.ch1 === undefined ? {} : { ch1: reqFinite(kf.ch1, `clips[${idx}].keyframes[${kIdx}].ch1`, 0, 255, true) }),
           ...parseKeyframeSpeed(kf, `clips[${idx}].keyframes[${kIdx}]`),
         }
       })
@@ -368,6 +369,11 @@ export function normalizeProject(raw: unknown): Project {
           autoSpeedLimitCms: reqFinite(c.autoSpeedLimitCms, `clips[${idx}].autoSpeedLimitCms`, 1, MODULE_MAX_SPEED_LIMIT_CMS),
         }),
         ...parseClipSpeed(c, `clips[${idx}]`),
+        ...(c.positionUnit === undefined || c.positionUnit === 'm'
+          ? {}
+          : c.positionUnit === 'ch1'
+            ? { positionUnit: 'ch1' as const }
+            : failProject(`clips[${idx}].positionUnit phải là 'm' hoặc 'ch1'`)),
         keyframes,
       }
     })

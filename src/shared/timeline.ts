@@ -1,4 +1,4 @@
-import { ch3ToCms, clamp, cmsToCh3, snapPos, speedCap, stepPositionM } from './convert'
+import { ch1Range, ch1ToPos, ch3ToCms, clamp, cmsToCh3, snapPos, speedCap, stepPositionM } from './convert'
 import { parseTc, snapDeltaToFps, snapTimeToFps } from './timecode'
 import type { ClipKeyframe, Command, CueButton, Fps, ModuleCfg, Snapshot, TimelineClip, TimelineKey } from './types'
 
@@ -773,11 +773,12 @@ export function updateClipKeyframeHeight(
   clip: TimelineClip,
   keyframeId: string,
   height: number,
+  ch1?: number, // CH1 nhập thẳng (lưu nguyên); thiếu = nhập theo m (xoá ch1 cũ)
 ): { keyframes: ClipKeyframe[]; syncEdge?: 'start' | 'end' } {
   const sorted = [...clip.keyframes].sort((a, b) => a.offset - b.offset)
   const idx = sorted.findIndex((k) => k.id === keyframeId)
   const syncEdge = idx === 0 ? 'start' : idx === sorted.length - 1 ? 'end' : undefined
-  const keyframes = sorted.map((k) => (k.id === keyframeId ? { ...k, height } : k))
+  const keyframes = sorted.map((k) => (k.id === keyframeId ? { ...k, height, ch1 } : k))
   return { keyframes, syncEdge }
 }
 
@@ -1559,4 +1560,42 @@ export function cueRepDistanceCm(
     fromMin = Math.max(fromMin, Math.abs(goal - m.minHeight) * 100)
   }
   return fromPos > 1e-9 ? fromPos : fromMin
+}
+
+// ---- Độ cao các điểm trong moment: lưu NGUYÊN theo đơn vị nhập (m hoặc CH1); đổi menu chỉ đổi hiển thị ----
+
+type HeightMod = Pick<ModuleCfg, 'length' | 'minHeight' | 'maxHeight'>
+
+/** CH1 đã nhập của điểm, chỉ khi còn khớp `height` (height bị sửa chỗ khác ⇒ bỏ qua). */
+export function keyframeCh1(kf: Pick<ClipKeyframe, 'height' | 'ch1'>, mod: Pick<ModuleCfg, 'length'>): number | undefined {
+  return kf.ch1 !== undefined && Math.abs(ch1ToPos(kf.ch1, mod.length) - kf.height) < 1e-4 ? kf.ch1 : undefined
+}
+
+export function mToCh1Raw(m: number, length: number): number {
+  return clamp(Math.round((m / Math.max(0.001, length)) * 255), 0, 255)
+}
+
+/** Giá trị hiển thị độ cao của điểm theo menu: cùng đơn vị lưu → đúng số lưu; khác → quy đổi tạm. */
+export function keyframeHeightDisplay(kf: Pick<ClipKeyframe, 'height' | 'ch1'>, view: 'm' | 'ch1', mod: Pick<ModuleCfg, 'length'>): number {
+  const stored = keyframeCh1(kf, mod)
+  if (view === 'ch1') return stored ?? mToCh1Raw(kf.height, mod.length)
+  return Number(kf.height.toFixed(3))
+}
+
+/** Dải độ cao hợp lệ theo đơn vị: m = [min, min(max,length)]; CH1 = ch1Range (kẹp theo min–max module). */
+export function heightRange(mod: HeightMod, view: 'm' | 'ch1'): [number, number] {
+  if (view === 'ch1') return ch1Range(mod)
+  const lo = Math.max(0, mod.minHeight)
+  return [lo, Math.min(mod.length, Math.max(lo, mod.maxHeight))]
+}
+
+/** Nhập độ cao theo đơn vị đang chọn → {height (m), ch1?}. CH1 lưu nguyên số (kẹp theo min–max), m lưu số m (bỏ ch1). */
+export function keyframeHeightFromInput(raw: number, view: 'm' | 'ch1', mod: HeightMod): { height: number; ch1?: number } {
+  if (view === 'ch1') {
+    const [lo, hi] = ch1Range(mod)
+    const ch1 = clamp(Math.round(raw), lo, hi)
+    return { height: ch1ToPos(ch1, mod.length), ch1 }
+  }
+  const [lo, hi] = heightRange(mod, 'm')
+  return { height: clamp(raw, lo, hi) }
 }

@@ -113,8 +113,13 @@ export interface ClipKeyframe {
   id: string
   /** Thời điểm tương đối từ đầu clip (giây). */
   offset: number
-  /** Chiều cao thả màn (m). */
+  /** Chiều cao thả màn (m). Luôn là giá trị m tương đương: nếu người dùng nhập CH1 thì `ch1` giữ số đã nhập. */
   height: number
+  /**
+   * CH1 (0–255) người dùng nhập, lưu NGUYÊN số đó; `height` = ch1ToPos(ch1). Chỉ hợp lệ khi khớp `height`
+   * (nếu `height` bị sửa chỗ khác — kéo thả, preset — thì `ch1` cũ bị bỏ qua). Thiếu = nhập theo m.
+   */
+  ch1?: number
   /** Tốc độ đoạn đi từ điểm này tới điểm kế: 'auto' (mặc định, tính từ quãng/thời gian) hoặc 'manual'. */
   speedMode?: 'auto' | 'manual'
   /** Tốc độ nhập tay (cm/s) khi speedMode = 'manual'; kẹp [1, maxSpeedCms] lúc phát. */
@@ -146,6 +151,8 @@ export interface TimelineClip {
   speedValue?: number
   /** Menu đơn vị đang chọn (chỉ hiển thị; cột CÁC ĐIỂM theo menu này). Mặc định = speedUnit ?? 'cms'. Giá trị lưu không bị quy đổi khi đổi menu. */
   speedView?: 'cms' | 'sec' | 'ch3'
+  /** Menu đơn vị độ cao các điểm (chỉ hiển thị): 'm' (mặc định) | 'ch1'. Giá trị lưu của từng điểm không bị ghi đè khi đổi menu. */
+  positionUnit?: 'm' | 'ch1'
   keyframes: ClipKeyframe[]
 }
 
