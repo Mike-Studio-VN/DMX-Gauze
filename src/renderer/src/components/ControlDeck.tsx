@@ -18,7 +18,7 @@ import {
   computeSharedManualWaveLevel,
   resolveCueButtonBaselines,
 } from '@shared/convert'
-import { DEFAULT_MOTION_SPEED_CMS, defaultCueSpeedCms } from '@shared/timeline'
+import { DEFAULT_MOTION_SPEED_CMS, cueSpeedSummary, defaultCueSpeedCms, stepSpeed } from '@shared/timeline'
 import type { CueButton, SpeedUnit } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 import { TimelineEditor } from './TimelineEditor'
@@ -277,15 +277,17 @@ export function ModeButtons(props: {
     setLastFiredButton(b.id, baselines)
     for (const s of b.steps) {
       if (cueRun.current !== run) break
-      let speedVal = b.speedValue
-      if (b.speedUnit === 'sec' && isResumingSameCue) {
+      // Tốc độ của module này: riêng của bước (nếu có, chỉ khi Manual) hoặc tốc độ chung của cue.
+      const eff = b.autoSpeedLimitCms !== undefined ? { unit: b.speedUnit, value: b.speedValue } : stepSpeed(b, s)
+      let speedVal = eff.value
+      if (eff.unit === 'sec' && isResumingSameCue) {
         const base = baselines[s.moduleId]
         const curPos = snapshot?.modules[s.moduleId]?.pos ?? base?.start
         if (base && curPos !== undefined) {
           const span = Math.abs(base.goal - base.start)
           const left = Math.abs(base.goal - curPos)
           if (span >= 0.005 && left > 0.008 && left < span - 0.005) {
-            speedVal = Math.max(0.1, Number((b.speedValue * (left / span)).toFixed(2)))
+            speedVal = Math.max(0.1, Number((eff.value * (left / span)).toFixed(2)))
           }
         }
       }
@@ -294,7 +296,7 @@ export function ModeButtons(props: {
         ids: [s.moduleId],
         // CH1 nhập thẳng → target {ch1} (đúng byte, kẹp theo min–max); CH3 nhập thẳng → unit 'ch3' (đúng byte, 1..255).
         target: s.unit === 'ch1' ? { ch1: s.position } : s.position,
-        speed: { unit: b.speedUnit, value: speedVal, limitCms: b.autoSpeedLimitCms },
+        speed: { unit: eff.unit, value: speedVal, limitCms: b.autoSpeedLimitCms },
       }, { source: 'buttons' })
       if (!res.ok) break
     }
@@ -428,7 +430,15 @@ export function ModeButtons(props: {
                 ? matchedLayers.map((l) => l.name).join(' + ')
                 : `${b.steps.length} modules`
           const leftFooter = `${b.steps.length} MODULES`
-          const rightFooter = b.speedUnit === 'sec' ? `${b.speedValue}S` : b.speedUnit === 'ch3' ? `CH3 ${b.speedValue}` : `${b.speedValue} CM/S`
+          const speedSum = cueSpeedSummary(b)
+          const rightFooter =
+            speedSum === null
+              ? 'NHIỀU TỐC ĐỘ'
+              : speedSum.unit === 'sec'
+                ? `${speedSum.value}S`
+                : speedSum.unit === 'ch3'
+                  ? `CH3 ${speedSum.value}`
+                  : `${speedSum.value} CM/S`
           const barIconColor = isBarSelected
             ? 'text-[#f3f7ff] hover:bg-white/15'
             : isPrevSelected

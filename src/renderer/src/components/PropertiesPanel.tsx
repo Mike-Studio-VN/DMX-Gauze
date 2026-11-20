@@ -45,7 +45,11 @@ import {
   cmsToSeconds,
   DEFAULT_MOTION_SPEED_CMS,
   applyCueValues,
+  cueModeSwitch,
   cueRepDistanceCm,
+  stepSpeed,
+  stepWithPosition,
+  speedStoredFromInput,
   defaultCueSpeedCms,
   cueSpeedView,
   storedSpeedAsCms,
@@ -54,6 +58,7 @@ import {
   keyframeCh1,
   keyframeHeightDisplay,
   keyframeHeightFromInput,
+  momentModePatch,
   momentSpeedValue,
   representativeSegmentIndex,
   resolveClipSegmentSpeed,
@@ -849,8 +854,10 @@ function momentSpeedPanels({
   const valueFor = (u: 'cms' | 'sec' | 'ch3', cms: number): number | null => momentSpeedValue(u, cms, rep.dist, cap)
   const setMode = (m: 'auto' | 'manual') => {
     if (m === mode) return
-    if (m === 'auto') apply({ speedMode: 'auto', speedUnit: undefined, speedValue: undefined, speedView: unit })
-    else apply({ speedMode: 'manual', speedUnit: unit, speedValue: valueFor(unit, repCms) ?? Number(repCms.toFixed(1)), speedView: unit })
+    // Auto giữ speedUnit/speedValue đã nhập; Manual dùng lại giá trị đó (chưa có thì lấy giá trị tự tính hiện tại).
+    const patch = momentModePatch(clip, m, { unit, value: valueFor(unit, repCms) ?? Number(repCms.toFixed(1)) })
+    if (m === 'auto') onUpdate({ speedMode: 'auto', speedView: unit, keyframes: clearPointSpeeds }, `momspd-${clip.id}`)
+    else apply({ ...patch, speedView: unit })
   }
   // Đổi menu CHỈ đổi cách hiển thị: giá trị đã lưu (speedUnit + speedValue) không bị quy đổi/ghi đè cho tới khi sửa ô.
   const setUnit = (u: 'cms' | 'sec' | 'ch3') => {
@@ -977,6 +984,16 @@ function CueButtonEditor({
     onSave({ ...btn, positionUnit: nextUnit === 'ch1' ? 'ch1' : undefined })
   }
 
+  // Tốc độ riêng của module (Manual): lưu NGUYÊN theo đơn vị đang chọn vào bước của module. Auto: không sửa.
+  const setModuleSpeed = (m: ModuleCfg, raw: number) => {
+    if (isAuto || !stepById.has(m.id)) return
+    const stored = speedStoredFromInput(speedView, raw)
+    onSave(
+      { ...btn, steps: btn.steps.map((s) => (s.moduleId === m.id ? { ...s, speedUnit: speedView, speedValue: stored } : s)), speedView },
+      `cue-mspd-${btn.id}-${m.id}`,
+    )
+  }
+
   const toggleModule = (m: ModuleCfg) => {
     const exists = btn.steps.some((s) => s.moduleId === m.id)
     const steps = exists ? btn.steps.filter((s) => s.moduleId !== m.id) : [...btn.steps, currentStep(m)]
@@ -986,7 +1003,8 @@ function CueButtonEditor({
   const setModuleHeight = (m: ModuleCfg, rawPos: number) => {
     const next = storeFromInput(rawPos, m)
     const exists = btn.steps.some((s) => s.moduleId === m.id)
-    const steps = exists ? btn.steps.map((s) => (s.moduleId === m.id ? next : s)) : [...btn.steps, next]
+    // Giữ tốc độ riêng của bước khi chỉ sửa vị trí.
+    const steps = exists ? btn.steps.map((s) => (s.moduleId === m.id ? stepWithPosition(s, next) : s)) : [...btn.steps, next]
     onSave({ ...btn, steps }, `cue-mod-${btn.id}-${m.id}`)
   }
 
@@ -1067,10 +1085,8 @@ function CueButtonEditor({
               title={m === 'auto' ? 'Auto: tốc độ tự tính, giới hạn theo cue mặc định' : 'Manual: nhập tốc độ'}
               onClick={() => {
                 if ((m === 'auto') === isAuto) return
-                if (m === 'auto') {
-                  const mods = btn.steps.length > 0 ? modules.filter((x) => stepById.has(x.id)) : modules
-                  onSave({ ...btn, speedUnit: 'cms', speedValue: defaultCueSpeedCms(mods), speedView: undefined, autoSpeedLimitCms: DEFAULT_MOTION_SPEED_CMS })
-                } else onSave({ ...btn, autoSpeedLimitCms: undefined })
+                const mods = btn.steps.length > 0 ? modules.filter((x) => stepById.has(x.id)) : modules
+                onSave(cueModeSwitch(btn, m, defaultCueSpeedCms(mods), DEFAULT_MOTION_SPEED_CMS))
               }}
               className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${(m === 'auto') === isAuto ? 'on' : ''}`}
             >
@@ -1302,6 +1318,35 @@ function CueButtonEditor({
                             {heightUnit === 'ch1' ? 'CH1' : 'm'}
                           </button>
                         </div>
+                        {(() => {
+                          // Tốc độ của module (bên phải vị trí): bước có tốc độ riêng thì dùng, không thì tốc độ chung của cue.
+                          const eff = step && !isAuto ? stepSpeed(btn, step) : { unit: btn.speedUnit, value: btn.speedValue }
+                          const rowDist = step ? Math.abs(stepPositionM(step, m.length) - (snapshotModules[m.id]?.pos ?? m.minHeight)) * 100 || Math.abs(stepPositionM(step, m.length) - m.minHeight) * 100 : 0
+                          const shown = speedDisplayValue(speedView, eff.unit, eff.value, rowDist, m.maxSpeedCms)
+                          const label = speedView === 'cms' ? 'cm/s' : speedView === 'sec' ? 's' : 'CH3'
+                          const editableSpeed = checked && !isAuto
+                          return (
+                            <div
+                              className="kiln-field flex h-6 w-[4.5rem] items-center rounded-full px-2"
+                              title={isAuto ? 'Auto: tốc độ tự tính, chỉ đọc (chọn Manual để nhập)' : step?.speedValue !== undefined ? `Tốc độ riêng của ${m.name}` : `Đang dùng tốc độ chung của cue; nhập để đặt riêng cho ${m.name}`}
+                            >
+                              <NumberField
+                                key={`${btn.id}-${m.id}-${speedView}-${eff.unit}-${eff.value}-${editableSpeed}`}
+                                readOnly={!editableSpeed}
+                                tabIndex={editableSpeed ? 0 : -1}
+                                step={speedView === 'ch3' ? 1 : '0.5'}
+                                min={speedView === 'ch3' ? 1 : 0.1}
+                                max={speedView === 'ch3' ? 255 : undefined}
+                                integer={speedView === 'ch3' ? 'round' : undefined}
+                                aria-label={`Tốc độ ${m.name} (${label})`}
+                                value={checked && shown !== null ? shown : '—'}
+                                onCommit={(value) => setModuleSpeed(m, value)}
+                                className="w-full min-w-0 border-0 bg-transparent text-center text-[11.5px] text-fg tabular-nums outline-none"
+                              />
+                              <span className="shrink-0 pl-0.5 text-[10px] text-muted">{label}</span>
+                            </div>
+                          )
+                        })()}
                       </div>
                     )
                   })}

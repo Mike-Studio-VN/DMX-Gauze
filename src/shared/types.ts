@@ -81,6 +81,9 @@ export interface CueStep {
   position: number
   /** Đơn vị của `position`: 'm' (mặc định, project cũ) hoặc 'ch1' (gửi đúng CH1 đó). */
   unit?: 'm' | 'ch1'
+  /** Tốc độ RIÊNG của module này (lưu nguyên theo đơn vị nhập). Thiếu = dùng tốc độ chung của cue. Bỏ qua khi cue ở Auto. */
+  speedUnit?: SpeedUnit | 'ch3'
+  speedValue?: number
 }
 
 export interface CueButton {
@@ -94,6 +97,8 @@ export interface CueButton {
   autoSpeedLimitCms?: number
   /** Menu đơn vị vị trí đang chọn (chỉ hiển thị; không ghi đè giá trị đã lưu cho tới khi sửa ô). Mặc định 'm'. */
   positionUnit?: 'm' | 'ch1'
+  /** Tốc độ Manual được cất khi chuyển sang Auto, để chuyển lại Manual không mất giá trị đã nhập. */
+  manualSpeed?: { unit: SpeedUnit | 'ch3'; value: number }
   /** Menu đơn vị tốc độ đang chọn (chỉ hiển thị). Mặc định = speedUnit. */
   speedView?: 'cms' | 'sec' | 'ch3'
   /** Vị trí ô (0-based) trong lưới Cue Custom. */

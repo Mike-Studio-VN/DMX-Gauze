@@ -186,7 +186,13 @@ function parseClipSpeed(c: Record<string, unknown>, label: string): Pick<Timelin
   const view = reqSpeedUnit(c.speedView, `${label}.speedView`)
   const v = view === undefined ? {} : { speedView: view }
   if (c.speedMode === undefined) return v // moment cũ: giữ hành vi theo từng điểm
-  if (c.speedMode === 'auto') return { speedMode: 'auto', ...v }
+  if (c.speedMode === 'auto') {
+    // Auto giữ giá trị Manual đã nhập (nếu có) để chuyển lại Manual không mất.
+    const keep = c.speedValue === undefined
+      ? {}
+      : { speedUnit: reqSpeedUnit(c.speedUnit, `${label}.speedUnit`) ?? 'cms', speedValue: reqFinite(c.speedValue, `${label}.speedValue`, 0, 10000) }
+    return { speedMode: 'auto', ...keep, ...v }
+  }
   if (c.speedMode !== 'manual') failProject(`${label}.speedMode phải là 'auto' hoặc 'manual'`)
   const unit = reqSpeedUnit(c.speedUnit, `${label}.speedUnit`) ?? 'cms'
   const value = reqFinite(c.speedValue, `${label}.speedValue`, 0, 10000)
@@ -293,6 +299,13 @@ export function normalizeProject(raw: unknown): Project {
           moduleId: reqString(s.moduleId, `buttons[${idx}].steps[${sIdx}].moduleId`, false),
           position: ch1 ? reqFinite(s.position, `buttons[${idx}].steps[${sIdx}].position`, 0, 255, true) : reqFinite(s.position, `buttons[${idx}].steps[${sIdx}].position`, 0),
           ...(ch1 ? { unit: 'ch1' as const } : {}),
+          ...(s.speedValue === undefined
+            ? {}
+            : (() => {
+                const su = reqSpeedUnit(s.speedUnit, `buttons[${idx}].steps[${sIdx}].speedUnit`)
+                if (su === undefined) failProject(`buttons[${idx}].steps[${sIdx}].speedUnit thiếu`)
+                return { speedUnit: su, speedValue: reqFinite(s.speedValue, `buttons[${idx}].steps[${sIdx}].speedValue`, 0.01, su === 'ch3' ? 255 : undefined) }
+              })()),
         }
       })
       return {
@@ -307,6 +320,16 @@ export function normalizeProject(raw: unknown): Project {
             ? { positionUnit: 'ch1' as const }
             : failProject(`buttons[${idx}].positionUnit phải là 'm' hoặc 'ch1'`)),
         ...(speedView === undefined ? {} : { speedView }),
+        ...(b.manualSpeed === undefined
+          ? {}
+          : isRecord(b.manualSpeed) && reqSpeedUnit(b.manualSpeed.unit, `buttons[${idx}].manualSpeed.unit`) !== undefined
+            ? {
+                manualSpeed: {
+                  unit: b.manualSpeed.unit as SpeedUnitId,
+                  value: reqFinite(b.manualSpeed.value, `buttons[${idx}].manualSpeed.value`, 0.01, b.manualSpeed.unit === 'ch3' ? 255 : undefined),
+                },
+              }
+            : failProject(`buttons[${idx}].manualSpeed không hợp lệ`)),
         ...(b.autoSpeedLimitCms === undefined ? {} : {
           autoSpeedLimitCms: reqFinite(b.autoSpeedLimitCms, `buttons[${idx}].autoSpeedLimitCms`, 1, DEFAULT_MOTION_SPEED_CMS),
         }),
