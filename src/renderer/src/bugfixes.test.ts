@@ -1596,8 +1596,17 @@ describe('Đơn vị tốc độ: moment (Auto/Manual luôn hiện) và cue (m|C
       expect(h).toMatch(/>Auto<[\s\S]*>Manual</);
       expect(h).toMatch(/>cm\/s<[\s\S]*>s<[\s\S]*>CH3</);
     }
-    expect(html(clipWith({ speedMode: 'auto' }))).toMatch(/<input[^>]*readOnly=""[^>]*aria-label="Giá trị tự tính/);
-    expect(html(clipWith({ speedMode: 'manual', speedUnit: 'cms', speedValue: 40 }))).toMatch(/aria-label="Tốc độ chung \(cm\/s\)"/);
+    // Không còn ô giá trị chung dưới nút; tốc độ nằm ở cột từng hàng: Auto chỉ đọc, Manual nhập được
+    for (const over of [{ speedMode: 'auto' as const }, { speedMode: 'manual' as const, speedUnit: 'cms' as const, speedValue: 40 }]) {
+      const h = html(clipWith(over));
+      expect(h).not.toContain('Tốc độ chung (cm/s)');
+      expect(h).not.toContain('Giá trị tự tính');
+    }
+    expect(html(clipWith({ speedMode: 'auto' }))).toMatch(/<input[^>]*readOnly=""[^>]*aria-label="cm\/s tới P2"/);
+    expect(html(clipWith({ speedMode: 'manual', speedUnit: 'cms', speedValue: 40 }))).toMatch(/<input(?![^>]*readOnly)[^>]*aria-label="cm\/s tới P2"[^>]*value="40"/);
+    expect(html(clipWith({ speedMode: 'manual', speedUnit: 'cms', speedValue: 40 }))).toMatch(/aria-label="cm\/s tới P3"[^>]*value="40"/); // giá trị chung hiện lại ở mọi hàng
+    expect(html(clipWith({ speedMode: 'manual', speedUnit: 'ch3', speedValue: 100, speedView: 'ch3' }))).toMatch(/aria-label="CH3 tới P3"[^>]*value="100"/);
+    expect(html(clipWith({ speedMode: 'manual', speedUnit: 'sec', speedValue: 2.5, speedView: 'sec' }))).toMatch(/<input(?![^>]*readOnly)[^>]*aria-label="s tới P2"[^>]*value="2.5"/);
   });
 
   it('cột CÁC ĐIỂM đổi đơn vị theo menu: s = thời điểm, cm/s = tốc độ đoạn vào (P1 —), CH3 theo max module (>120 đúng)', () => {
@@ -1626,9 +1635,11 @@ describe('Đơn vị tốc độ: moment (Auto/Manual luôn hiện) và cue (m|C
     expect(iHead).toBeGreaterThan(-1);
     expect(iHead).toBeLessThan(iValid);
     expect(iValid).toBeLessThan(iAuto);
-    expect(iAuto).toBeLessThan(iUnit);
-    expect(iUnit).toBeLessThan(iHeightUnit);
-    expect(iHeightUnit).toBeLessThan(iRow);
+    // hàng 1 = Auto|Manual; hàng 2 = m|CH1 (trái) rồi cm/s|s|CH3 (phải); rồi danh sách điểm
+    expect(iAuto).toBeLessThan(iHeightUnit);
+    expect(iHeightUnit).toBeLessThan(iUnit);
+    expect(iUnit).toBeLessThan(iRow);
+    expect(h).not.toContain('Tốc độ chung');
     expect(h).not.toContain('Tốc độ moment</div>'); // không lặp tiêu đề/nút bên dưới
     expect(h.match(/aria-label="Chế độ tốc độ moment"/g)).toHaveLength(1);
     // cột: độ cao nằm TRƯỚC (bên trái) tốc độ trong cùng hàng
