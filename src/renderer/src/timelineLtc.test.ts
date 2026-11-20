@@ -130,11 +130,19 @@ vi.mock('zustand', async () => {
 vi.mock('lucide-react', () => {
   const icon = (name: string) => () => ({ type: 'icon', props: { name } });
   return {
+    AlertCircle: icon('AlertCircle'),
     AlertTriangle: icon('AlertTriangle'),
+    ArrowDown: icon('ArrowDown'),
+    ArrowLeft: icon('ArrowLeft'),
+    ArrowUp: icon('ArrowUp'),
+    Check: icon('Check'),
     ChevronDown: icon('ChevronDown'),
     ChevronLeft: icon('ChevronLeft'),
     ChevronRight: icon('ChevronRight'),
     Clock: icon('Clock'),
+    Eye: icon('Eye'),
+    EyeOff: icon('EyeOff'),
+    HelpCircle: icon('HelpCircle'),
     Layers: icon('Layers'),
     Link2: icon('Link2'),
     Magnet: icon('Magnet'),
@@ -143,8 +151,11 @@ vi.mock('lucide-react', () => {
     Plus: icon('Plus'),
     Settings: icon('Settings'),
     RefreshCw: icon('RefreshCw'),
+    RotateCcw: icon('RotateCcw'),
     SkipBack: icon('SkipBack'),
     SkipForward: icon('SkipForward'),
+    Trash2: icon('Trash2'),
+    Waves: icon('Waves'),
     WifiOff: icon('WifiOff'),
     ZoomIn: icon('ZoomIn'),
     ZoomOut: icon('ZoomOut'),
@@ -152,6 +163,8 @@ vi.mock('lucide-react', () => {
 });
 
 import { TimelineEditor } from './components/TimelineEditor';
+import { DraftInput, NumberField } from './components/DraftInput';
+import { PropertiesPanel } from './components/PropertiesPanel';
 import { LtcSettingsPanel } from './components/LtcSettingsPanel';
 import { getBridge } from './services/bridge';
 import { useAppStore } from './store/useAppStore';
@@ -908,5 +921,189 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     expect(useAppStore.getState().ltcReception).toMatchObject({ status: 'lost', inputOpen: false });
     expect(replacement.stop).toHaveBeenCalledOnce();
     expect(holdTimelineTargets).toHaveBeenCalled();
+  });
+});
+
+describe('Renderer numeric fields commit explicit edits', () => {
+  const renderNumber = (field: VNode) => {
+    const node = NumberField(field.props as unknown as Parameters<typeof NumberField>[0]) as unknown as VNode;
+    return DraftInput(node.props as unknown as Parameters<typeof DraftInput<number>>[0]) as unknown as VNode;
+  };
+  const fieldInProperties = (container: string, select: (node: VNode) => boolean): VNode => {
+    const panel = PropertiesPanel({}) as unknown as VNode;
+    const section = collectNodes(panel).find((node) => typeof node.type === 'function' && node.type.name === container);
+    const content = (section!.type as (props: VNode['props']) => VNode)(section!.props);
+    const fields = collectNodes(content).filter((node) => node.type === NumberField);
+    return renderNumber(fields.find(select)!);
+  };
+  const input = () => hookRuntime.lastTree!.props;
+  const change = (value: string) => {
+    (input().onChange as (event: unknown) => void)({ currentTarget: { value } });
+  };
+  const press = (key: string) => {
+    (input().onKeyDown as (event: unknown) => void)({
+      key, nativeEvent: { isComposing: false }, preventDefault: vi.fn(), stopPropagation: vi.fn(),
+    });
+    hookRuntime.render();
+  };
+  const blur = () => {
+    (input().onBlur as () => void)();
+    hookRuntime.render();
+  };
+
+  beforeEach(() => {
+    hookRuntime.reset();
+    useAppStore.setState(useAppStore.getInitialState());
+  });
+
+  afterEach(() => {
+    hookRuntime.reset();
+    vi.restoreAllMocks();
+  });
+
+  it('selects all and holds empty, incomplete and decimal-comma edits until commit', () => {
+    let saved = 6;
+    const commit = vi.fn((value: number) => { saved = value; });
+    hookRuntime.component = () => renderNumber({ type: NumberField, props: {
+      value: saved, min: -10, max: 10, onCommit: commit,
+    } });
+    hookRuntime.render();
+    const select = vi.fn();
+    (input().onFocus as (event: unknown) => void)({ currentTarget: { select } });
+    expect(select).toHaveBeenCalledOnce();
+
+    for (const draft of ['', '-', '.', ',', '-3,', '-3,5']) {
+      change(draft);
+      expect(input().value).toBe(draft);
+      expect(commit).not.toHaveBeenCalled();
+    }
+    press('Enter');
+    blur();
+    expect(commit.mock.calls).toEqual([[-3.5]]);
+    expect(input().value).toBe('-3.5');
+
+    change('90');
+    expect(saved).toBe(-3.5);
+    press('Enter');
+    expect(saved).toBe(10);
+    expect(input().value).toBe('10');
+
+    change(',5');
+    blur();
+    expect(saved).toBe(0.5);
+    for (const draft of ['', '-', 'abc']) {
+      change(draft);
+      press('Enter');
+      expect(input().value).toBe('0.5');
+    }
+    change('2');
+    press('Escape');
+    blur();
+    expect(input().value).toBe('0.5');
+    expect(commit.mock.calls).toEqual([[-3.5], [10], [0.5]]);
+  });
+
+  it('stages a clamped CH2 monitor value on Enter without writing DMX or the project', () => {
+    const project = createDefaultProject();
+    const mod = project.modules[0];
+    const command = vi.spyOn(getBridge(), 'command');
+    useAppStore.setState({ project, selectedIds: [mod.id], selectedLayerId: null });
+    // Select the second of the three editable channels by its position.
+    function monitorField() {
+      const panel = PropertiesPanel({}) as unknown as VNode;
+      const monitor = collectNodes(panel).find((node) => typeof node.type === 'function' && node.type.name === 'ChannelMonitor')!;
+      const tree = (monitor.type as (props: VNode['props']) => VNode)(monitor.props);
+      const fields = collectNodes(tree).filter((node) => node.type === NumberField);
+      expect(fields).toHaveLength(3);
+      expect(extractText(tree)).toContain('CH4 Lock');
+      return renderNumber(fields[1]);
+    }
+    hookRuntime.component = monitorField;
+    hookRuntime.render();
+    change('');
+    expect(input().value).toBe('');
+    change('800');
+    expect(input().value).toBe('800');
+    press('Enter');
+    expect(input().value).toBe('255');
+    expect(useAppStore.getState().project.modules[0].ch2Fine).toBe(mod.ch2Fine);
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it('commits a moment point only on blur with the module height limit', () => {
+    const project = createDefaultProject();
+    const mod = project.modules[0];
+    mod.minHeight = 0.1;
+    mod.maxHeight = 0.8;
+    const clip: TimelineClip = {
+      id: 'draft-point', layerId: mod.layerId, moduleId: mod.id, startTime: 0, duration: 3, curveMode: 'linear',
+      keyframes: [{ id: 'start', offset: 0, height: 0.2 }, { id: 'point', offset: 1.5, height: 0.4 }, { id: 'end', offset: 3, height: 0.6 }],
+    };
+    project.clips = [clip];
+    const updateClip = vi.fn();
+    useAppStore.setState({ project, selectedClipId: clip.id, selectedClipIds: [clip.id], updateClip });
+    hookRuntime.component = () => fieldInProperties('MomentEditor', (node) =>
+      String(node.props.title).startsWith('Độ cao (m)') && node.props.value === 0.4);
+    hookRuntime.render();
+    change('');
+    change('3,7');
+    expect(input().value).toBe('3,7');
+    expect(updateClip).not.toHaveBeenCalled();
+    blur();
+    expect(updateClip).toHaveBeenCalledWith(clip.id, {
+      keyframes: [clip.keyframes[0], { ...clip.keyframes[1], height: 0.8 }, clip.keyframes[2]],
+    }, 'kfh-point', undefined);
+  });
+
+  it('commits the point speed as raw CH3 when the display unit is CH3', () => {
+    const project = createDefaultProject();
+    const mod = project.modules[0];
+    mod.maxSpeedCms = 300;
+    const clip: TimelineClip = {
+      id: 'draft-ch3', layerId: mod.layerId, moduleId: mod.id, startTime: 0, duration: 3,
+      speedMode: 'manual', speedUnit: 'cms', speedValue: 40, speedView: 'ch3',
+      keyframes: [{ id: 'start', offset: 0, height: 0.2 }, { id: 'end', offset: 3, height: 0.6 }],
+    };
+    project.clips = [clip];
+    const updateClip = vi.fn();
+    useAppStore.setState({ project, selectedClipId: clip.id, selectedClipIds: [clip.id], updateClip });
+    hookRuntime.component = () => fieldInProperties('MomentEditor', (node) => node.props['aria-label'] === 'CH3 tới P2');
+    hookRuntime.render();
+    change('');
+    change('100');
+    expect(input().value).toBe('100');
+    expect(updateClip).not.toHaveBeenCalled();
+    press('Enter');
+    expect(updateClip).toHaveBeenCalledWith(clip.id, {
+      speedMode: 'manual', speedUnit: 'ch3', speedValue: 100, speedView: 'ch3',
+    }, 'momspd-draft-ch3', undefined);
+  });
+
+  it('commits a cue target in CH1 once and clamps it to the module range', () => {
+    const project = createDefaultProject();
+    const mod = project.modules[0];
+    Object.assign(mod, { length: 2, minHeight: 0.2, maxHeight: 1.2 });
+    const cue = { ...project.buttons[0], positionUnit: 'ch1' as const, steps: [{ moduleId: mod.id, position: 0.5 }] };
+    project.buttons = [cue];
+    const saveButton = vi.fn();
+    useAppStore.setState({ project, focusScope: 'buttons', selectedButtonId: cue.id, saveButton });
+    hookRuntime.component = () => fieldInProperties('CueButtonEditor', (node) => node.props['aria-label'] === `${mod.name} (CH1)`);
+    hookRuntime.render();
+    expect(input().value).toBe('64');
+    change('');
+    change('100');
+    press('Escape');
+    expect(input().value).toBe('64');
+    expect(saveButton).not.toHaveBeenCalled();
+    change('100');
+    press('Enter');
+    expect(saveButton).toHaveBeenLastCalledWith(expect.objectContaining({
+      steps: [{ moduleId: mod.id, position: 100, unit: 'ch1' }],
+    }), expect.any(String));
+    change('255');
+    blur();
+    expect(saveButton).toHaveBeenLastCalledWith(expect.objectContaining({
+      steps: [{ moduleId: mod.id, position: 153, unit: 'ch1' }],
+    }), expect.any(String));
   });
 });

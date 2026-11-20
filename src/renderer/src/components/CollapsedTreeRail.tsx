@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Eye, EyeOff, Layers, PanelLeftOpen, Plus, X } from 'lucide-react'
 import { addressRange } from '@shared/dmx'
 import { useAppStore } from '../store/useAppStore'
+import { NumberField } from './DraftInput'
 
 export function CollapsedTreeRail({ onExpand }: { onExpand: () => void }) {
   const {
@@ -20,7 +21,7 @@ export function CollapsedTreeRail({ onExpand }: { onExpand: () => void }) {
   const [openLayerId, setOpenLayerId] = useState<string | null>(null)
   const [addingMod, setAddingMod] = useState(false)
   const [modName, setModName] = useState('')
-  const [modLen, setModLen] = useState('1')
+  const [modLen, setModLen] = useState(1)
   const [addErr, setAddErr] = useState<string | null>(null)
 
   const [addingLayer, setAddingLayer] = useState(false)
@@ -57,7 +58,7 @@ export function CollapsedTreeRail({ onExpand }: { onExpand: () => void }) {
 
   const handleQuickAddModule = () => {
     if (!openLayer) return
-    const len = Number(modLen) || 1
+    const len = modLen
     const err = addModule(openLayer.id, { name: modName, length: len, width: len >= 2 ? 3 : 1 })
     if (err) {
       setAddErr(err)
@@ -231,12 +232,11 @@ export function CollapsedTreeRail({ onExpand }: { onExpand: () => void }) {
                 className="kiln-field h-7 w-full px-2 text-xs"
               />
               <div className="flex items-center gap-1.5">
-                <input
-                  type="number"
+                <NumberField
                   step="0.5"
                   min="0.2"
                   value={modLen}
-                  onChange={(e) => setModLen(e.target.value)}
+                  onCommit={setModLen}
                   className="kiln-field h-7 w-16 px-2 text-xs"
                 />
                 <span className="text-[11px] text-muted">mét</span>

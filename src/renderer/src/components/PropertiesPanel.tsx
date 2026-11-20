@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { NumberField } from './DraftInput'
 import {
   AlertCircle,
   AlertTriangle,
@@ -114,12 +115,12 @@ function TransformEditor({
               return (
                 <label key={ax} className="kiln-field flex h-7 items-center gap-1 px-2">
                   <span className="text-[10px] font-semibold text-muted">{ax}</span>
-                  <input
-                    type="number"
+                  <NumberField
                     step={step}
+                    min={field === 'scale' ? 0.1 : undefined}
                     disabled={disabled}
                     value={Number(tf[field][i].toFixed(2))}
-                    onChange={(e) => updateAxis(field, i as 0 | 1 | 2, Number(e.target.value))}
+                    onCommit={(value) => updateAxis(field, i as 0 | 1 | 2, value)}
                     className="min-w-0 flex-1 bg-transparent text-right text-[11.5px] text-fg tabular-nums outline-none"
                   />
                 </label>
@@ -434,11 +435,6 @@ function MomentEditor({
   const maxStartTime = Number.isFinite(bounds.maxEnd)
     ? Math.max(bounds.minStart, Number((bounds.maxEnd - clip.duration).toFixed(4)))
     : Number.POSITIVE_INFINITY
-  const [draftStart, setDraftStart] = useState<{ clipId: string; raw: string } | null>(null)
-  const [draftEnd, setDraftEnd] = useState<{ clipId: string; raw: string } | null>(null)
-  const [draftTime, setDraftTime] = useState<{ id: string; raw: string } | null>(null)
-  const [draftPct, setDraftPct] = useState<{ id: string; raw: string } | null>(null)
-  const [draftSpd, setDraftSpd] = useState<{ id: string; unit: string; raw: string } | null>(null)
   const pUnit = clip.speedView ?? clip.speedUnit ?? 'cms'
   const pCap = speedCap(mod)
 
@@ -538,33 +534,14 @@ function MomentEditor({
         <div className="grid grid-cols-2 gap-1.5">
           <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
             <span className="shrink-0 text-[10px] text-muted">Bắt đầu</span>
-            <input
-              type="number"
+            <NumberField
               step="0.1"
               min={bounds.minStart}
               max={Number.isFinite(maxStartTime) ? maxStartTime : undefined}
               aria-label="Thời điểm bắt đầu (s)"
-              value={draftStart?.clipId === clip.id ? draftStart.raw : clip.startTime}
-              onFocus={() => setDraftStart({ clipId: clip.id, raw: String(clip.startTime) })}
-              onChange={(e) => {
-                const raw = e.target.value
-                setDraftStart({ clipId: clip.id, raw })
-                if (!raw.trim() || raw.endsWith('.')) return
-                const num = Number(raw)
-                if (Number.isFinite(num) && num >= bounds.minStart && num <= maxStartTime) {
-                  commitStartTime(num)
-                }
-              }}
-              onBlur={() => {
-                if (draftStart?.clipId === clip.id) {
-                  const num = Number(draftStart.raw)
-                  if (draftStart.raw.trim() && Number.isFinite(num)) commitStartTime(num)
-                  setDraftStart(null)
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-              }}
+              key={clip.id}
+              value={clip.startTime}
+              onCommit={commitStartTime}
               className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none"
             />
             <span className="shrink-0 text-[10px] text-muted">s</span>
@@ -572,33 +549,14 @@ function MomentEditor({
 
           <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
             <span className="shrink-0 text-[10px] text-muted">Kết thúc</span>
-            <input
-              type="number"
+            <NumberField
               step="0.1"
               min={minEndTime}
               max={Number.isFinite(bounds.maxEnd) ? Number(bounds.maxEnd.toFixed(2)) : undefined}
               aria-label="Thời điểm kết thúc (s)"
-              value={draftEnd?.clipId === clip.id ? draftEnd.raw : endTime}
-              onFocus={() => setDraftEnd({ clipId: clip.id, raw: String(endTime) })}
-              onChange={(e) => {
-                const raw = e.target.value
-                setDraftEnd({ clipId: clip.id, raw })
-                if (!raw.trim() || raw.endsWith('.')) return
-                const num = Number(raw)
-                if (Number.isFinite(num) && num >= minEndTime && num <= bounds.maxEnd) {
-                  commitEndTime(num)
-                }
-              }}
-              onBlur={() => {
-                if (draftEnd?.clipId === clip.id) {
-                  const num = Number(draftEnd.raw)
-                  if (draftEnd.raw.trim() && Number.isFinite(num)) commitEndTime(num)
-                  setDraftEnd(null)
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-              }}
+              key={clip.id}
+              value={endTime}
+              onCommit={commitEndTime}
               className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none"
             />
             <span className="shrink-0 text-[10px] text-muted">s</span>
@@ -696,11 +654,6 @@ function MomentEditor({
             const active = selectedKeyId === kf.id
             const timelineTime = Number((clip.startTime + kf.offset).toFixed(4))
             const hM = Number(kf.height.toFixed(3))
-            const prevTimelineTime = idx > 0 ? Number((clip.startTime + sorted[idx - 1].offset).toFixed(4)) : bounds.minStart
-            const nextTimelineTime =
-              idx < sorted.length - 1
-                ? Number((clip.startTime + sorted[idx + 1].offset).toFixed(4))
-                : bounds.maxEnd
 
             return (
               <div
@@ -721,36 +674,14 @@ function MomentEditor({
                 </span>
                 {pUnit === 'sec' ? (
                   <label className="kiln-field flex min-w-0 flex-1 items-center gap-0.5 px-1">
-                    <input
-                      type="number"
+                    <NumberField
                       step="0.1"
                       min={bounds.minStart}
                       max={Number.isFinite(bounds.maxEnd) ? bounds.maxEnd : undefined}
                       title="Thời gian của điểm trên Timeline (s)"
-                      value={draftTime?.id === kf.id ? draftTime.raw : timelineTime}
-                      onFocus={() => {
-                        onSelectKey(kf.id)
-                        setDraftTime({ id: kf.id, raw: String(timelineTime) })
-                      }}
-                      onChange={(e) => {
-                        const raw = e.target.value
-                        setDraftTime({ id: kf.id, raw })
-                        if (!raw.trim() || raw.endsWith('.')) return
-                        const num = Number(raw)
-                        if (Number.isFinite(num) && num >= prevTimelineTime && num <= nextTimelineTime) {
-                          commitTimelineTime(kf.id, num)
-                        }
-                      }}
-                      onBlur={() => {
-                        if (draftTime?.id === kf.id) {
-                          const num = Number(draftTime.raw)
-                          if (draftTime.raw.trim() && Number.isFinite(num)) commitTimelineTime(kf.id, num)
-                          setDraftTime(null)
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                      }}
+                      value={timelineTime}
+                      onFocus={() => onSelectKey(kf.id)}
+                      onCommit={(value) => commitTimelineTime(kf.id, value)}
                       className={`w-full min-w-0 bg-transparent text-right text-[11px] tabular-nums outline-none ${
                         active ? 'font-semibold text-fg' : 'text-fg'
                       }`}
@@ -780,33 +711,20 @@ function MomentEditor({
                           : clip.speedMode === 'manual'
                             ? `${label} của đoạn đi tới điểm này. Sửa = đổi tốc độ chung của moment`
                             : `${label} của đoạn đi tới điểm này. Sửa = dời các điểm sau để đúng tốc độ`
-                    const drafting = draftSpd?.id === kf.id && draftSpd.unit === pUnit
                     return (
                       <label className="kiln-field flex min-w-0 flex-1 items-center gap-0.5 px-1" title={cellTitle}>
-                        <input
-                          type={editableCell ? 'number' : 'text'}
+                        <NumberField
+                          key={pUnit}
                           readOnly={!editableCell}
                           tabIndex={editableCell ? 0 : -1}
                           step={1}
                           min={1}
                           max={pUnit === 'ch3' ? 255 : pCap}
+                          integer={pUnit === 'ch3' ? 'round' : undefined}
                           aria-label={`${label} tới P${idx + 1}`}
-                          value={drafting ? draftSpd.raw : shownVal}
-                          onFocus={() => {
-                            onSelectKey(kf.id)
-                            if (editableCell) setDraftSpd({ id: kf.id, unit: pUnit, raw: shownVal })
-                          }}
-                          onChange={(e) => setDraftSpd({ id: kf.id, unit: pUnit, raw: e.target.value })}
-                          onBlur={() => {
-                            if (drafting && editableCell) {
-                              const num = Number(draftSpd.raw)
-                              if (draftSpd.raw.trim() && Number.isFinite(num) && draftSpd.raw !== shownVal) commitSpeedCell(kf.id, num)
-                            }
-                            setDraftSpd(null)
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                          }}
+                          value={shownVal}
+                          onFocus={() => onSelectKey(kf.id)}
+                          onCommit={(value) => commitSpeedCell(kf.id, value)}
                           className={`w-full min-w-0 bg-transparent text-right text-[11px] tabular-nums outline-none ${
                             active ? 'font-semibold text-fg' : 'text-fg'
                           }`}
@@ -818,34 +736,14 @@ function MomentEditor({
                 )}
                 <span className="text-muted">·</span>
                 <label className="kiln-field flex min-w-0 flex-1 items-center gap-0.5 px-1">
-                  <input
-                    type="number"
+                  <NumberField
                     step="0.01"
                     min={loM}
                     max={hiM}
                     title={`Độ cao (m), hợp lệ ${loM.toFixed(2)}–${hiM.toFixed(2)} m`}
-                    value={draftPct?.id === kf.id ? draftPct.raw : hM}
-                    onFocus={() => {
-                      onSelectKey(kf.id)
-                      setDraftPct({ id: kf.id, raw: String(hM) })
-                    }}
-                    onChange={(e) => {
-                      const raw = e.target.value
-                      setDraftPct({ id: kf.id, raw })
-                      if (!raw.trim() || raw.endsWith('.')) return
-                      const num = Number(raw)
-                      if (Number.isFinite(num)) commitHeight(kf.id, num)
-                    }}
-                    onBlur={() => {
-                      if (draftPct?.id === kf.id) {
-                        const num = Number(draftPct.raw)
-                        if (draftPct.raw.trim() && Number.isFinite(num)) commitHeight(kf.id, num)
-                        setDraftPct(null)
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                    }}
+                    value={hM}
+                    onFocus={() => onSelectKey(kf.id)}
+                    onCommit={(value) => commitHeight(kf.id, value)}
                     className={`w-full min-w-0 bg-transparent text-right text-[11px] tabular-nums outline-none ${
                       active ? 'font-semibold text-[#FFD08A]' : 'text-[#FFB26B]'
                     }`}
@@ -950,18 +848,15 @@ function MomentSpeedEditor({
       </div>
       {legacy && <p className="text-[10.5px] text-muted">Moment cũ: đang dùng tốc độ theo từng điểm. Chọn Auto/Manual để áp cho cả moment.</p>}
       {editable ? (
-        <input
-          key={`${clip.id}-${unit}-${storedUnit}-${clip.speedValue}`}
-          type="number"
+        <NumberField
+          key={`${clip.id}-${unit}`}
           min={unit === 'ch3' ? 1 : unit === 'sec' ? 0.05 : 1}
           max={unit === 'ch3' ? 255 : unit === 'cms' ? cap : undefined}
           step={unit === 'sec' ? 0.1 : 1}
-          defaultValue={shownManual ?? ''}
+          value={shownManual}
+          integer={unit === 'ch3' ? 'round' : undefined}
           aria-label={unit === 'cms' ? 'Tốc độ chung (cm/s)' : unit === 'sec' ? 'Thời gian mỗi đoạn (s)' : 'CH3 chung (1–255)'}
-          onBlur={(e) => commit(e.currentTarget.valueAsNumber)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur()
-          }}
+          onCommit={commit}
           className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
         />
       ) : (
@@ -1169,22 +1064,17 @@ function CueButtonEditor({
             ))}
           </div>
 
-          <input
-            key={`${btn.id}-${speedView}-${btn.speedUnit}-${btn.speedValue}`}
-            type="number"
-            min={speedView === 'ch3' ? 1 : '0.5'}
+          <NumberField
+            key={`${btn.id}-${speedView}`}
+            min={speedView === 'ch3' ? 1 : 0.1}
             max={speedView === 'ch3' ? 255 : undefined}
             step={speedView === 'ch3' ? 1 : '0.5'}
+            integer={speedView === 'ch3' ? 'round' : undefined}
             aria-label={`Giá trị tốc độ nút Cue (${speedView === 'cms' ? 'cm/s' : speedView === 'sec' ? 's' : 'CH3'})`}
-            defaultValue={speedShown ?? ''}
-            onBlur={(e) => {
-              const v = e.currentTarget.valueAsNumber
-              if (!Number.isFinite(v) || v === speedShown) return
-              // Lưu NGUYÊN theo đơn vị đang chọn (CH3 nhập 100 lưu 100, không qua cm/s).
+            value={speedShown}
+            onCommit={(v) => {
+              if (v === speedShown) return
               onSave({ ...btn, speedUnit: speedView, speedValue: speedStoredFromInput(speedView, v), speedView, autoSpeedLimitCms: undefined }, `cue-spd-${btn.id}`)
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') e.currentTarget.blur()
             }}
             className="kiln-field h-8 w-24 px-3 text-right text-xs tabular-nums"
           />
@@ -1253,14 +1143,15 @@ function CueButtonEditor({
 
         <div className="flex items-center gap-2">
           <div className="kiln-field flex h-8 w-24 items-center rounded-full px-2.5">
-            <input
-              type="number"
+            <NumberField
               step={heightUnit === 'ch1' ? '1' : '0.1'}
+              integer={heightUnit === 'ch1' ? 'round' : undefined}
               min="0"
               max={heightUnit === 'ch1' ? '255' : undefined}
               aria-label={`Chiều cao áp dụng cho các layer (${heightUnit === 'ch1' ? 'CH1' : 'm'})`}
               value={globalHeight}
-              onChange={(e) => setGlobalHeight(e.target.value)}
+              key={`${btn.id}-${heightUnit}`}
+              onCommit={(value) => setGlobalHeight(String(value))}
               className="w-full min-w-0 border-0 bg-transparent text-center text-xs text-fg tabular-nums outline-none"
             />
             <button
@@ -1309,6 +1200,7 @@ function CueButtonEditor({
                     const checked = stepById.has(m.id)
                     const step = stepById.get(m.id)
                     const pos = step ? stepPositionM(step, m.length) : m.minHeight
+                    const [minCh1, maxCh1] = ch1Range(m)
                     const displayVal = step ? stepDisplay(step, m) : heightUnit === 'ch1' ? mToCh1(m.minHeight, m.length) : m.minHeight
                     return (
                       <div
@@ -1336,18 +1228,15 @@ function CueButtonEditor({
                           </span>
                         )}
                         <div className="kiln-field flex h-6 w-20 items-center rounded-full px-2">
-                          <input
-                            type="number"
+                          <NumberField
                             step={heightUnit === 'ch1' ? '1' : '0.1'}
-                            min={heightUnit === 'ch1' ? 0 : m.minHeight}
-                            max={heightUnit === 'ch1' ? 255 : m.maxHeight}
+                            min={heightUnit === 'ch1' ? minCh1 : m.minHeight}
+                            max={heightUnit === 'ch1' ? maxCh1 : m.maxHeight}
                             aria-label={`${m.name} (${heightUnit === 'ch1' ? 'CH1' : 'm'})`}
+                            integer={heightUnit === 'ch1' ? 'round' : undefined}
                             value={displayVal}
-                            onChange={(e) => {
-                              const raw = Number(e.target.value) || 0
-                              const nextM = heightUnit === 'ch1' ? ch1ToPos(clamp(Math.round(raw), 0, 255), m.length) : raw
-                              setModuleHeight(m, nextM)
-                            }}
+                            key={`${btn.id}-${heightUnit}`}
+                            onCommit={(value) => setModuleHeight(m, value)}
                             className="w-full min-w-0 border-0 bg-transparent text-center text-[11.5px] text-fg tabular-nums outline-none"
                           />
                           <button
@@ -1426,20 +1315,16 @@ export function PropertiesPanel(props: {
   const single = !activeLayer && selected.length === 1 ? selected[0] : null
   const isAuto = project.settings.addressMode === 'auto'
 
-  const [addrInput, setAddrInput] = useState('')
   const [addrError, setAddrError] = useState<string | null>(null)
   const [layerPresetDur, setLayerPresetDur] = useState(4)
   const [waveAmplitudeCm, setWaveAmplitudeCm] = useState(DEFAULT_ALTERNATING_WAVE_AMPLITUDE_CM)
   const [waveFirstUp, setWaveFirstUp] = useState<'odd' | 'even'>('odd')
   const [layerStagger, setLayerStagger] = useState(0.35)
-  const [draftGroupStart, setDraftGroupStart] = useState<{ key: string; raw: string } | null>(null)
-  const [draftGroupEnd, setDraftGroupEnd] = useState<{ key: string; raw: string } | null>(null)
   const [draftModField, setDraftModField] = useState<{ key: string; raw: string } | null>(null)
   const [groupModError, setGroupModError] = useState<string | null>(null)
 
   useEffect(() => {
     if (single) {
-      setAddrInput(String(single.startAddress))
       setAddrError(null)
     }
   }, [single?.id, single?.startAddress]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -1448,6 +1333,7 @@ export function PropertiesPanel(props: {
   if (activeButton) {
     return (
       <CueButtonEditor
+        key={activeButton.id}
         btn={activeButton}
         layers={project.layers}
         modules={project.modules}
@@ -1488,14 +1374,6 @@ export function PropertiesPanel(props: {
       }
     }
 
-    const commitGroupTiming = (kind: 'start' | 'end', raw: string) => {
-      const trimmed = raw.trim()
-      if (!trimmed) return
-      const num = Number(trimmed)
-      if (!Number.isFinite(num)) return
-      updateSelectedClipsTiming(kind === 'start' ? { startTime: num } : { endTime: num })
-    }
-
     return (
       <div className="flex h-full flex-col gap-3 overflow-y-auto pr-0.5 text-xs">
         <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-line pb-2.5">
@@ -1524,32 +1402,14 @@ export function PropertiesPanel(props: {
           <div className="grid grid-cols-2 gap-1.5">
             <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
               <span className="shrink-0 text-[10px] text-muted">Bắt đầu</span>
-              <input
-                type="number"
+              <NumberField
                 step="0.1"
                 min="0"
                 placeholder={commonStart === null ? '—' : undefined}
                 aria-label="Thời điểm bắt đầu nhóm (s)"
-                value={
-                  draftGroupStart?.key === groupKey
-                    ? draftGroupStart.raw
-                    : commonStart !== null
-                      ? String(commonStart)
-                      : ''
-                }
-                onFocus={() =>
-                  setDraftGroupStart({ key: groupKey, raw: commonStart !== null ? String(commonStart) : '' })
-                }
-                onChange={(e) => setDraftGroupStart({ key: groupKey, raw: e.target.value })}
-                onBlur={() => {
-                  if (draftGroupStart?.key === groupKey) {
-                    commitGroupTiming('start', draftGroupStart.raw)
-                    setDraftGroupStart(null)
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                }}
+                key={groupKey}
+                value={commonStart}
+                onCommit={(startTime) => updateSelectedClipsTiming({ startTime })}
                 className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none placeholder:text-muted/60"
               />
               <span className="shrink-0 text-[10px] text-muted">s</span>
@@ -1557,26 +1417,14 @@ export function PropertiesPanel(props: {
 
             <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
               <span className="shrink-0 text-[10px] text-muted">Kết thúc</span>
-              <input
-                type="number"
+              <NumberField
                 step="0.1"
-                min="0.4"
+                min={Math.max(...selectedClips.map((c) => Number((c.startTime + 0.4).toFixed(2))))}
                 placeholder={commonEnd === null ? '—' : undefined}
                 aria-label="Thời điểm kết thúc nhóm (s)"
-                value={
-                  draftGroupEnd?.key === groupKey ? draftGroupEnd.raw : commonEnd !== null ? String(commonEnd) : ''
-                }
-                onFocus={() => setDraftGroupEnd({ key: groupKey, raw: commonEnd !== null ? String(commonEnd) : '' })}
-                onChange={(e) => setDraftGroupEnd({ key: groupKey, raw: e.target.value })}
-                onBlur={() => {
-                  if (draftGroupEnd?.key === groupKey) {
-                    commitGroupTiming('end', draftGroupEnd.raw)
-                    setDraftGroupEnd(null)
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                }}
+                key={groupKey}
+                value={commonEnd}
+                onCommit={(endTime) => updateSelectedClipsTiming({ endTime })}
                 className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none placeholder:text-muted/60"
               />
               <span className="shrink-0 text-[10px] text-muted">s</span>
@@ -1660,6 +1508,7 @@ export function PropertiesPanel(props: {
   if (activeClip && activeClipMod) {
     return (
       <MomentEditor
+        key={activeClip.id}
         clip={activeClip}
         allClips={project.clips ?? []}
         mod={activeClipMod}
@@ -1744,15 +1593,11 @@ export function PropertiesPanel(props: {
               <div className="grid grid-cols-2 gap-1.5">
                 <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
                   <span className="shrink-0 text-[10px] text-muted">Thời lượng tối thiểu</span>
-                  <input
-                    type="number"
+                  <NumberField
                     step="0.2"
                     min="0.4"
                     value={layerPresetDur}
-                    onChange={(e) => {
-                      const v = Number(e.target.value)
-                      if (Number.isFinite(v) && v >= 0.4) setLayerPresetDur(v)
-                    }}
+                    onCommit={setLayerPresetDur}
                     className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none"
                   />
                   <span className="shrink-0 text-[10px] text-muted">s</span>
@@ -1760,15 +1605,11 @@ export function PropertiesPanel(props: {
 
                 <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
                   <span className="shrink-0 text-[10px] text-muted">Lệch sóng</span>
-                  <input
-                    type="number"
+                  <NumberField
                     step="0.05"
                     min="0"
                     value={layerStagger}
-                    onChange={(e) => {
-                      const v = Number(e.target.value)
-                      if (Number.isFinite(v) && v >= 0) setLayerStagger(v)
-                    }}
+                    onCommit={setLayerStagger}
                     className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none"
                   />
                   <span className="shrink-0 text-[10px] text-muted">s</span>
@@ -1799,15 +1640,11 @@ export function PropertiesPanel(props: {
                 <div className="grid grid-cols-2 gap-1.5">
                   <label className="kiln-field flex h-7 min-w-0 items-center gap-1 px-2">
                     <span className="shrink-0 text-[10px] text-muted">Biên độ</span>
-                    <input
-                      type="number"
+                    <NumberField
                       min="0"
                       step="1"
                       value={waveAmplitudeCm}
-                      onChange={(e) => {
-                        const value = Number(e.target.value)
-                        if (Number.isFinite(value) && value >= 0) setWaveAmplitudeCm(value)
-                      }}
+                      onCommit={setWaveAmplitudeCm}
                       className="min-w-0 flex-1 bg-transparent text-right text-[11px] text-fg tabular-nums outline-none"
                     />
                     <span className="shrink-0 text-[10px] text-muted">cm</span>
@@ -1896,14 +1733,17 @@ export function PropertiesPanel(props: {
         0,
       )
 
+    const reportModBatchError = (err: string | null) => {
+      setGroupModError(err)
+      if (err) notify(err, 'warn')
+    }
+
     const commitModBatch = (key: string, fn: (raw: string) => string | null) => {
       if (draftModField?.key !== `${modGroupKey}:${key}`) return
       const raw = draftModField.raw
       setDraftModField(null)
       if (!raw.trim()) return
-      const err = fn(raw)
-      setGroupModError(err)
-      if (err) notify(err, 'warn')
+      reportModBatchError(fn(raw))
     }
 
     const renderNumField = (
@@ -1913,29 +1753,18 @@ export function PropertiesPanel(props: {
       opts: { step?: string; min?: string; max?: string; onCommit: (num: number) => string | null },
     ) => {
       const fullKey = `${modGroupKey}:${fieldKey}`
-      const isEditing = draftModField?.key === fullKey
       return (
         <label className="space-y-1">
           <span className="text-[11px] text-[#C2B3A4]">{label}</span>
-          <input
-            type="number"
+          <NumberField
             step={opts.step}
             min={opts.min}
             max={opts.max}
             placeholder={commonVal === null ? '—' : undefined}
             aria-label={label}
-            value={isEditing ? draftModField.raw : commonVal !== null ? String(commonVal) : ''}
-            onFocus={() => setDraftModField({ key: fullKey, raw: commonVal !== null ? String(commonVal) : '' })}
-            onChange={(e) => setDraftModField({ key: fullKey, raw: e.target.value })}
-            onBlur={() =>
-              commitModBatch(fieldKey, (raw) => {
-                const n = Number(raw)
-                return Number.isFinite(n) ? opts.onCommit(n) : null
-              })
-            }
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-            }}
+            key={fullKey}
+            value={commonVal}
+            onCommit={(value) => reportModBatchError(opts.onCommit(value))}
             className="kiln-field h-8 w-full px-2.5 text-xs tabular-nums placeholder:text-muted/60"
           />
         </label>
@@ -1984,34 +1813,20 @@ export function PropertiesPanel(props: {
                   const disabled = field === 'position' && idx === 1
                   const commonAxis = disabled ? 0 : tfCommon(field, idx as 0 | 1 | 2)
                   const tfKey = `${modGroupKey}:tf:${field}:${idx}`
-                  const isEditing = draftModField?.key === tfKey
                   return (
                     <label key={ax} className="kiln-field flex h-7 items-center gap-1 px-2">
                       <span className="text-[10px] font-semibold text-muted">{ax}</span>
-                      <input
-                        type="number"
+                      <NumberField
                         step={step}
                         disabled={disabled}
                         placeholder={commonAxis === null ? '—' : undefined}
                         aria-label={`${label} ${ax}`}
-                        value={isEditing ? draftModField.raw : commonAxis !== null ? String(commonAxis) : ''}
-                        onFocus={() =>
-                          setDraftModField({ key: tfKey, raw: commonAxis !== null ? String(commonAxis) : '' })
-                        }
-                        onChange={(e) => setDraftModField({ key: tfKey, raw: e.target.value })}
-                        onBlur={() =>
-                          commitModBatch(`tf:${field}:${idx}`, (raw) => {
-                            const n = Number(raw)
-                            return Number.isFinite(n)
-                              ? updateModulesBatch(selectedIdsList, {
-                                  transformAxis: { field, index: idx as 0 | 1 | 2, value: n },
-                                })
-                              : null
-                          })
-                        }
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                        }}
+                        key={tfKey}
+                        min={field === 'scale' ? 0.1 : undefined}
+                        value={commonAxis}
+                        onCommit={(value) => reportModBatchError(updateModulesBatch(selectedIdsList, {
+                          transformAxis: { field, index: idx as 0 | 1 | 2, value },
+                        }))}
                         className="min-w-0 flex-1 bg-transparent text-right text-[11.5px] text-fg tabular-nums outline-none placeholder:text-muted/60"
                       />
                     </label>
@@ -2084,36 +1899,16 @@ export function PropertiesPanel(props: {
             </button>
           </div>
           <div className="flex items-center gap-2">
-            <input
-              type="number"
+            <NumberField
               min="1"
               max="509"
               disabled={isAuto}
               placeholder={commonAddr === null ? '—' : undefined}
               aria-label="Địa chỉ DMX bắt đầu nhóm"
-              value={
-                draftModField?.key === `${modGroupKey}:addr`
-                  ? draftModField.raw
-                  : commonAddr !== null
-                    ? String(commonAddr)
-                    : ''
-              }
-              onFocus={() =>
-                setDraftModField({ key: `${modGroupKey}:addr`, raw: commonAddr !== null ? String(commonAddr) : '' })
-              }
-              onChange={(e) => {
-                setGroupModError(null)
-                setDraftModField({ key: `${modGroupKey}:addr`, raw: e.target.value })
-              }}
-              onBlur={() =>
-                commitModBatch('addr', (raw) => {
-                  const n = Number(raw)
-                  return Number.isFinite(n) ? updateModulesBatch(selectedIdsList, { startAddressBase: n }) : null
-                })
-              }
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-              }}
+              key={modGroupKey}
+              integer="truncate"
+              value={commonAddr}
+              onCommit={(value) => reportModBatchError(updateModulesBatch(selectedIdsList, { startAddressBase: value }))}
               className="kiln-field h-8 w-24 px-2.5 text-xs tabular-nums placeholder:text-muted/60"
             />
             <span className="kiln-readout text-[11px] tabular-nums">
@@ -2210,17 +2005,6 @@ export function PropertiesPanel(props: {
   const ch4 = frame[baseIdx + CH.LOCK] ?? 0
   const modTf = single.transform ?? defaultModuleTransform()
 
-  const handleAddrChange = (raw: string) => {
-    setAddrInput(raw)
-    const num = Number(raw)
-    if (!raw.trim() || Number.isNaN(num)) {
-      setAddrError('Nhập số nguyên 1–509')
-      return
-    }
-    const err = updateModule(single.id, { startAddress: num })
-    setAddrError(err)
-  }
-
   const loopSharedAddr = layerLoopAddress(project.modules, single.layerId, single.id)
   const [loopChStart, loopChEnd] = addressRange(single.dmxLoop ? single.startAddress : loopSharedAddr)
   const modLayerIdx = project.layers.findIndex((l) => l.id === single.layerId)
@@ -2308,13 +2092,14 @@ export function PropertiesPanel(props: {
         </div>
 
         <div className="flex items-center gap-2">
-          <input
-            type="number"
+          <NumberField
             min="1"
             max="509"
             disabled={isAuto}
-            value={addrInput}
-            onChange={(e) => handleAddrChange(e.target.value)}
+            key={single.id}
+            integer="reject"
+            value={single.startAddress}
+            onCommit={(value) => setAddrError(updateModule(single.id, { startAddress: value }))}
             className={`kiln-field h-7 w-24 px-2.5 text-xs tabular-nums ${
               addrError ? 'shadow-[inset_0_0_0_1.5px_var(--danger)]' : ''
             }`}
@@ -2351,22 +2136,14 @@ export function PropertiesPanel(props: {
               <HelpCircle size={11} />
             </span>
           </span>
-          <input
-            key={`${single.id}-fine-${ch2Fine}`}
-            type="number"
+          <NumberField
+            key={`${single.id}-fine`}
             min={0}
             max={255}
             step={1}
-            defaultValue={ch2Fine}
-            onBlur={(e) => {
-              const input = e.currentTarget
-              const next = Number.isFinite(input.valueAsNumber) ? clamp(Math.round(input.valueAsNumber), 0, 255) : ch2Fine
-              input.value = String(next)
-              if (next !== ch2Fine) updateModule(single.id, { ch2Fine: next })
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') e.currentTarget.blur()
-            }}
+            value={ch2Fine}
+            integer="round"
+            onCommit={(value) => updateModule(single.id, { ch2Fine: value })}
             className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
         </label>
@@ -2388,50 +2165,52 @@ export function PropertiesPanel(props: {
               <HelpCircle size={11} />
             </span>
           </span>
-          <input
-            type="number"
+          <NumberField
             step="0.1"
             min="0.2"
             value={single.length}
-            onChange={(e) => updateModule(single.id, { length: Number(e.target.value) || 0.2 }, `mod-len-${single.id}`)}
+            key={single.id}
+            max={500}
+            onCommit={(length) => updateModule(single.id, { length }, `mod-len-${single.id}`)}
             className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
         </label>
 
         <label className="space-y-1">
           <span className="text-[11px] text-[#C2B3A4]">Rộng 3D (m)</span>
-          <input
-            type="number"
+          <NumberField
             step="0.1"
             min="0.2"
             value={single.width}
-            onChange={(e) => updateModule(single.id, { width: Number(e.target.value) || 0.2 }, `mod-w-${single.id}`)}
+            key={single.id}
+            max={500}
+            onCommit={(width) => updateModule(single.id, { width }, `mod-w-${single.id}`)}
             className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
         </label>
 
         <label className="space-y-1">
           <span className="text-[11px] text-[#C2B3A4]">Min chiều cao (m)</span>
-          <input
-            type="number"
+          <NumberField
             step="0.05"
             min="0"
             max={single.maxHeight}
             value={single.minHeight}
-            onChange={(e) => updateModule(single.id, { minHeight: Number(e.target.value) || 0 }, `mod-min-${single.id}`)}
+            key={single.id}
+            onCommit={(minHeight) => updateModule(single.id, { minHeight }, `mod-min-${single.id}`)}
             className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
         </label>
 
         <label className="space-y-1">
           <span className="text-[11px] text-[#C2B3A4]">Max chiều cao (m)</span>
-          <input
-            type="number"
+          <NumberField
             step="0.05"
             min={single.minHeight}
             max={single.length}
             value={single.maxHeight}
-            onChange={(e) => updateModule(single.id, { maxHeight: Number(e.target.value) || 0 }, `mod-max-${single.id}`)}
+            key={single.id}
+            onCommit={(maxHeight) => updateModule(single.id, { maxHeight }, `mod-max-${single.id}`)}
             className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
         </label>
@@ -2443,12 +2222,12 @@ export function PropertiesPanel(props: {
               <HelpCircle size={11} />
             </span>
           </span>
-          <input
-            type="number"
+          <NumberField
             min="10"
             max={MODULE_MAX_SPEED_LIMIT_CMS}
             value={single.maxSpeedCms}
-            onChange={(e) => updateModule(single.id, { maxSpeedCms: Number(e.target.value) || H2_MAX_SPEED_CMS }, `mod-spd-${single.id}`)}
+            key={single.id}
+            onCommit={(maxSpeedCms) => updateModule(single.id, { maxSpeedCms }, `mod-spd-${single.id}`)}
             className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
           {single.maxSpeedCms > H2_MAX_SPEED_CMS && (
@@ -2463,12 +2242,13 @@ export function PropertiesPanel(props: {
               <HelpCircle size={11} />
             </span>
           </span>
-          <input
-            type="number"
+          <NumberField
             min="1"
             max="255"
             value={single.defaultSpeed}
-            onChange={(e) => updateModule(single.id, { defaultSpeed: Number(e.target.value) || 100 }, `mod-ch3-${single.id}`)}
+            key={single.id}
+            integer="round"
+            onCommit={(defaultSpeed) => updateModule(single.id, { defaultSpeed }, `mod-ch3-${single.id}`)}
             className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
           />
           <span className="kiln-readout text-[10px] tabular-nums">= {ch3ToCms(single.defaultSpeed, single.maxSpeedCms).toFixed(1)} cm/s (255 = {single.maxSpeedCms} cm/s; khuyến nghị CH3=100 ≈ {((100 / 255) * single.maxSpeedCms).toFixed(1)} cm/s)</span>
@@ -2489,7 +2269,7 @@ export function PropertiesPanel(props: {
 
 /**
  * Giám sát 4 kênh. CH1/CH2/CH3 nhập được, CH4 chỉ đọc. "Sent" chỉ để TEST, không bị khoá nào chặn: gửi đúng giá trị đã nhập
- * (không kẹp min/max, không quy đổi); CH4 xung 77 (SENT_PULSE_MS) rồi tự về 0. Ô trống / không đổi = giữ giá trị live.
+ * (không kẹp min/max, không quy đổi); CH4 xung 77 (SENT_PULSE_MS) rồi tự về 0. Ô chưa chốt giá trị dùng số live.
  * CH1 hoặc CH3 khác live ⇒ module CHẠY THẬT: Sent cần bấm 2 lần (xác nhận). "Dừng" = CH3 0 (phanh) giữ CH1 hiện tại.
  */
 function ChannelMonitor({
@@ -2505,7 +2285,7 @@ function ChannelMonitor({
   maxSpeedCms: number
   onPersistCh2: (ch2: number) => void
 }) {
-  const [draft, setDraft] = useState<(string | null)[]>([null, null, null])
+  const [staged, setStaged] = useState<(number | null)[]>([null, null, null])
   const [phase, setPhase] = useState<'idle' | 'sending' | 'sent'>('idle')
   const [confirming, setConfirming] = useState(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -2518,16 +2298,13 @@ function ChannelMonitor({
     if (confirmTimer.current) clearTimeout(confirmTimer.current)
     setConfirming(false)
   }
-  // Ô trống (hoặc chưa sửa) = giữ live.
-  const given = (i: number) => draft[i] !== null && draft[i]!.trim() !== ''
-  const shown = [0, 1, 2].map((i) => draft[i] ?? String(live[i]))
-  const nums = [0, 1, 2].map((i) => (given(i) ? Number(draft[i]) : live[i]))
-  const valid = nums.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)
-  const runs = valid && ((given(0) && nums[0] !== live[0]) || (given(2) && nums[2] !== live[2]))
+  // CH1/CH2/CH3 được chốt trong panel trước, chỉ Sent mới ghi DMX.
+  const nums = [0, 1, 2].map((i) => staged[i] ?? live[i])
+  const runs = nums[0] !== live[0] || nums[2] !== live[2]
   const notify = useAppStore.getState().notify
-  const edit = (i: number, raw: string) => {
+  const stageChannel = (i: number, value: number) => {
     cancelConfirm()
-    setDraft((d) => d.map((v, j) => (j === i ? raw : v)))
+    setStaged((values) => values.map((current, index) => index === i ? value : current))
   }
   const dispatch = async (cmd: { ch1?: number; ch2: number; ch3?: number }, persist: boolean, msg: string) => {
     setPhase('sending')
@@ -2535,7 +2312,7 @@ function ChannelMonitor({
     try {
       const res = await getBridge().command({ type: 'sendFine', id: moduleId, ...cmd })
       if (!res.ok) throw new Error(res.message ?? 'Gửi thất bại')
-      setDraft([null, null, null])
+      setStaged([null, null, null])
       setPhase('sent')
       notify(msg, 'success', { title: 'Đã gửi Sent', icon: 'success' })
     } catch (err) {
@@ -2547,7 +2324,7 @@ function ChannelMonitor({
     resetTimer.current = setTimeout(() => setPhase('idle'), 1400)
   }
   const send = async () => {
-    if (!valid || phase === 'sending') return
+    if (phase === 'sending') return
     if (runs && !confirming) {
       setConfirming(true)
       confirmTimer.current = setTimeout(() => setConfirming(false), 6000)
@@ -2556,8 +2333,8 @@ function ChannelMonitor({
     cancelConfirm()
     const cmd = {
       ch2: nums[1],
-      ...(given(0) && nums[0] !== live[0] ? { ch1: nums[0] } : {}),
-      ...(given(2) && nums[2] !== live[2] ? { ch3: nums[2] } : {}),
+      ...(nums[0] !== live[0] ? { ch1: nums[0] } : {}),
+      ...(nums[2] !== live[2] ? { ch3: nums[2] } : {}),
     }
     const parts = [cmd.ch1 !== undefined ? `CH1 ${cmd.ch1}` : null, `CH2 ${cmd.ch2}`, cmd.ch3 !== undefined ? `CH3 ${cmd.ch3}` : null].filter(Boolean)
     await dispatch(cmd, true, `${moduleName}: ${parts.join(', ')}; CH4 77 → 0 (xung ${SENT_PULSE_MS / 1000}s)`)
@@ -2579,7 +2356,7 @@ function ChannelMonitor({
           <button
             type="button"
             onClick={() => void send()}
-            disabled={!valid || phase === 'sending'}
+            disabled={phase === 'sending'}
             title={`Test: gửi CH1/CH2/CH3 đã nhập, CH4 ${SENT_CH4_PULSE_VALUE} rồi về 0. Không bị khoá chặn. CH1/CH3 khác live ⇒ module chạy thật.`}
             aria-live="polite"
             className={`inline-flex h-5 min-w-[46px] cursor-pointer items-center justify-center gap-1 rounded-full px-2 text-[10px] font-semibold whitespace-nowrap transition-all duration-200 disabled:cursor-default disabled:opacity-40 ${
@@ -2602,19 +2379,15 @@ function ChannelMonitor({
         {cells.map((c) => (
           <label key={c.label} className="kiln-field min-w-0 p-1.5" title={c.title}>
             <div className="truncate text-[9.5px] text-muted">{c.label}</div>
-            <input
-              type="number"
+            <NumberField
               min={0}
               max={255}
               step={1}
-              value={shown[c.i]}
-              onChange={(e) => edit(c.i, e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void send()
-              }}
-              className={`w-full bg-transparent text-center font-semibold outline-none ${
-                Number.isInteger(nums[c.i]) && nums[c.i] >= 0 && nums[c.i] <= 255 ? 'text-fg' : 'text-danger'
-              }`}
+              integer="reject"
+              value={nums[c.i]}
+              onDraftChange={cancelConfirm}
+              onCommit={(value) => stageChannel(c.i, value)}
+              className="w-full bg-transparent text-center font-semibold text-fg outline-none"
             />
           </label>
         ))}
@@ -2623,7 +2396,6 @@ function ChannelMonitor({
           <div className="font-semibold">{live[3]}</div>
         </div>
       </div>
-      {!valid && <p className="text-[10.5px] text-danger">CH1/CH2/CH3 phải là số nguyên 0–255.</p>}
       {confirming ? (
         <div className="space-y-1">
           <p className="flex items-start gap-1 text-[10.5px] text-warn">
