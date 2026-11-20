@@ -1,6 +1,6 @@
-import { ch3ToCms, clamp, cmsToCh3, snapPos, speedCap } from './convert'
+import { ch3ToCms, clamp, cmsToCh3, snapPos, speedCap, stepPositionM } from './convert'
 import { parseTc, snapDeltaToFps, snapTimeToFps } from './timecode'
-import type { ClipKeyframe, Command, Fps, ModuleCfg, Snapshot, TimelineClip, TimelineKey } from './types'
+import type { ClipKeyframe, Command, CueButton, Fps, ModuleCfg, Snapshot, TimelineClip, TimelineKey } from './types'
 
 const MIN_DURATION = 0.05
 
@@ -444,6 +444,34 @@ export function representativeSegmentIndex(distsCm: number[]): number {
   return best
 }
 
+/**
+ * Đặt tốc độ `cms` cho đoạn đi TỚI điểm `kfId` (Auto, sửa cột cm/s hoặc CH3): thời lượng đoạn = quãng ÷ cm/s, các điểm
+ * sau dịch cùng một lượng để giữ nguyên thời lượng các đoạn còn lại. Không đổi thứ tự điểm (đoạn tối thiểu 0,02 s).
+ * Bị chặn bởi moment kế bên (`bounds.maxEnd`): vượt thì kẹp ⇒ tốc độ đạt được thấp hơn yêu cầu.
+ * Điểm đầu hoặc quãng đường 0 ⇒ null (không chia 0, không đổi gì).
+ */
+export function retimeSegmentToSpeed(
+  clip: TimelineClip,
+  kfId: string,
+  cms: number,
+  mod: ModuleCfg,
+  bounds?: { minStart: number; maxEnd: number },
+): { startTime: number; duration: number; keyframes: ClipKeyframe[] } | null {
+  const sorted = [...clip.keyframes].sort((a, b) => a.offset - b.offset)
+  const idx = sorted.findIndex((k) => k.id === kfId)
+  if (idx < 1 || !Number.isFinite(cms)) return null
+  const dist = segmentDistCm(mod, sorted[idx - 1].height, sorted[idx].height)
+  if (dist <= 1e-9) return null
+  const oldDt = sorted[idx].offset - sorted[idx - 1].offset
+  let delta = dist / clamp(cms, 1, speedCap(mod)) - oldDt
+  delta = Math.max(delta, 0.02 - oldDt)
+  const last = sorted[sorted.length - 1].offset
+  if (bounds && Number.isFinite(bounds.maxEnd)) delta = Math.min(delta, bounds.maxEnd - clip.startTime - last)
+  if (!Number.isFinite(delta)) return null
+  const keyframes = sorted.map((k, j) => (j >= idx ? { ...k, offset: Number((k.offset + delta).toFixed(4)) } : k))
+  return { startTime: clip.startTime, duration: keyframes[keyframes.length - 1].offset, keyframes }
+}
+
 /** Tốc độ thực của đoạn p1→p2 trong clip theo cài đặt moment (hoặc điểm cũ), kèm cờ cảnh báo. */
 export function resolveClipSegmentSpeed(
   clip: TimelineClip,
@@ -458,8 +486,8 @@ export function resolveClipSegmentSpeed(
   return resolveKeyframeSpeed(raw === null ? {} : { speedMode: 'manual', manualSpeedCms: raw }, distCm, dt, cap, clipAutoSpeedCms(mod, clip))
 }
 
-/** Tốc độ manual (cm/s) của đoạn đang chạy tại `time` trong clip active; null nếu auto/ngoài đoạn. */
-function manualSpeedAt(clips: TimelineClip[], mod: ModuleCfg, time: number): number | null {
+/** Đoạn manual đang chạy tại `time` trong clip active; null nếu auto/ngoài đoạn. */
+function manualSegmentAt(clips: TimelineClip[], mod: ModuleCfg, time: number): { c: TimelineClip; p1: ClipKeyframe; p2: ClipKeyframe } | null {
   const c = clips.find((x) => x.moduleId === mod.id && time >= x.startTime && time < x.startTime + x.duration)
   if (!c || c.keyframes.length < 2) return null
   const sorted = [...c.keyframes].sort((a, b) => a.offset - b.offset)
@@ -468,10 +496,22 @@ function manualSpeedAt(clips: TimelineClip[], mod: ModuleCfg, time: number): num
   let seg = 0
   while (seg + 1 < sorted.length && sorted[seg + 1].offset <= rel) seg += 1
   const p1 = sorted[seg]
-  const p2 = sorted[seg + 1]
-  if (!isSegmentManual(c, p1)) return null
-  const r = resolveClipSegmentSpeed(c, p1, p2, mod)
+  return isSegmentManual(c, p1) ? { c, p1, p2: sorted[seg + 1] } : null
+}
+
+/** Tốc độ manual (cm/s) của đoạn đang chạy tại `time`; null nếu auto/ngoài đoạn. */
+function manualSpeedAt(clips: TimelineClip[], mod: ModuleCfg, time: number): number | null {
+  const seg = manualSegmentAt(clips, mod, time)
+  if (!seg) return null
+  const r = resolveClipSegmentSpeed(seg.c, seg.p1, seg.p2, mod)
   return r.mode === 'manual' ? r.cms : null
+}
+
+/** CH3 nhập thẳng ở mức moment (đơn vị CH3): gửi đúng số đó (kẹp 1..255), không qua cm/s. null nếu không phải. */
+export function momentManualCh3(clip: Pick<TimelineClip, 'speedMode' | 'speedUnit' | 'speedValue'>): number | null {
+  return clip.speedMode === 'manual' && clip.speedUnit === 'ch3' && Number.isFinite(clip.speedValue)
+    ? clamp(Math.round(clip.speedValue as number), 1, 255)
+    : null
 }
 
 /** Trả về danh sách các đoạn chuyển động giữa 2 key và kiểm tra có vượt tốc độ tối đa của module không. */
@@ -995,12 +1035,14 @@ function buildSmoothMoveCommand(
         : clamp(velCurveCms + (lagError * 100) / 0.25, 1, autoCap)
     speedCms = manualSpeedAt(clips, mod, time) ?? speedCms
   }
+  const seg = lookaheadSec > 0 ? manualSegmentAt(clips, mod, time) : null
+  const ch3Direct = seg ? momentManualCh3(seg.c) : null
 
   return {
     type: 'move',
     ids: [mod.id],
     target: hAhead,
-    speed: { unit: 'cms', value: Number(speedCms.toFixed(2)) },
+    speed: ch3Direct !== null ? { unit: 'ch3', value: ch3Direct } : { unit: 'cms', value: Number(speedCms.toFixed(2)) },
   }
 }
 
@@ -1129,10 +1171,12 @@ export function planTimelineFollow(
 
     const distM = Math.abs(targetH - curPos)
     let speedCms: number
+    let ch3Direct: number | null = null
     const rawManual = manualSeg ? manualRawCms(manualSeg.clip, manualSeg.p1, distM * 100, speedCap(mod)) : null
     if (rawManual !== null && remainingSec !== null && distM >= 0.0015) {
       const r = resolveKeyframeSpeed({ speedMode: 'manual', manualSpeedCms: rawManual }, distM * 100, remainingSec, speedCap(mod))
       speedCms = r.cms
+      ch3Direct = manualSeg ? momentManualCh3(manualSeg.clip) : null
       if (r.overMax) {
         warnings.push(`${mod.name} (${segLabel}): tốc độ manual ${rawManual.toFixed(1)} cm/s > tối đa ${speedCap(mod)} cm/s, đã kẹp`)
       }
@@ -1160,7 +1204,7 @@ export function planTimelineFollow(
       type: 'move',
       ids: [mod.id],
       target: targetH,
-      speed: { unit: 'cms', value: Number(speedCms.toFixed(2)) },
+      speed: ch3Direct !== null ? { unit: 'ch3', value: ch3Direct } : { unit: 'cms', value: Number(speedCms.toFixed(2)) },
     })
   }
 
@@ -1457,4 +1501,62 @@ export function fullCurvePath(pts: CurvePt[], mode: 'smooth' | 'linear', minY: n
     if (cmdStart >= 0) d += seg.slice(cmdStart)
   }
   return d
+}
+
+// ---- Đơn vị hiển thị/nhập: GIÁ TRỊ LƯU giữ nguyên theo đơn vị người dùng nhập; đổi menu chỉ đổi cách hiển thị ----
+
+export type SpeedViewUnit = 'cms' | 'sec' | 'ch3'
+
+/** Giá trị đã lưu → cm/s tương đương (ch3 theo thang max module, sec theo quãng đại diện); null nếu giây với quãng 0. */
+export function storedSpeedAsCms(unit: SpeedViewUnit, value: number, repDistCm: number, maxSpeedCms: number): number | null {
+  if (unit === 'cms') return value
+  if (unit === 'ch3') return ch3ToCms(clamp(Math.round(value), 1, 255), maxSpeedCms)
+  return repDistCm > 1e-9 && value > 0 ? repDistCm / value : null
+}
+
+/**
+ * Giá trị HIỂN THỊ của tốc độ đã lưu (storedUnit, value) theo menu `view`: cùng đơn vị → đúng số đã lưu (không quy đổi);
+ * khác đơn vị → quy đổi tạm (không ghi đè). null khi không đổi được (giây với quãng 0).
+ */
+export function speedDisplayValue(
+  view: SpeedViewUnit,
+  storedUnit: SpeedViewUnit,
+  value: number,
+  repDistCm: number,
+  maxSpeedCms: number,
+): number | null {
+  if (view === storedUnit) return value
+  const cms = storedSpeedAsCms(storedUnit, value, repDistCm, maxSpeedCms)
+  if (cms === null) return null
+  if (view === 'cms') return Number(cms.toFixed(2))
+  if (view === 'ch3') return cmsToCh3(cms, maxSpeedCms)
+  return repDistCm > 1e-9 ? Number((repDistCm / cms).toFixed(2)) : null
+}
+
+/** Giá trị người dùng nhập theo `unit` → giá trị lưu (nguyên số; CH3 làm tròn nguyên 1..255, còn lại ≥ 0,1). */
+export function speedStoredFromInput(unit: SpeedViewUnit, raw: number): number {
+  return unit === 'ch3' ? clamp(Math.round(raw), 1, 255) : Math.max(0.1, raw)
+}
+
+export function cueSpeedView(b: Pick<CueButton, 'speedUnit' | 'speedView'>): SpeedViewUnit {
+  return b.speedView ?? b.speedUnit
+}
+
+/** Quãng đường đại diện (cm) của cue: lớn nhất |đích − vị trí hiện tại|; nếu 0 thì lớn nhất |đích − minHeight|. */
+export function cueRepDistanceCm(
+  steps: ReadonlyArray<{ moduleId: string; position: number; unit?: 'm' | 'ch1' }>,
+  modules: ReadonlyArray<Pick<ModuleCfg, 'id' | 'minHeight' | 'length'>>,
+  posOf: (moduleId: string) => number | undefined,
+): number {
+  const mod = new Map(modules.map((m) => [m.id, m]))
+  let fromPos = 0
+  let fromMin = 0
+  for (const s of steps) {
+    const m = mod.get(s.moduleId)
+    if (!m) continue
+    const goal = stepPositionM(s, m.length)
+    fromPos = Math.max(fromPos, Math.abs(goal - (posOf(s.moduleId) ?? m.minHeight)) * 100)
+    fromMin = Math.max(fromMin, Math.abs(goal - m.minHeight) * 100)
+  }
+  return fromPos > 1e-9 ? fromPos : fromMin
 }

@@ -174,13 +174,23 @@ export function defaultModuleTransform(): Transform3D {
   return { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }
 }
 
-function parseClipSpeed(c: Record<string, unknown>, label: string): Pick<TimelineClip, 'speedMode' | 'speedUnit' | 'speedValue'> {
-  if (c.speedMode === undefined) return {} // moment cũ: giữ hành vi theo từng điểm
-  if (c.speedMode === 'auto') return { speedMode: 'auto' }
+type SpeedUnitId = 'cms' | 'sec' | 'ch3'
+function reqSpeedUnit(v: unknown, label: string): SpeedUnitId | undefined {
+  if (v === undefined) return undefined
+  if (v !== 'cms' && v !== 'sec' && v !== 'ch3') failProject(`${label} phải là 'cms', 'sec' hoặc 'ch3'`)
+  return v
+}
+
+function parseClipSpeed(c: Record<string, unknown>, label: string): Pick<TimelineClip, 'speedMode' | 'speedUnit' | 'speedValue' | 'speedView'> {
+  // speedView = menu đơn vị (chỉ hiển thị, lưu cả khi Auto/moment cũ). speedUnit + speedValue = giá trị Manual lưu NGUYÊN theo đơn vị nhập.
+  const view = reqSpeedUnit(c.speedView, `${label}.speedView`)
+  const v = view === undefined ? {} : { speedView: view }
+  if (c.speedMode === undefined) return v // moment cũ: giữ hành vi theo từng điểm
+  if (c.speedMode === 'auto') return { speedMode: 'auto', ...v }
   if (c.speedMode !== 'manual') failProject(`${label}.speedMode phải là 'auto' hoặc 'manual'`)
-  const unit = c.speedUnit === undefined ? 'cms' : c.speedUnit
-  if (unit !== 'cms' && unit !== 'sec' && unit !== 'ch3') failProject(`${label}.speedUnit phải là 'cms', 'sec' hoặc 'ch3'`)
-  return { speedMode: 'manual', speedUnit: unit, speedValue: reqFinite(c.speedValue, `${label}.speedValue`, 0, 10000) }
+  const unit = reqSpeedUnit(c.speedUnit, `${label}.speedUnit`) ?? 'cms'
+  const value = reqFinite(c.speedValue, `${label}.speedValue`, 0, 10000)
+  return { speedMode: 'manual', speedUnit: unit, speedValue: unit === 'ch3' ? Math.min(255, value) : value, ...v }
 }
 
 function parseKeyframeSpeed(kf: Record<string, unknown>, label: string): Pick<ClipKeyframe, 'speedMode' | 'manualSpeedCms'> {
@@ -271,21 +281,32 @@ export function normalizeProject(raw: unknown): Project {
     if (!Array.isArray(raw.buttons)) failProject('buttons phải là mảng')
     buttons = raw.buttons.map((b, idx) => {
       if (!isRecord(b)) failProject(`buttons[${idx}] phải là object`)
-      if (b.speedUnit !== 'cms' && b.speedUnit !== 'sec') failProject(`buttons[${idx}].speedUnit không hợp lệ`)
+      const speedUnit = reqSpeedUnit(b.speedUnit, `buttons[${idx}].speedUnit`)
+      if (speedUnit === undefined) failProject(`buttons[${idx}].speedUnit không hợp lệ`)
+      const speedView = reqSpeedUnit(b.speedView, `buttons[${idx}].speedView`)
       if (!Array.isArray(b.steps)) failProject(`buttons[${idx}].steps phải là mảng`)
       const steps: CueStep[] = b.steps.map((s, sIdx) => {
         if (!isRecord(s)) failProject(`buttons[${idx}].steps[${sIdx}] phải là object`)
+        if (s.unit !== undefined && s.unit !== 'm' && s.unit !== 'ch1') failProject(`buttons[${idx}].steps[${sIdx}].unit phải là 'm' hoặc 'ch1'`)
+        const ch1 = s.unit === 'ch1'
         return {
           moduleId: reqString(s.moduleId, `buttons[${idx}].steps[${sIdx}].moduleId`, false),
-          position: reqFinite(s.position, `buttons[${idx}].steps[${sIdx}].position`, 0),
+          position: ch1 ? reqFinite(s.position, `buttons[${idx}].steps[${sIdx}].position`, 0, 255, true) : reqFinite(s.position, `buttons[${idx}].steps[${sIdx}].position`, 0),
+          ...(ch1 ? { unit: 'ch1' as const } : {}),
         }
       })
       return {
         id: reqString(b.id, `buttons[${idx}].id`, false),
         name: reqString(b.name, `buttons[${idx}].name`),
         steps,
-        speedUnit: b.speedUnit,
-        speedValue: reqFinite(b.speedValue, `buttons[${idx}].speedValue`, 0.01),
+        speedUnit: speedUnit as SpeedUnitId,
+        speedValue: reqFinite(b.speedValue, `buttons[${idx}].speedValue`, 0.01, speedUnit === 'ch3' ? 255 : undefined),
+        ...(b.positionUnit === undefined || b.positionUnit === 'm'
+          ? {}
+          : b.positionUnit === 'ch1'
+            ? { positionUnit: 'ch1' as const }
+            : failProject(`buttons[${idx}].positionUnit phải là 'm' hoặc 'ch1'`)),
+        ...(speedView === undefined ? {} : { speedView }),
         ...(b.autoSpeedLimitCms === undefined ? {} : {
           autoSpeedLimitCms: reqFinite(b.autoSpeedLimitCms, `buttons[${idx}].autoSpeedLimitCms`, 1, DEFAULT_MOTION_SPEED_CMS),
         }),

@@ -1372,8 +1372,10 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     );
     expect(propsHtml).toContain('NÚT CUE');
     expect(propsHtml).toContain('LAYER &amp; MODULE CHẠY');
-    expect(propsHtml).toContain('Chế độ đơn vị chiều cao');
-    expect(propsHtml).toContain('Đổi đơn vị m / %');
+    expect(propsHtml).toContain('Đơn vị vị trí');
+    expect(propsHtml).toContain('Đổi đơn vị m / CH1');
+    expect(propsHtml).toContain('Đơn vị tốc độ nút Cue');
+    expect(propsHtml).toMatch(/>cm\/s<[\s\S]*>s<[\s\S]*>CH3</);
     expect(propsHtml).toContain('text-center');
     expect(propsHtml).toContain('Áp dụng cho các layer');
     expect(propsHtml).not.toContain('Lấy 3D');
@@ -1558,5 +1560,71 @@ describe('Save errors are reported and out-of-range inputs are clamped', () => {
     expect(() => normalizeProject(project)).not.toThrow();
     expect(project.modules[0].length).toBe(500);
     expect(project.settings.ltc.offsetFrames).toBe(600);
+  });
+});
+
+describe('Đơn vị tốc độ: moment (Auto/Manual luôn hiện) và cue (m|CH1, cm/s|s|CH3)', () => {
+  const clipWith = (over: Partial<TimelineClip>): TimelineClip => ({
+    id: 'cu', layerId: 'l', moduleId: 'mu', startTime: 0, duration: 8, curveMode: 'linear',
+    keyframes: [
+      { id: 'a', offset: 0, height: 0 },
+      { id: 'b', offset: 4, height: 1 },
+      { id: 'c', offset: 8, height: 0.5 },
+    ],
+    ...over,
+  });
+  const html = (clip: TimelineClip, maxSpeedCms = 100) => {
+    setupBrowserEnv();
+    const project = createDefaultProject();
+    const base = { ...project.modules[0], id: 'mu', length: 2.55, minHeight: 0, maxHeight: 2.55, maxSpeedCms };
+    project.modules = [base];
+    project.layers = [{ ...project.layers[0], id: 'l' }];
+    base.layerId = 'l';
+    project.clips = [clip];
+    return renderToStaticMarkup(
+      React.createElement(PropertiesPanel, {
+        overrideState: { ...useAppStore.getState(), project, selectedClipId: 'cu', selectedClipIds: ['cu'], selectedKeyId: 'b', selectedIds: [], selectedLayerId: null, selectedButtonId: null },
+      }),
+    );
+  };
+
+  it('hai nhóm nút luôn hiện ở Auto, Manual và moment cũ; Auto chỉ đọc, Manual nhập được', () => {
+    for (const over of [{ speedMode: 'auto' as const }, { speedMode: 'manual' as const, speedUnit: 'cms' as const, speedValue: 40 }, {}]) {
+      const h = html(clipWith(over));
+      expect(h).toContain('Chế độ tốc độ moment');
+      expect(h).toContain('Kiểu nhập tốc độ');
+      expect(h).toMatch(/>Auto<[\s\S]*>Manual</);
+      expect(h).toMatch(/>cm\/s<[\s\S]*>s<[\s\S]*>CH3</);
+    }
+    expect(html(clipWith({ speedMode: 'auto' }))).toMatch(/<input[^>]*readOnly=""[^>]*aria-label="Giá trị tự tính/);
+    expect(html(clipWith({ speedMode: 'manual', speedUnit: 'cms', speedValue: 40 }))).toMatch(/aria-label="Tốc độ chung \(cm\/s\)"/);
+  });
+
+  it('cột CÁC ĐIỂM đổi đơn vị theo menu: s = thời điểm, cm/s = tốc độ đoạn vào (P1 —), CH3 theo max module (>120 đúng)', () => {
+    // đoạn P1→P2 100 cm / 4 s = 25 cm/s; P2→P3 50 cm / 4 s = 12,5 cm/s
+    const cms = html(clipWith({ speedMode: 'auto', speedUnit: 'cms' }));
+    expect(cms).toMatch(/aria-label="cm\/s tới P1"[^>]*value="—"/);
+    expect(cms).toMatch(/aria-label="cm\/s tới P2"[^>]*value="25"/);
+    expect(cms).toMatch(/aria-label="cm\/s tới P3"[^>]*value="12.5"/);
+    const ch3 = html(clipWith({ speedMode: 'auto', speedUnit: 'ch3' }), 300);
+    expect(ch3).toMatch(/aria-label="CH3 tới P2"[^>]*value="22"/); // ceil(25/300×255 − 0,01) = 22
+    const sec = html(clipWith({ speedMode: 'auto', speedUnit: 'sec' }));
+    expect(sec).toContain('Thời gian của điểm trên Timeline (s)');
+    expect(sec).not.toContain('aria-label="cm/s tới P2"');
+    // moment cũ: cột tốc độ chỉ đọc
+    expect(html(clipWith({ speedUnit: 'cms' }))).toMatch(/<input[^>]*readOnly=""[^>]*aria-label="cm\/s tới P2"/);
+  });
+
+  it('cue: hiện m|CH1 và cm/s|s|CH3; CH1 lưu lại và hiện tương đương m', () => {
+    setupBrowserEnv();
+    const project = createDefaultProject();
+    const modId = project.modules[0].id;
+    project.buttons = [{ ...project.buttons[0], steps: [{ moduleId: modId, position: 0.5 }], positionUnit: 'ch1', speedUnit: 'cms', speedValue: 30 }];
+    const h = renderToStaticMarkup(
+      React.createElement(PropertiesPanel, { overrideState: { ...useAppStore.getState(), project, selectedButtonId: project.buttons[0].id, selectedClipId: null, selectedClipIds: [], selectedIds: [], selectedLayerId: null } }),
+    );
+    expect(h).toMatch(/>CH1<[\s\S]*>CH1</);
+    expect(h).toMatch(/≈0\.50m/);
+    expect(h).toContain('Giá trị tốc độ nút Cue (cm/s)');
   });
 });

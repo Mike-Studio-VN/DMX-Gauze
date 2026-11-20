@@ -69,24 +69,33 @@ export interface ModuleCfg {
 
 export type SpeedUnit = 'cms' | 'sec'
 export interface SpeedSpec {
-  unit: SpeedUnit
+  /** 'ch3' = giá trị CH3 nhập thẳng (1..255), không qua cm/s. */
+  unit: SpeedUnit | 'ch3'
   value: number
   limitCms?: number
 }
 
 export interface CueStep {
   moduleId: string
+  /** Giá trị người dùng nhập, lưu NGUYÊN theo `unit` (m hoặc CH1 0–255). */
   position: number
+  /** Đơn vị của `position`: 'm' (mặc định, project cũ) hoặc 'ch1' (gửi đúng CH1 đó). */
+  unit?: 'm' | 'ch1'
 }
 
 export interface CueButton {
   id: string
   name: string
   steps: CueStep[]
-  speedUnit: SpeedUnit
+  /** Đơn vị của `speedValue` (lưu nguyên giá trị nhập): cm/s | giây | CH3 (1..255, gửi thẳng). */
+  speedUnit: SpeedUnit | 'ch3'
   speedValue: number
   /** Trần tốc độ tự động của cue mặc định, bỏ khi người dùng đặt tốc độ riêng. */
   autoSpeedLimitCms?: number
+  /** Menu đơn vị vị trí đang chọn (chỉ hiển thị; không ghi đè giá trị đã lưu cho tới khi sửa ô). Mặc định 'm'. */
+  positionUnit?: 'm' | 'ch1'
+  /** Menu đơn vị tốc độ đang chọn (chỉ hiển thị). Mặc định = speedUnit. */
+  speedView?: 'cms' | 'sec' | 'ch3'
   /** Vị trí ô (0-based) trong lưới Cue Custom. */
   slotIndex?: number
   /** Hiển thị / đánh dấu lặp (LOOP) trên nút cue. */
@@ -129,9 +138,14 @@ export interface TimelineClip {
    * 'auto' = mọi đoạn tự tính từ quãng/thời gian; 'manual' = dùng `speedUnit` + `speedValue`.
    */
   speedMode?: 'auto' | 'manual'
-  /** Kiểu nhập khi manual: cm/s (cùng tốc độ), giây (mỗi đoạn đi trong N giây), hoặc CH3 trực tiếp (1..255). Mặc định 'cms'. */
+  /**
+   * Đơn vị của `speedValue` khi Manual (lưu NGUYÊN giá trị nhập): cm/s (cùng tốc độ), giây (mỗi đoạn đi trong N giây),
+   * hoặc CH3 trực tiếp (1..255, gửi thẳng). Mặc định 'cms'.
+   */
   speedUnit?: 'cms' | 'sec' | 'ch3'
   speedValue?: number
+  /** Menu đơn vị đang chọn (chỉ hiển thị; cột CÁC ĐIỂM theo menu này). Mặc định = speedUnit ?? 'cms'. Giá trị lưu không bị quy đổi khi đổi menu. */
+  speedView?: 'cms' | 'sec' | 'ch3'
   keyframes: ClipKeyframe[]
 }
 
@@ -217,7 +231,8 @@ export interface CoreConfig {
   lockValue: number
 }
 
-export type MoveTarget = number | 'min' | 'max' | 'zero' | 'length'
+/** `{ ch1 }` = byte CH1 nhập thẳng (0–255), kẹp theo min–max module rồi phát đúng số đó. */
+export type MoveTarget = number | 'min' | 'max' | 'zero' | 'length' | { ch1: number }
 export type Command =
   | { type: 'move'; ids: string[]; target: MoveTarget; speed: SpeedSpec | { unit: 'default'; value?: number } }
   | { type: 'stop'; ids: string[] | 'all' }

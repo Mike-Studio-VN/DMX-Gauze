@@ -1,6 +1,6 @@
 import { portAddress } from './artnet'
 import { ARTNET_PORT, CH, CHANNELS_PER_MODULE, DMX_UNIVERSE_SIZE, SENT_CH4_PULSE_VALUE, SENT_PULSE_MS } from './dmx'
-import { ch1ToPos, ch3ToCms, clamp, cmsToCh3, durationToCh3, posToCh1, snapPos } from './convert'
+import { ch1Range, ch1ToPos, ch3ToCms, clamp, cmsToCh3, durationToCh3, posToCh1, snapPos } from './convert'
 import { DEFAULT_DMX_TRANSPORT_HZ, normalizeDmxTransportRate, startDmxFrameLoop } from './dmxTransport'
 import type { DriverFactory, DriverEvents, OutputDriver } from './drivers'
 import { defaultMotionSpeedCh3 } from './timeline'
@@ -275,7 +275,11 @@ export class GauzeCore {
           target = m.length
           break
         default:
-          target = cmd.target
+          if (typeof cmd.target === 'object') {
+            // CH1 nhập thẳng: kẹp trong dải CH1 hợp lệ của module rồi phát đúng byte đó (không qua mét thô).
+            const [c1lo, c1hi] = ch1Range(m)
+            target = ch1ToPos(clamp(Math.round(cmd.target.ch1), c1lo, c1hi), m.length)
+          } else target = cmd.target
       }
       const clamped = snapPos(clamp(target, lo, hi), m) // đích thực tế sau lượng tử hoá CH1
       if (Math.abs(clamped - target) > 1e-6 && typeof cmd.target === 'number') {
@@ -283,7 +287,8 @@ export class GauzeCore {
       }
       const dist = clamped - st.pos
       let ch3 = m.defaultSpeed
-      if (cmd.speed.unit === 'cms') ch3 = cmsToCh3(cmd.speed.value, m.maxSpeedCms)
+      if (cmd.speed.unit === 'ch3') ch3 = clamp(Math.round(cmd.speed.value), 1, 255) // CH3 nhập thẳng
+      else if (cmd.speed.unit === 'cms') ch3 = cmsToCh3(cmd.speed.value, m.maxSpeedCms)
       else if (cmd.speed.unit === 'sec') {
         const c = durationToCh3(dist, cmd.speed.value, m.maxSpeedCms)
         ch3 = c.ch3

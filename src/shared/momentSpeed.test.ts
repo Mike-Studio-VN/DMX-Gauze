@@ -44,7 +44,7 @@ describe('tốc độ mức moment', () => {
 
   it.each([
     ['cm/s', { speedMode: 'manual', speedUnit: 'cms', speedValue: 60 } as const, [60, 60, 60]],
-    ['CH3', { speedMode: 'manual', speedUnit: 'ch3', speedValue: 128 } as const, [50.2, 50.2, 50.2]], // 128/255×100
+    ['CH3', { speedMode: 'manual', speedUnit: 'ch3', speedValue: 128 } as const, [128, 128, 128]], // CH3 nhập thẳng: lệnh mang đúng số CH3, không qua cm/s
   ])('Manual %s: mọi đoạn cùng tốc độ', (_n, over, expected) => {
     const s = speeds(clip(over))
     expected.forEach((e, i) => expect(s[i].v).toBeCloseTo(e, 1))
@@ -65,8 +65,8 @@ describe('tốc độ mức moment', () => {
     const slow = speeds(clip({ speedMode: 'manual', speedUnit: 'cms', speedValue: 5 }))
     expect(slow[0].v).toBe(5)
     expect(slow[0].w[0]).toMatch(/không kịp/)
-    const ch3over = speeds(clip({ speedMode: 'manual', speedUnit: 'ch3', speedValue: 999 })) // kẹp 255 = max
-    expect(ch3over[0].v).toBeCloseTo(100, 0)
+    const ch3over = speeds(clip({ speedMode: 'manual', speedUnit: 'ch3', speedValue: 999 })) // kẹp 255
+    expect(ch3over[0].v).toBe(255)
   })
 
   it('moment cũ (không có speedMode) giữ hành vi theo từng điểm; mức moment ưu tiên và bỏ qua điểm', () => {

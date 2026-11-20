@@ -291,7 +291,8 @@ export function ModeButtons(props: {
       const res = await sendCommand({
         type: 'move',
         ids: [s.moduleId],
-        target: s.position,
+        // CH1 nhập thẳng → target {ch1} (đúng byte, kẹp theo min–max); CH3 nhập thẳng → unit 'ch3' (đúng byte, 1..255).
+        target: s.unit === 'ch1' ? { ch1: s.position } : s.position,
         speed: { unit: b.speedUnit, value: speedVal, limitCms: b.autoSpeedLimitCms },
       }, { source: 'buttons' })
       if (!res.ok) break
@@ -426,7 +427,7 @@ export function ModeButtons(props: {
                 ? matchedLayers.map((l) => l.name).join(' + ')
                 : `${b.steps.length} modules`
           const leftFooter = `${b.steps.length} MODULES`
-          const rightFooter = b.speedUnit === 'sec' ? `${b.speedValue}S` : `${b.speedValue} CM/S`
+          const rightFooter = b.speedUnit === 'sec' ? `${b.speedValue}S` : b.speedUnit === 'ch3' ? `CH3 ${b.speedValue}` : `${b.speedValue} CM/S`
           const barIconColor = isBarSelected
             ? 'text-[#f3f7ff] hover:bg-white/15'
             : isPrevSelected

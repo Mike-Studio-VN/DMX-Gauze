@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import { getBridge } from '../services/bridge'
 import { layerLoopAddress } from '@shared/addressing'
-import { ch3ToCms, clamp, cmsToCh3, speedCap } from '@shared/convert'
+import { ch1Range, ch1ToPos, ch3ToCms, clamp, cmsToCh3, speedCap, stepPositionM } from '@shared/convert'
 import { CH, H2_MAX_SPEED_CMS, MODULE_MAX_SPEED_LIMIT_CMS, SENT_CH4_PULSE_VALUE, SENT_PULSE_MS, addressRange } from '@shared/dmx'
 import { defaultLayerTransform, defaultModuleTransform } from '@shared/preset'
 import {
@@ -39,11 +39,16 @@ import {
   heightToPercent,
   insertClipKeyframe,
   mapKeyframesToPts,
-  percentToHeight,
   removeClipKeyframe,
   resolveClipBoundsNoOverlap,
   cmsToSeconds,
+  cueRepDistanceCm,
+  cueSpeedView,
+  speedStoredFromInput,
+  storedSpeedAsCms,
+  speedDisplayValue,
   momentSpeedValue,
+  retimeSegmentToSpeed,
   representativeSegmentIndex,
   resolveClipSegmentSpeed,
   segmentDistCm,
@@ -53,7 +58,7 @@ import {
   updateClipKeyframeTimelineTime,
   updateClipStartTime,
 } from '@shared/timeline'
-import type { ClipKeyframe, CueButton, Layer, ModuleCfg, SpeedUnit, TimelineClip, Transform3D } from '@shared/types'
+import type { ClipKeyframe, CueButton, CueStep, Layer, ModuleCfg, TimelineClip, Transform3D } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
 
 function TransformEditor({
@@ -433,6 +438,9 @@ function MomentEditor({
   const [draftEnd, setDraftEnd] = useState<{ clipId: string; raw: string } | null>(null)
   const [draftTime, setDraftTime] = useState<{ id: string; raw: string } | null>(null)
   const [draftPct, setDraftPct] = useState<{ id: string; raw: string } | null>(null)
+  const [draftSpd, setDraftSpd] = useState<{ id: string; unit: string; raw: string } | null>(null)
+  const pUnit = clip.speedView ?? clip.speedUnit ?? 'cms'
+  const pCap = speedCap(mod)
 
   const commitStartTime = (rawVal: number) => {
     const patch = updateClipStartTime(clip, rawVal, bounds)
@@ -447,6 +455,19 @@ function MomentEditor({
   const commitTimelineTime = (kfId: string, rawVal: number) => {
     const patch = updateClipKeyframeTimelineTime(clip, kfId, rawVal, bounds)
     onUpdate(patch, `kf-${kfId}`)
+  }
+
+  // Cột các điểm theo đơn vị cm/s | CH3: Manual → đổi tốc độ chung của moment; Auto → dời thời điểm các điểm sau để đúng
+  // tốc độ của đoạn đi tới điểm này; moment cũ (chưa có Auto/Manual) → chỉ đọc.
+  const commitSpeedCell = (kfId: string, raw: number) => {
+    if (!Number.isFinite(raw)) return
+    const ch3 = clamp(Math.round(raw), 1, 255)
+    if (clip.speedMode === 'manual') {
+      onUpdate({ speedMode: 'manual', speedUnit: pUnit, speedValue: pUnit === 'ch3' ? ch3 : clamp(raw, 1, pCap), speedView: pUnit }, `momspd-${clip.id}`)
+    } else if (clip.speedMode === 'auto') {
+      const patch = retimeSegmentToSpeed(clip, kfId, pUnit === 'ch3' ? ch3ToCms(ch3, pCap) : raw, mod, bounds)
+      if (patch) onUpdate(patch, `kfspd-${kfId}`)
+    }
   }
 
   const loM = Math.max(0, mod.minHeight)
@@ -698,43 +719,103 @@ function MomentEditor({
                 >
                   P{idx + 1}
                 </span>
-                <label className="kiln-field flex min-w-0 flex-1 items-center gap-0.5 px-1">
-                  <input
-                    type="number"
-                    step="0.1"
-                    min={bounds.minStart}
-                    max={Number.isFinite(bounds.maxEnd) ? bounds.maxEnd : undefined}
-                    title="Thời gian của điểm trên Timeline (s)"
-                    value={draftTime?.id === kf.id ? draftTime.raw : timelineTime}
-                    onFocus={() => {
-                      onSelectKey(kf.id)
-                      setDraftTime({ id: kf.id, raw: String(timelineTime) })
-                    }}
-                    onChange={(e) => {
-                      const raw = e.target.value
-                      setDraftTime({ id: kf.id, raw })
-                      if (!raw.trim() || raw.endsWith('.')) return
-                      const num = Number(raw)
-                      if (Number.isFinite(num) && num >= prevTimelineTime && num <= nextTimelineTime) {
-                        commitTimelineTime(kf.id, num)
-                      }
-                    }}
-                    onBlur={() => {
-                      if (draftTime?.id === kf.id) {
-                        const num = Number(draftTime.raw)
-                        if (draftTime.raw.trim() && Number.isFinite(num)) commitTimelineTime(kf.id, num)
-                        setDraftTime(null)
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                    }}
-                    className={`w-full min-w-0 bg-transparent text-right text-[11px] tabular-nums outline-none ${
-                      active ? 'font-semibold text-fg' : 'text-fg'
-                    }`}
-                  />
-                  <span className="text-[10px] text-muted">s</span>
-                </label>
+                {pUnit === 'sec' ? (
+                  <label className="kiln-field flex min-w-0 flex-1 items-center gap-0.5 px-1">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min={bounds.minStart}
+                      max={Number.isFinite(bounds.maxEnd) ? bounds.maxEnd : undefined}
+                      title="Thời gian của điểm trên Timeline (s)"
+                      value={draftTime?.id === kf.id ? draftTime.raw : timelineTime}
+                      onFocus={() => {
+                        onSelectKey(kf.id)
+                        setDraftTime({ id: kf.id, raw: String(timelineTime) })
+                      }}
+                      onChange={(e) => {
+                        const raw = e.target.value
+                        setDraftTime({ id: kf.id, raw })
+                        if (!raw.trim() || raw.endsWith('.')) return
+                        const num = Number(raw)
+                        if (Number.isFinite(num) && num >= prevTimelineTime && num <= nextTimelineTime) {
+                          commitTimelineTime(kf.id, num)
+                        }
+                      }}
+                      onBlur={() => {
+                        if (draftTime?.id === kf.id) {
+                          const num = Number(draftTime.raw)
+                          if (draftTime.raw.trim() && Number.isFinite(num)) commitTimelineTime(kf.id, num)
+                          setDraftTime(null)
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                      }}
+                      className={`w-full min-w-0 bg-transparent text-right text-[11px] tabular-nums outline-none ${
+                        active ? 'font-semibold text-fg' : 'text-fg'
+                      }`}
+                    />
+                    <span className="text-[10px] text-muted">s</span>
+                  </label>
+                ) : (
+                  (() => {
+                    const segIn = idx > 0 ? resolveClipSegmentSpeed(clip, sorted[idx - 1], kf, mod) : null
+                    // Manual + đã lưu CH3: hiện đúng CH3 đã nhập (không quy đổi qua cm/s).
+                    const exactCh3 = clip.speedMode === 'manual' && clip.speedUnit === 'ch3' && pUnit === 'ch3' && clip.speedValue !== undefined
+                    const shownVal =
+                      segIn === null
+                        ? '—'
+                        : exactCh3
+                          ? String(clamp(Math.round(clip.speedValue as number), 1, 255))
+                          : pUnit === 'cms'
+                            ? String(Number(segIn.cms.toFixed(1)))
+                            : String(cmsToCh3(segIn.cms, pCap))
+                    const editableCell = segIn !== null && clip.speedMode !== undefined
+                    const label = pUnit === 'cms' ? 'cm/s' : 'CH3'
+                    const cellTitle =
+                      segIn === null
+                        ? 'Điểm đầu chưa có đoạn vào'
+                        : clip.speedMode === undefined
+                          ? `${label} của đoạn đi tới điểm này (chỉ đọc: chọn Auto/Manual ở TỐC ĐỘ MOMENT để sửa)`
+                          : clip.speedMode === 'manual'
+                            ? `${label} của đoạn đi tới điểm này. Sửa = đổi tốc độ chung của moment`
+                            : `${label} của đoạn đi tới điểm này. Sửa = dời các điểm sau để đúng tốc độ`
+                    const drafting = draftSpd?.id === kf.id && draftSpd.unit === pUnit
+                    return (
+                      <label className="kiln-field flex min-w-0 flex-1 items-center gap-0.5 px-1" title={cellTitle}>
+                        <input
+                          type={editableCell ? 'number' : 'text'}
+                          readOnly={!editableCell}
+                          tabIndex={editableCell ? 0 : -1}
+                          step={1}
+                          min={1}
+                          max={pUnit === 'ch3' ? 255 : pCap}
+                          aria-label={`${label} tới P${idx + 1}`}
+                          value={drafting ? draftSpd.raw : shownVal}
+                          onFocus={() => {
+                            onSelectKey(kf.id)
+                            if (editableCell) setDraftSpd({ id: kf.id, unit: pUnit, raw: shownVal })
+                          }}
+                          onChange={(e) => setDraftSpd({ id: kf.id, unit: pUnit, raw: e.target.value })}
+                          onBlur={() => {
+                            if (drafting && editableCell) {
+                              const num = Number(draftSpd.raw)
+                              if (draftSpd.raw.trim() && Number.isFinite(num) && draftSpd.raw !== shownVal) commitSpeedCell(kf.id, num)
+                            }
+                            setDraftSpd(null)
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                          }}
+                          className={`w-full min-w-0 bg-transparent text-right text-[11px] tabular-nums outline-none ${
+                            active ? 'font-semibold text-fg' : 'text-fg'
+                          }`}
+                        />
+                        <span className="text-[10px] text-muted">{label}</span>
+                      </label>
+                    )
+                  })()
+                )}
                 <span className="text-muted">·</span>
                 <label className="kiln-field flex min-w-0 flex-1 items-center gap-0.5 px-1">
                   <input
@@ -797,8 +878,9 @@ function MomentEditor({
 }
 
 /**
- * TỐC ĐỘ MOMENT: một cài đặt cho toàn bộ N đoạn. Auto = mỗi đoạn tự tính; Manual = cm/s (cùng tốc độ), s (mỗi đoạn
- * đi trong N giây, không dời điểm) hoặc CH3 (cùng CH3). Đoạn đại diện để đổi đơn vị = đoạn có quãng đường dài nhất.
+ * TỐC ĐỘ MOMENT: một cài đặt cho toàn bộ N đoạn. Hai nhóm nút LUÔN hiện: Auto | Manual và cm/s | s | CH3 (đơn vị cũng
+ * quyết định cột trong CÁC ĐIỂM). Auto: ô giá trị chỉ đọc (giá trị tự tính theo đơn vị đang chọn); Manual: nhập được
+ * (cm/s = cùng tốc độ, s = mỗi đoạn đi trong N giây, CH3 = cùng CH3). Đoạn đại diện để đổi đơn vị = đoạn dài nhất.
  */
 function MomentSpeedEditor({
   clip,
@@ -821,29 +903,34 @@ function MomentSpeedEditor({
   const rep = segs[repIdx]
   const legacy = clip.speedMode === undefined
   const mode = clip.speedMode
-  const unit = clip.speedUnit ?? 'cms'
+  const unit = clip.speedView ?? clip.speedUnit ?? 'cms' // menu đang chọn (chỉ hiển thị)
+  const storedUnit = clip.speedUnit ?? 'cms'
   const clearPointSpeeds = sorted.map((k) => ({ ...k, speedMode: undefined, manualSpeedCms: undefined }))
   const apply = (patch: Partial<TimelineClip>) => onUpdate({ ...patch, keyframes: clearPointSpeeds }, `momspd-${clip.id}`)
   const repCms = rep.res.cms
   // Giá trị tương đương theo đơn vị cho đoạn đại diện (quãng 0 → null với đơn vị giây).
   const valueFor = (u: 'cms' | 'sec' | 'ch3', cms: number): number | null => momentSpeedValue(u, cms, rep.dist, cap)
   const setMode = (m: 'auto' | 'manual') => {
-    if (m === 'auto') apply({ speedMode: 'auto', speedUnit: undefined, speedValue: undefined })
-    else apply({ speedMode: 'manual', speedUnit: unit, speedValue: valueFor(unit, repCms) ?? Number(repCms.toFixed(1)) })
+    if (m === mode) return
+    if (m === 'auto') apply({ speedMode: 'auto', speedUnit: undefined, speedValue: undefined, speedView: unit })
+    else apply({ speedMode: 'manual', speedUnit: unit, speedValue: valueFor(unit, repCms) ?? Number(repCms.toFixed(1)), speedView: unit })
   }
+  // Đổi menu CHỈ đổi cách hiển thị: giá trị đã lưu (speedUnit + speedValue) không bị quy đổi/ghi đè cho tới khi sửa ô.
   const setUnit = (u: 'cms' | 'sec' | 'ch3') => {
-    if (u === unit) return
-    const v = valueFor(u, repCms)
-    apply({ speedMode: 'manual', speedUnit: u, speedValue: v ?? (u === 'sec' ? clip.speedValue ?? 1 : Number(repCms.toFixed(1))) })
+    if (u !== unit) onUpdate({ speedView: u }, `momunit-${clip.id}`)
   }
+  const shownManual = mode === 'manual' && clip.speedValue !== undefined ? speedDisplayValue(unit, storedUnit, clip.speedValue, rep.dist, cap) : null
   const commit = (raw: number) => {
     if (!Number.isFinite(raw)) return
     const v = unit === 'ch3' ? clamp(Math.round(raw), 1, 255) : unit === 'cms' ? clamp(raw, 1, cap) : Math.max(0.05, raw)
-    if (v !== clip.speedValue) apply({ speedMode: 'manual', speedUnit: unit, speedValue: v })
+    if (v !== shownManual) apply({ speedMode: 'manual', speedUnit: unit, speedValue: v, speedView: unit }) // lưu NGUYÊN theo đơn vị đang chọn
   }
   const over = segs.some((s) => s.res.mode === 'manual' && s.res.overMax)
   const slow = segs.filter((s) => s.res.mode === 'manual' && s.res.tooSlow)
-  const cmsLabel = unit === 'ch3' ? `${ch3ToCms(clamp(Math.round(clip.speedValue ?? 0), 1, 255), cap).toFixed(1)} cm/s` : null
+  const cmsLabel = storedUnit === 'ch3' ? `${ch3ToCms(clamp(Math.round(clip.speedValue ?? 0), 1, 255), cap).toFixed(1)} cm/s` : null
+  const editable = mode === 'manual'
+  const readValue = valueFor(unit, repCms)
+  const unitLabel = unit === 'cms' ? 'cm/s' : unit === 'sec' ? 's' : 'CH3'
   return (
     <div className="space-y-1.5 border-t border-line pt-2.5">
       <div className="text-[11px] font-semibold tracking-wide text-muted uppercase">Tốc độ moment</div>
@@ -854,7 +941,41 @@ function MomentSpeedEditor({
           </button>
         ))}
       </div>
+      <div className="kiln-seg" role="group" aria-label="Kiểu nhập tốc độ">
+        {(['cms', 'sec', 'ch3'] as const).map((u) => (
+          <button key={u} type="button" aria-pressed={unit === u} onClick={() => setUnit(u)} className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${unit === u ? 'on' : ''}`}>
+            {u === 'cms' ? 'cm/s' : u === 'sec' ? 's' : 'CH3'}
+          </button>
+        ))}
+      </div>
       {legacy && <p className="text-[10.5px] text-muted">Moment cũ: đang dùng tốc độ theo từng điểm. Chọn Auto/Manual để áp cho cả moment.</p>}
+      {editable ? (
+        <input
+          key={`${clip.id}-${unit}-${storedUnit}-${clip.speedValue}`}
+          type="number"
+          min={unit === 'ch3' ? 1 : unit === 'sec' ? 0.05 : 1}
+          max={unit === 'ch3' ? 255 : unit === 'cms' ? cap : undefined}
+          step={unit === 'sec' ? 0.1 : 1}
+          defaultValue={shownManual ?? ''}
+          aria-label={unit === 'cms' ? 'Tốc độ chung (cm/s)' : unit === 'sec' ? 'Thời gian mỗi đoạn (s)' : 'CH3 chung (1–255)'}
+          onBlur={(e) => commit(e.currentTarget.valueAsNumber)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+          }}
+          className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
+        />
+      ) : (
+        <input
+          key={`ro-${clip.id}-${unit}`}
+          type="text"
+          readOnly
+          tabIndex={-1}
+          value={readValue === null ? '—' : String(readValue)}
+          aria-label={`Giá trị tự tính (${unitLabel}), chỉ đọc`}
+          title={`Tự tính, chỉ đọc (${unitLabel}). Chọn Manual để nhập.`}
+          className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
+        />
+      )}
       {mode === 'auto' && (
         <div className="space-y-0.5 text-[10.5px] text-muted tabular-nums">
           <div>Mọi {segs.length} đoạn tự tính từ quãng đường / thời gian giữa các điểm.</div>
@@ -865,31 +986,11 @@ function MomentSpeedEditor({
       )}
       {mode === 'manual' && (
         <div className="space-y-1">
-          <div className="kiln-seg" role="group" aria-label="Kiểu nhập tốc độ">
-            {(['cms', 'sec', 'ch3'] as const).map((u) => (
-              <button key={u} type="button" aria-pressed={unit === u} onClick={() => setUnit(u)} className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${unit === u ? 'on' : ''}`}>
-                {u === 'cms' ? 'cm/s' : u === 'sec' ? 's' : 'CH3'}
-              </button>
-            ))}
-          </div>
-          <input
-            key={`${clip.id}-${unit}-${clip.speedValue}`}
-            type="number"
-            min={unit === 'ch3' ? 1 : unit === 'sec' ? 0.05 : 1}
-            max={unit === 'ch3' ? 255 : unit === 'cms' ? cap : undefined}
-            step={unit === 'sec' ? 0.1 : 1}
-            defaultValue={clip.speedValue}
-            aria-label={unit === 'cms' ? 'Tốc độ chung (cm/s)' : unit === 'sec' ? 'Thời gian mỗi đoạn (s)' : 'CH3 chung (1–255)'}
-            onBlur={(e) => commit(e.currentTarget.valueAsNumber)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') e.currentTarget.blur()
-            }}
-            className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
-          />
           <div className="text-[10.5px] text-muted tabular-nums">
-            {unit === 'cms' && `Mọi đoạn ${clip.speedValue ?? '—'} cm/s · CH3 ${cmsToCh3(clip.speedValue ?? 0, cap)}`}
-            {unit === 'ch3' && `Mọi đoạn CH3 ${clip.speedValue ?? '—'} ≈ ${cmsLabel} (255 = ${cap} cm/s)`}
-            {unit === 'sec' && `Mỗi đoạn đi trong ${clip.speedValue ?? '—'} s (cm/s = quãng ÷ s; không dời điểm)`}
+            {storedUnit === 'cms' && `Đã lưu: mọi đoạn ${clip.speedValue ?? '—'} cm/s`}
+            {storedUnit === 'ch3' && `Đã lưu: mọi đoạn CH3 ${clip.speedValue ?? '—'} ≈ ${cmsLabel} (255 = ${cap} cm/s)`}
+            {storedUnit === 'sec' && `Đã lưu: mỗi đoạn đi trong ${clip.speedValue ?? '—'} s (cm/s = quãng ÷ s; không dời điểm)`}
+            {unit !== storedUnit && ' · đang hiển thị quy đổi tạm, sửa ô để lưu theo đơn vị đang chọn'}
           </div>
           <div className="text-[10.5px] text-muted tabular-nums">
             Đại diện P{repIdx + 1}→P{repIdx + 2} ({rep.dist.toFixed(1)} cm): {rep.res.cms.toFixed(1)} cm/s · {cmsToSeconds(rep.dist, rep.res.cms)?.toFixed(2) ?? '—'} s · CH3 {cmsToCh3(rep.res.cms, cap)}
@@ -930,77 +1031,80 @@ function CueButtonEditor({
   onDelete: () => void
   onBack: () => void
 }) {
-  const [heightUnit, setHeightUnit] = useState<'m' | 'pct'>('m')
+  const heightUnit = btn.positionUnit ?? 'm'
   const [globalHeight, setGlobalHeight] = useState('1')
-  const stepMap = new Map(btn.steps.map((s) => [s.moduleId, s.position]))
+  const stepById = new Map(btn.steps.map((s) => [s.moduleId, s]))
   const refMod = modules[0] ?? { minHeight: 0, maxHeight: 1, length: 1 }
+  const refMax = modules.find((m) => m.id === btn.steps[0]?.moduleId)?.maxSpeedCms ?? modules[0]?.maxSpeedCms ?? H2_MAX_SPEED_CMS
+  const repDist = cueRepDistanceCm(btn.steps, modules, (id) => snapshotModules[id]?.pos)
+  const speedView = cueSpeedView(btn)
+  const speedShown = speedDisplayValue(speedView, btn.speedUnit, btn.speedValue, repDist, refMax)
 
-  const switchHeightUnit = (nextUnit: 'm' | 'pct') => {
+  // Giá trị lưu GIỮ NGUYÊN theo đơn vị nhập (step.unit); đổi menu m/CH1 chỉ đổi hiển thị cho tới khi sửa ô. CH1 = round(m ÷ length × 255).
+  const mToCh1 = (m: number, length: number) => clamp(Math.round((m / Math.max(0.001, length)) * 255), 0, 255)
+  const stepDisplay = (step: CueStep, m: ModuleCfg): number =>
+    (step.unit ?? 'm') === heightUnit
+      ? step.position
+      : heightUnit === 'ch1'
+        ? mToCh1(stepPositionM(step, m.length), m.length)
+        : Number(stepPositionM(step, m.length).toFixed(3))
+  const storeFromInput = (raw: number, m: ModuleCfg): CueStep => {
+    if (heightUnit === 'ch1') {
+      const [lo, hi] = ch1Range(m)
+      return { moduleId: m.id, position: clamp(Math.round(raw), lo, hi), unit: 'ch1' }
+    }
+    return { moduleId: m.id, position: Number(clamp(raw, m.minHeight, m.maxHeight).toFixed(2)) }
+  }
+  const currentStep = (m: ModuleCfg): CueStep =>
+    storeFromInput(heightUnit === 'ch1' ? mToCh1(snapshotModules[m.id]?.pos ?? m.minHeight, m.length) : (snapshotModules[m.id]?.pos ?? m.minHeight), m)
+  const switchHeightUnit = (nextUnit: 'm' | 'ch1') => {
     if (nextUnit === heightUnit) return
     const cur = Number(globalHeight)
     if (Number.isFinite(cur)) {
-      const converted =
-        nextUnit === 'pct'
-          ? heightToPercent(cur, refMod)
-          : Number(percentToHeight(cur, refMod).toFixed(2))
-      setGlobalHeight(String(converted))
+      setGlobalHeight(nextUnit === 'ch1' ? String(mToCh1(cur, refMod.length)) : String(Number(ch1ToPos(clamp(Math.round(cur), 0, 255), refMod.length).toFixed(4))))
     }
-    setHeightUnit(nextUnit)
+    onSave({ ...btn, positionUnit: nextUnit === 'ch1' ? 'ch1' : undefined })
   }
 
   const toggleModule = (m: ModuleCfg) => {
     const exists = btn.steps.some((s) => s.moduleId === m.id)
-    const steps = exists
-      ? btn.steps.filter((s) => s.moduleId !== m.id)
-      : [...btn.steps, { moduleId: m.id, position: Number((snapshotModules[m.id]?.pos ?? m.minHeight).toFixed(2)) }]
+    const steps = exists ? btn.steps.filter((s) => s.moduleId !== m.id) : [...btn.steps, currentStep(m)]
     onSave({ ...btn, steps })
   }
 
   const setModuleHeight = (m: ModuleCfg, rawPos: number) => {
-    const pos = Number(clamp(rawPos, m.minHeight, m.maxHeight).toFixed(2))
+    const next = storeFromInput(rawPos, m)
     const exists = btn.steps.some((s) => s.moduleId === m.id)
-    const steps = exists
-      ? btn.steps.map((s) => (s.moduleId === m.id ? { ...s, position: pos } : s))
-      : [...btn.steps, { moduleId: m.id, position: pos }]
+    const steps = exists ? btn.steps.map((s) => (s.moduleId === m.id ? next : s)) : [...btn.steps, next]
     onSave({ ...btn, steps }, `cue-mod-${btn.id}-${m.id}`)
   }
 
   const toggleLayerInButton = (layerId: string) => {
     const mods = modules.filter((m) => m.layerId === layerId)
     const modIds = new Set(mods.map((m) => m.id))
-    const allChecked = mods.length > 0 && mods.every((m) => stepMap.has(m.id))
+    const allChecked = mods.length > 0 && mods.every((m) => stepById.has(m.id))
     if (allChecked) {
       onSave({ ...btn, steps: btn.steps.filter((s) => !modIds.has(s.moduleId)) })
       return
     }
     const nextSteps = [...btn.steps]
     for (const m of mods) {
-      if (!nextSteps.some((s) => s.moduleId === m.id)) {
-        nextSteps.push({ moduleId: m.id, position: Number((snapshotModules[m.id]?.pos ?? m.minHeight).toFixed(2)) })
-      }
+      if (!nextSteps.some((s) => s.moduleId === m.id)) nextSteps.push(currentStep(m))
     }
     onSave({ ...btn, steps: nextSteps })
   }
 
   const applyAllSelectedLayersHeight = (rawVal: number) => {
     const modById = new Map(modules.map((m) => [m.id, m]))
-    const toTargetHeight = (m: ModuleCfg) => {
-      const nextPos = heightUnit === 'pct' ? percentToHeight(rawVal, m) : rawVal
-      return Number(clamp(nextPos, m.minHeight, m.maxHeight).toFixed(2))
-    }
     if (btn.steps.length > 0) {
       const steps = btn.steps.map((s) => {
         const m = modById.get(s.moduleId)
-        return m ? { ...s, position: toTargetHeight(m) } : s
+        return m ? storeFromInput(rawVal, m) : s
       })
       onSave({ ...btn, steps })
       return
     }
-    const steps = modules.map((m) => ({
-      moduleId: m.id,
-      position: toTargetHeight(m),
-    }))
-    onSave({ ...btn, steps })
+    onSave({ ...btn, steps: modules.map((m) => storeFromInput(rawVal, m)) })
   }
 
   return (
@@ -1040,22 +1144,25 @@ function CueButtonEditor({
       </label>
 
       <div className="space-y-1.5 border-b border-line pb-3">
-        <span className="text-[11px] text-[#C2B3A4]">Thời lượng chạy</span>
+        <span className="text-[11px] text-[#C2B3A4]">Tốc độ / thời lượng chạy</span>
         <div className="flex items-center gap-2">
-          <div className="kiln-seg flex-1">
+          <div className="kiln-seg flex-1" role="group" aria-label="Đơn vị tốc độ nút Cue">
             {(
               [
-                ['sec', 'Giây (s)'],
                 ['cms', 'cm/s'],
+                ['sec', 's'],
+                ['ch3', 'CH3'],
               ] as const
             ).map(([unit, label]) => (
               <button
                 key={unit}
                 type="button"
+                aria-pressed={speedView === unit}
+                title="Chỉ đổi cách hiển thị: giá trị đã lưu không bị quy đổi cho tới khi bạn sửa ô"
                 onClick={() => {
-                  if (btn.speedUnit !== unit) onSave({ ...btn, speedUnit: unit as SpeedUnit, autoSpeedLimitCms: undefined })
+                  if (unit !== speedView) onSave({ ...btn, speedView: unit })
                 }}
-                className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${btn.speedUnit === unit ? 'on' : ''}`}
+                className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${speedView === unit ? 'on' : ''}`}
               >
                 {label}
               </button>
@@ -1063,17 +1170,37 @@ function CueButtonEditor({
           </div>
 
           <input
+            key={`${btn.id}-${speedView}-${btn.speedUnit}-${btn.speedValue}`}
             type="number"
-            min="0.5"
-            step="0.5"
-            aria-label="Giá trị tốc độ hoặc thời gian nút Cue"
-            value={btn.speedValue}
-            onChange={(e) =>
-              onSave({ ...btn, speedValue: Math.max(0.1, Number(e.target.value) || 1), autoSpeedLimitCms: undefined }, `cue-spd-${btn.id}`)
-            }
+            min={speedView === 'ch3' ? 1 : '0.5'}
+            max={speedView === 'ch3' ? 255 : undefined}
+            step={speedView === 'ch3' ? 1 : '0.5'}
+            aria-label={`Giá trị tốc độ nút Cue (${speedView === 'cms' ? 'cm/s' : speedView === 'sec' ? 's' : 'CH3'})`}
+            defaultValue={speedShown ?? ''}
+            onBlur={(e) => {
+              const v = e.currentTarget.valueAsNumber
+              if (!Number.isFinite(v) || v === speedShown) return
+              // Lưu NGUYÊN theo đơn vị đang chọn (CH3 nhập 100 lưu 100, không qua cm/s).
+              onSave({ ...btn, speedUnit: speedView, speedValue: speedStoredFromInput(speedView, v), speedView, autoSpeedLimitCms: undefined }, `cue-spd-${btn.id}`)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur()
+            }}
             className="kiln-field h-8 w-24 px-3 text-right text-xs tabular-nums"
           />
         </div>
+        {(btn.speedUnit === 'ch3' || speedView === 'ch3') && (
+          <p className="text-[10.5px] text-muted tabular-nums">
+            255 = {refMax} cm/s (module đầu tiên của cue)
+            {storedSpeedAsCms(btn.speedUnit, btn.speedValue, repDist, refMax) !== null &&
+              ` · đã lưu ≈ ${Number(storedSpeedAsCms(btn.speedUnit, btn.speedValue, repDist, refMax)!.toFixed(1))} cm/s`}
+          </p>
+        )}
+        {speedView !== btn.speedUnit && (
+          <p className="text-[10.5px] text-muted">
+            Đã lưu theo {btn.speedUnit === 'cms' ? 'cm/s' : btn.speedUnit === 'sec' ? 's' : 'CH3'}; đang hiển thị quy đổi tạm, sửa ô để lưu theo đơn vị đang chọn.
+          </p>
+        )}
       </div>
 
       <div className="space-y-2.5">
@@ -1088,10 +1215,7 @@ function CueButtonEditor({
               onClick={() =>
                 onSave({
                   ...btn,
-                  steps: modules.map((m) => ({
-                    moduleId: m.id,
-                    position: Number((stepMap.get(m.id) ?? snapshotModules[m.id]?.pos ?? m.minHeight).toFixed(2)),
-                  })),
+                  steps: modules.map((m) => stepById.get(m.id) ?? currentStep(m)),
                 })
               }
               className="kiln-btn kiln-btn-cue h-7 px-3 text-[11px]"
@@ -1107,11 +1231,11 @@ function CueButtonEditor({
             </button>
           </div>
 
-          <div className="kiln-seg" role="group" aria-label="Chế độ đơn vị chiều cao">
+          <div className="kiln-seg" role="group" aria-label="Đơn vị vị trí">
             {(
               [
                 ['m', 'm'],
-                ['pct', '%'],
+                ['ch1', 'CH1'],
               ] as const
             ).map(([unit, label]) => (
               <button
@@ -1131,21 +1255,21 @@ function CueButtonEditor({
           <div className="kiln-field flex h-8 w-24 items-center rounded-full px-2.5">
             <input
               type="number"
-              step={heightUnit === 'pct' ? '1' : '0.1'}
+              step={heightUnit === 'ch1' ? '1' : '0.1'}
               min="0"
-              max={heightUnit === 'pct' ? '100' : undefined}
-              aria-label={`Chiều cao áp dụng cho các layer (${heightUnit === 'pct' ? '%' : 'm'})`}
+              max={heightUnit === 'ch1' ? '255' : undefined}
+              aria-label={`Chiều cao áp dụng cho các layer (${heightUnit === 'ch1' ? 'CH1' : 'm'})`}
               value={globalHeight}
               onChange={(e) => setGlobalHeight(e.target.value)}
               className="w-full min-w-0 border-0 bg-transparent text-center text-xs text-fg tabular-nums outline-none"
             />
             <button
               type="button"
-              onClick={() => switchHeightUnit(heightUnit === 'm' ? 'pct' : 'm')}
-              title="Đổi đơn vị m / %"
+              onClick={() => switchHeightUnit(heightUnit === 'm' ? 'ch1' : 'm')}
+              title="Đổi đơn vị m / CH1"
               className="shrink-0 cursor-pointer pl-1 text-[11px] font-medium text-muted hover:text-fg"
             >
-              {heightUnit === 'pct' ? '%' : 'm'}
+              {heightUnit === 'ch1' ? 'CH1' : 'm'}
             </button>
           </div>
           <button
@@ -1160,7 +1284,7 @@ function CueButtonEditor({
         <div className="space-y-2.5">
           {layers.map((layer) => {
             const mods = modules.filter((m) => m.layerId === layer.id)
-            const selectedCount = mods.filter((m) => stepMap.has(m.id)).length
+            const selectedCount = mods.filter((m) => stepById.has(m.id)).length
             const allChecked = mods.length > 0 && selectedCount === mods.length
 
             return (
@@ -1182,9 +1306,10 @@ function CueButtonEditor({
 
                 <div className="space-y-1.5">
                   {mods.map((m) => {
-                    const checked = stepMap.has(m.id)
-                    const pos = stepMap.get(m.id) ?? m.minHeight
-                    const displayVal = heightUnit === 'pct' ? heightToPercent(pos, m) : pos
+                    const checked = stepById.has(m.id)
+                    const step = stepById.get(m.id)
+                    const pos = step ? stepPositionM(step, m.length) : m.minHeight
+                    const displayVal = step ? stepDisplay(step, m) : heightUnit === 'ch1' ? mToCh1(m.minHeight, m.length) : m.minHeight
                     return (
                       <div
                         key={m.id}
@@ -1205,28 +1330,33 @@ function CueButtonEditor({
                             {m.name}
                           </span>
                         </label>
+                        {heightUnit === 'ch1' && (
+                          <span className="shrink-0 text-[10px] text-muted tabular-nums" title="Vị trí tương đương theo mét">
+                            ≈{pos.toFixed(2)}m
+                          </span>
+                        )}
                         <div className="kiln-field flex h-6 w-20 items-center rounded-full px-2">
                           <input
                             type="number"
-                            step={heightUnit === 'pct' ? '1' : '0.1'}
-                            min={heightUnit === 'pct' ? 0 : m.minHeight}
-                            max={heightUnit === 'pct' ? 100 : m.maxHeight}
-                            aria-label={`${m.name} (${heightUnit === 'pct' ? '%' : 'm'})`}
+                            step={heightUnit === 'ch1' ? '1' : '0.1'}
+                            min={heightUnit === 'ch1' ? 0 : m.minHeight}
+                            max={heightUnit === 'ch1' ? 255 : m.maxHeight}
+                            aria-label={`${m.name} (${heightUnit === 'ch1' ? 'CH1' : 'm'})`}
                             value={displayVal}
                             onChange={(e) => {
                               const raw = Number(e.target.value) || 0
-                              const nextM = heightUnit === 'pct' ? percentToHeight(raw, m) : raw
+                              const nextM = heightUnit === 'ch1' ? ch1ToPos(clamp(Math.round(raw), 0, 255), m.length) : raw
                               setModuleHeight(m, nextM)
                             }}
                             className="w-full min-w-0 border-0 bg-transparent text-center text-[11.5px] text-fg tabular-nums outline-none"
                           />
                           <button
                             type="button"
-                            onClick={() => switchHeightUnit(heightUnit === 'm' ? 'pct' : 'm')}
-                            title="Đổi đơn vị m / %"
+                            onClick={() => switchHeightUnit(heightUnit === 'm' ? 'ch1' : 'm')}
+                            title="Đổi đơn vị m / CH1"
                             className="shrink-0 cursor-pointer pl-0.5 text-[10.5px] font-medium text-muted hover:text-fg"
                           >
-                            {heightUnit === 'pct' ? '%' : 'm'}
+                            {heightUnit === 'ch1' ? 'CH1' : 'm'}
                           </button>
                         </div>
                       </div>
