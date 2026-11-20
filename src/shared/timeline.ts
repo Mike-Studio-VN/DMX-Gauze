@@ -1623,9 +1623,9 @@ export function stepSpeed(btn: Pick<CueButton, 'speedUnit' | 'speedValue'>, step
     : { unit: btn.speedUnit, value: btn.speedValue }
 }
 
-/** Tóm tắt tốc độ các module của cue (cho nhãn nút): giống nhau → {unit,value}; khác nhau → null. Auto: dùng tốc độ chung. */
-export function cueSpeedSummary(btn: Pick<CueButton, 'speedUnit' | 'speedValue' | 'steps' | 'autoSpeedLimitCms'>): { unit: SpeedViewUnit; value: number } | null {
-  if (btn.autoSpeedLimitCms !== undefined || btn.steps.length === 0) return { unit: btn.speedUnit, value: btn.speedValue }
+/** Tóm tắt tốc độ các module của cue (cho nhãn nút): giống nhau → {unit,value}; khác nhau → null. */
+export function cueSpeedSummary(btn: Pick<CueButton, 'speedUnit' | 'speedValue' | 'steps'>): { unit: SpeedViewUnit; value: number } | null {
+  if (btn.steps.length === 0) return { unit: btn.speedUnit, value: btn.speedValue }
   const first = stepSpeed(btn, btn.steps[0])
   return btn.steps.every((s) => {
     const x = stepSpeed(btn, s)
@@ -1637,19 +1637,18 @@ export function cueSpeedSummary(btn: Pick<CueButton, 'speedUnit' | 'speedValue' 
 
 /**
  * Áp CẢ HAI giá trị cho các module ĐANG TÍCH (có trong steps): `pos` (theo btn.positionUnit, lưu nguyên vào từng CueStep,
- * kẹp theo min–max từng module) và `spd` (theo đơn vị đang chọn → speedUnit/speedValue của cue, chỉ khi Manual). null = không đổi.
+ * kẹp theo min–max từng module) và `spd` (theo đơn vị đang chọn → speedUnit/speedValue của từng bước tích). null = không đổi.
  * Module bỏ tích giữ nguyên. `clamped` = tên module bị kẹp.
  */
 export function applyCueValues(
   btn: CueButton,
   modules: ReadonlyArray<ModuleCfg>,
   input: { pos: number | null; spd: number | null },
-): { btn: CueButton; clamped: string[]; reason?: 'none-selected' | 'nothing' | 'auto-speed' } {
+): { btn: CueButton; clamped: string[]; reason?: 'none-selected' | 'nothing' } {
   const modById = new Map(modules.map((m) => [m.id, m]))
   if (!btn.steps.some((s) => modById.has(s.moduleId))) return { btn, clamped: [], reason: 'none-selected' }
-  const auto = btn.autoSpeedLimitCms !== undefined
-  const speedGiven = input.spd !== null && !auto
-  if (input.pos === null && !speedGiven) return { btn, clamped: [], reason: input.spd !== null ? 'auto-speed' : 'nothing' }
+  const speedGiven = input.spd !== null
+  if (input.pos === null && !speedGiven) return { btn, clamped: [], reason: 'nothing' }
   const unit = btn.positionUnit ?? 'm'
   const clamped: string[] = []
   let next = btn
@@ -1674,7 +1673,6 @@ export function applyCueValues(
       ...next,
       steps: next.steps.map((s) => (modById.has(s.moduleId) ? { ...s, speedUnit: view, speedValue: stored } : s)),
       speedView: view,
-      autoSpeedLimitCms: undefined,
     }
   }
   return { btn: next, clamped }
@@ -1695,22 +1693,3 @@ export function momentModePatch(
   return { speedMode: 'manual', speedUnit: fallback.unit, speedValue: fallback.value }
 }
 
-/** Cue: Auto cất tốc độ Manual vào `manualSpeed` rồi dùng tốc độ mặc định; Manual khôi phục lại. */
-export function cueModeSwitch(btn: CueButton, target: 'auto' | 'manual', defaultCms: number, autoLimitCms: number): CueButton {
-  const isAuto = btn.autoSpeedLimitCms !== undefined
-  if ((target === 'auto') === isAuto) return btn
-  if (target === 'auto') {
-    return {
-      ...btn,
-      manualSpeed: { unit: btn.speedUnit, value: btn.speedValue },
-      speedUnit: 'cms',
-      speedValue: defaultCms,
-      speedView: undefined,
-      autoSpeedLimitCms: autoLimitCms,
-    }
-  }
-  const { manualSpeed, ...rest } = btn
-  return manualSpeed
-    ? { ...rest, speedUnit: manualSpeed.unit, speedValue: manualSpeed.value, speedView: undefined, autoSpeedLimitCms: undefined }
-    : { ...rest, autoSpeedLimitCms: undefined }
-}

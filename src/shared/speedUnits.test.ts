@@ -19,7 +19,6 @@ import {
   keyframeHeightFromInput,
   mToCh1Raw,
   applyCueValues,
-  cueModeSwitch,
   cueSpeedSummary,
   stepSpeed,
   stepWithPosition,
@@ -299,7 +298,7 @@ describe('cue: áp dụng chung vị trí + tốc độ cho module đang tích',
     expect(hi.clamped).toEqual(['B'])
     expect(stepPositionM(r.btn.steps[0], 1)).not.toBeCloseTo(stepPositionM(r.btn.steps[1], 3), 2)
   })
-  it('tốc độ: ghi vào TỪNG bước đang tích (nguyên theo đơn vị đang chọn), tốc độ chung giữ nguyên; Auto bị bỏ qua; ô trống không đổi', () => {
+  it('tốc độ: ghi vào TỪNG bước đang tích (nguyên theo đơn vị đang chọn), tốc độ chung giữ nguyên; cue luôn Manual; ô trống không đổi', () => {
     const cms = applyCueValues(base({ speedView: 'cms' }), mods, { pos: null, spd: 45 })
     expect(cms.btn.steps.every((s) => s.speedUnit === 'cms' && s.speedValue === 45)).toBe(true)
     expect(cms.btn).toMatchObject({ speedUnit: 'cms', speedValue: 30 }) // chung giữ nguyên
@@ -308,9 +307,10 @@ describe('cue: áp dụng chung vị trí + tốc độ cho module đang tích',
     expect(ch3.btn.speedView).toBe('ch3')
     const sec = applyCueValues(base({ speedView: 'sec' }), mods, { pos: null, spd: 2.5 })
     expect(sec.btn.steps.every((s) => s.speedUnit === 'sec' && s.speedValue === 2.5)).toBe(true)
-    const auto = applyCueValues(base({ autoSpeedLimitCms: 50 }), mods, { pos: null, spd: 99 })
-    expect(auto.reason).toBe('auto-speed')
-    expect(auto.btn.steps.every((s) => s.speedValue === undefined)).toBe(true)
+    // cue cũ vốn Auto (autoSpeedLimitCms) vẫn nhập được như Manual
+    const legacyAuto = applyCueValues(base({ autoSpeedLimitCms: 50 }), mods, { pos: null, spd: 99 })
+    expect(legacyAuto.reason).toBeUndefined()
+    expect(legacyAuto.btn.steps.every((s) => s.speedValue === 99)).toBe(true)
     expect(applyCueValues(base(), mods, { pos: null, spd: null }).reason).toBe('nothing')
     // cả hai cùng lúc; sửa vị trí sau đó vẫn giữ tốc độ riêng
     const both = applyCueValues(base({ positionUnit: 'ch1', speedView: 'ch3' }), mods, { pos: 100, spd: 100 })
@@ -374,23 +374,6 @@ describe('Auto ⇄ Manual không mất giá trị Manual đã nhập', () => {
     const cmd = planTimelineFollow([m], [back.clips![0]], [], 10, 0.06, null, new LinearFollowPlanner()).commands[0]
     expect(cmd).toMatchObject({ speed: { unit: 'cms' } })
   })
-  it('cue: Auto cất tốc độ Manual; về Manual khôi phục đúng đơn vị + số; round-trip', () => {
-    const b: CueButton = { id: 'q', name: 'Q', steps: [], speedUnit: 'ch3', speedValue: 100 }
-    const auto = cueModeSwitch(b, 'auto', 47, 50)
-    expect(auto).toMatchObject({ speedUnit: 'cms', speedValue: 47, autoSpeedLimitCms: 50, manualSpeed: { unit: 'ch3', value: 100 } })
-    const again = cueModeSwitch(auto, 'auto', 47, 50)
-    expect(again).toBe(auto) // đã Auto: không đổi
-    const back = cueModeSwitch(auto, 'manual', 47, 50)
-    expect(back).toMatchObject({ speedUnit: 'ch3', speedValue: 100, autoSpeedLimitCms: undefined })
-    expect(back).not.toHaveProperty('manualSpeed')
-    const p = createDefaultProject()
-    p.buttons = [{ ...p.buttons[0], ...auto, steps: p.buttons[0].steps }]
-    const rt = normalizeProject(JSON.parse(JSON.stringify(normalizeProject(p))))
-    expect(rt.buttons[0].manualSpeed).toEqual({ unit: 'ch3', value: 100 })
-    const bad = JSON.parse(JSON.stringify(normalizeProject(p)))
-    bad.buttons[0].manualSpeed = { unit: 'kmh', value: 1 }
-    expect(() => normalizeProject(bad)).toThrow(/manualSpeed/)
-  })
 })
 
 describe('cue: tốc độ riêng từng module', () => {
@@ -403,7 +386,7 @@ describe('cue: tốc độ riêng từng module', () => {
     core.configure({ modules: ms, output: createDefaultProject().settings.output, lockValue: LOCK_VALUE })
     core.command({ type: 'lock', locked: false })
     for (const s of b.steps) {
-      const eff = b.autoSpeedLimitCms !== undefined ? { unit: b.speedUnit, value: b.speedValue } : stepSpeed(b, s)
+      const eff = stepSpeed(b, s) // cue luôn Manual
       core.command({ type: 'move', ids: [s.moduleId], target: s.unit === 'ch1' ? { ch1: s.position } : s.position, speed: { unit: eff.unit, value: eff.value } })
     }
     core.tick()
@@ -428,16 +411,20 @@ describe('cue: tốc độ riêng từng module', () => {
     expect(f[2]).toBe(Math.ceil((100 / 2 / 120) * 255 - 0.01))
     expect(f[6]).toBe(cmsToCh3(150, 300))
   })
-  it('Auto bỏ qua tốc độ riêng (dùng tốc độ chung + giới hạn)', () => {
-    const f = fire(btn([{ moduleId: 'a', position: 1, speedUnit: 'ch3', speedValue: 89 }], { autoSpeedLimitCms: 50 }))
-    expect(f[2]).not.toBe(89)
+  it('cue cũ vốn Auto (có autoSpeedLimitCms) mở bình thường và phát theo tốc độ đã lưu như Manual (không còn trần auto)', () => {
+    const f = fire(btn([{ moduleId: 'a', position: 1, speedUnit: 'ch3', speedValue: 200 }], { autoSpeedLimitCms: 50 }))
+    expect(f[2]).toBe(200)
+    const g = fire(btn([{ moduleId: 'a', position: 1 }], { autoSpeedLimitCms: 50, speedUnit: 'cms', speedValue: 100 }))
+    expect(g[2]).toBe(cmsToCh3(100, 120)) // 213: không bị kẹp 50 cm/s
+    const p = createDefaultProject()
+    p.buttons = [{ ...p.buttons[0], autoSpeedLimitCms: 50 }]
+    expect(normalizeProject(JSON.parse(JSON.stringify(normalizeProject(p)))).buttons[0].autoSpeedLimitCms).toBe(50) // project cũ mở được
   })
   it('nhãn nút: giống nhau → một giá trị; khác nhau → null (NHIỀU TỐC ĐỘ); Auto → tốc độ chung', () => {
     const same = btn([{ moduleId: 'a', position: 1, speedUnit: 'ch3', speedValue: 89 }, { moduleId: 'b', position: 1, speedUnit: 'ch3', speedValue: 89 }])
     expect(cueSpeedSummary(same)).toEqual({ unit: 'ch3', value: 89 })
     expect(cueSpeedSummary(btn([{ moduleId: 'a', position: 1, speedUnit: 'ch3', speedValue: 89 }, { moduleId: 'b', position: 1, speedUnit: 'ch3', speedValue: 91 }]))).toBeNull()
     expect(cueSpeedSummary(btn([{ moduleId: 'a', position: 1, speedUnit: 'ch3', speedValue: 89 }, { moduleId: 'b', position: 1 }]))).toBeNull()
-    expect(cueSpeedSummary(btn([{ moduleId: 'a', position: 1, speedUnit: 'ch3', speedValue: 89 }], { autoSpeedLimitCms: 50 }))).toEqual({ unit: 'cms', value: 60 })
     expect(cueSpeedSummary(btn([{ moduleId: 'a', position: 1 }, { moduleId: 'b', position: 1 }]))).toEqual({ unit: 'cms', value: 60 })
   })
   it('lưu/đọc: tốc độ riêng của bước round-trip; project cũ (bước không có tốc độ) dùng tốc độ chung; giá trị sai bị từ chối', () => {

@@ -43,14 +43,11 @@ import {
   removeClipKeyframe,
   resolveClipBoundsNoOverlap,
   cmsToSeconds,
-  DEFAULT_MOTION_SPEED_CMS,
   applyCueValues,
-  cueModeSwitch,
   cueRepDistanceCm,
   stepSpeed,
   stepWithPosition,
   speedStoredFromInput,
-  defaultCueSpeedCms,
   cueSpeedView,
   storedSpeedAsCms,
   speedDisplayValue,
@@ -952,8 +949,6 @@ function CueButtonEditor({
   const [applyPos, setApplyPos] = useState<number | null>(null)
   const [applySpd, setApplySpd] = useState<number | null>(null)
   const [applyWarn, setApplyWarn] = useState<string | null>(null)
-  // Cue: Auto = tốc độ tự tính/giới hạn theo cue mặc định (autoSpeedLimitCms); Manual = người dùng nhập.
-  const isAuto = btn.autoSpeedLimitCms !== undefined
   const stepById = new Map(btn.steps.map((s) => [s.moduleId, s]))
   const refMax = modules.find((m) => m.id === btn.steps[0]?.moduleId)?.maxSpeedCms ?? modules[0]?.maxSpeedCms ?? H2_MAX_SPEED_CMS
   const repDist = cueRepDistanceCm(btn.steps, modules, (id) => snapshotModules[id]?.pos)
@@ -986,7 +981,7 @@ function CueButtonEditor({
 
   // Tốc độ riêng của module (Manual): lưu NGUYÊN theo đơn vị đang chọn vào bước của module. Auto: không sửa.
   const setModuleSpeed = (m: ModuleCfg, raw: number) => {
-    if (isAuto || !stepById.has(m.id)) return
+    if (!stepById.has(m.id)) return
     const stored = speedStoredFromInput(speedView, raw)
     onSave(
       { ...btn, steps: btn.steps.map((s) => (s.moduleId === m.id ? { ...s, speedUnit: speedView, speedValue: stored } : s)), speedView },
@@ -1027,9 +1022,7 @@ function CueButtonEditor({
   const applyToSelected = () => {
     const res = applyCueValues(btn, modules, { pos: applyPos, spd: applySpd })
     if (res.reason) {
-      setApplyWarn(
-        res.reason === 'none-selected' ? 'Chưa tích module nào: tích layer/module rồi bấm Áp dụng.' : res.reason === 'auto-speed' ? 'Đang Auto: tốc độ chỉ đọc, chọn Manual để nhập.' : 'Chưa nhập giá trị nào.',
-      )
+      setApplyWarn(res.reason === 'none-selected' ? 'Chưa tích module nào: tích layer/module rồi bấm Áp dụng.' : 'Chưa nhập giá trị nào.')
       return
     }
     onSave(res.btn, `cue-apply-${btn.id}`)
@@ -1075,25 +1068,7 @@ function CueButtonEditor({
       </label>
 
       <div className="space-y-1.5 border-b border-line pb-3">
-        <span className="text-[11px] text-[#C2B3A4]">Tốc độ &amp; vị trí chạy</span>
-        <div className="kiln-seg" role="group" aria-label="Chế độ tốc độ nút Cue">
-          {(['auto', 'manual'] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              aria-pressed={(m === 'auto') === isAuto}
-              title={m === 'auto' ? 'Auto: tốc độ tự tính, giới hạn theo cue mặc định' : 'Manual: nhập tốc độ'}
-              onClick={() => {
-                if ((m === 'auto') === isAuto) return
-                const mods = btn.steps.length > 0 ? modules.filter((x) => stepById.has(x.id)) : modules
-                onSave(cueModeSwitch(btn, m, defaultCueSpeedCms(mods), DEFAULT_MOTION_SPEED_CMS))
-              }}
-              className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${(m === 'auto') === isAuto ? 'on' : ''}`}
-            >
-              {m === 'auto' ? 'Auto' : 'Manual'}
-            </button>
-          ))}
-        </div>
+        <span className="text-[11px] text-[#C2B3A4]">Vị trí và tốc độ chạy</span>
         <div className="flex items-center gap-1.5">
           <div className="kiln-seg min-w-0 flex-1" role="group" aria-label="Đơn vị vị trí">
             {(
@@ -1162,19 +1137,17 @@ function CueButtonEditor({
           </label>
           <label
             className="kiln-field flex h-8 min-w-0 flex-1 items-center gap-0.5 px-2"
-            title={isAuto ? 'Auto: tốc độ tự tính, chỉ đọc (chọn Manual để nhập)' : 'Tốc độ của cue (để trống = không đổi)'}
+            title="Tốc độ áp cho các module đang tích (để trống = không đổi)"
           >
             <NumberField
-              key={`aspd-${btn.id}-${speedView}-${isAuto}`}
-              readOnly={isAuto}
-              tabIndex={isAuto ? -1 : 0}
+              key={`aspd-${btn.id}-${speedView}`}
               min={speedView === 'ch3' ? 1 : 0.1}
               max={speedView === 'ch3' ? 255 : undefined}
               step={speedView === 'ch3' ? 1 : '0.5'}
               integer={speedView === 'ch3' ? 'round' : undefined}
               placeholder={speedShown === null ? '—' : String(speedShown)}
               aria-label={`Tốc độ áp dụng (${speedView === 'cms' ? 'cm/s' : speedView === 'sec' ? 's' : 'CH3'})`}
-              value={isAuto ? speedShown : applySpd}
+              value={applySpd}
               onCommit={(v) => {
                 setApplyWarn(null)
                 setApplySpd(v)
@@ -1320,15 +1293,15 @@ function CueButtonEditor({
                         </div>
                         {(() => {
                           // Tốc độ của module (bên phải vị trí): bước có tốc độ riêng thì dùng, không thì tốc độ chung của cue.
-                          const eff = step && !isAuto ? stepSpeed(btn, step) : { unit: btn.speedUnit, value: btn.speedValue }
+                          const eff = step ? stepSpeed(btn, step) : { unit: btn.speedUnit, value: btn.speedValue }
                           const rowDist = step ? Math.abs(stepPositionM(step, m.length) - (snapshotModules[m.id]?.pos ?? m.minHeight)) * 100 || Math.abs(stepPositionM(step, m.length) - m.minHeight) * 100 : 0
                           const shown = speedDisplayValue(speedView, eff.unit, eff.value, rowDist, m.maxSpeedCms)
                           const label = speedView === 'cms' ? 'cm/s' : speedView === 'sec' ? 's' : 'CH3'
-                          const editableSpeed = checked && !isAuto
+                          const editableSpeed = checked
                           return (
                             <div
                               className="kiln-field flex h-6 w-[4.5rem] items-center rounded-full px-2"
-                              title={isAuto ? 'Auto: tốc độ tự tính, chỉ đọc (chọn Manual để nhập)' : step?.speedValue !== undefined ? `Tốc độ riêng của ${m.name}` : `Đang dùng tốc độ chung của cue; nhập để đặt riêng cho ${m.name}`}
+                              title={step?.speedValue !== undefined ? `Tốc độ riêng của ${m.name}` : `Đang dùng tốc độ chung của cue; nhập để đặt riêng cho ${m.name}`}
                             >
                               <NumberField
                                 key={`${btn.id}-${m.id}-${speedView}-${eff.unit}-${eff.value}-${editableSpeed}`}

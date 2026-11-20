@@ -1378,7 +1378,6 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
     expect(propsHtml).toMatch(/>cm\/s<[\s\S]*>s<[\s\S]*>CH3</);
     expect(propsHtml).toContain('text-center');
     expect(propsHtml).toContain('Áp dụng cho module đã tích');
-    expect(propsHtml).toContain('Chế độ tốc độ nút Cue');
     expect(propsHtml).not.toContain('Lấy 3D');
     expect(propsHtml).not.toContain('LOOP');
     expect(propsHtml).toContain(project.layers[0].name);
@@ -1664,7 +1663,7 @@ describe('Đơn vị tốc độ: moment (Auto/Manual luôn hiện) và cue (m|C
     expect(h).toMatch(/aria-label="Độ cao P3 \(CH1\)"[^>]*value="50"/); // 0,5 m quy đổi tạm
   });
 
-  it('Auto: ô tốc độ readOnly, ô độ cao/thời điểm vẫn sửa được; Manual: tất cả sửa được', () => {
+  it('moment — Auto: ô tốc độ readOnly, ô độ cao/thời điểm vẫn sửa được; Manual: tất cả sửa được', () => {
     const ro = (h: string, label: string) => new RegExp(`<input[^>]*readOnly=""[^>]*aria-label="${label}"`).test(h);
     const editable = (h: string, label: string) => new RegExp(`<input(?![^>]*readOnly)[^>]*aria-label="${label}"`).test(h);
     const auto = html(clipWith({ speedMode: 'auto', speedUnit: 'cms', speedView: 'cms' }));
@@ -1684,7 +1683,7 @@ describe('Đơn vị tốc độ: moment (Auto/Manual luôn hiện) và cue (m|C
     expect(auto).not.toMatch(/<button[^>]*disabled=""[^>]*>CH3</);
   });
 
-  it('cue: Auto → ô tốc độ readOnly, ô vị trí sửa được; Manual → cả hai sửa được; Auto/Manual giữ giá trị', () => {
+  it('cue: không còn Auto/Manual; ô tốc độ và ô vị trí luôn sửa được (kể cả cue cũ vốn Auto)', () => {
     setupBrowserEnv();
     const project = createDefaultProject();
     const modId = project.modules[0].id;
@@ -1694,15 +1693,15 @@ describe('Đơn vị tốc độ: moment (Auto/Manual luôn hiện) và cue (m|C
         React.createElement(PropertiesPanel, { overrideState: { ...useAppStore.getState(), project, selectedButtonId: project.buttons[0].id, selectedClipId: null, selectedClipIds: [], selectedIds: [], selectedLayerId: null } }),
       );
     };
-    const auto = render({ autoSpeedLimitCms: 50 });
-    expect(auto).toMatch(/<input[^>]*readOnly=""[^>]*aria-label="Tốc độ áp dụng \(cm\/s\)"/);
-    expect(auto).toMatch(/<input(?![^>]*readOnly)[^>]*aria-label="Vị trí áp dụng cho module đang tích \(m\)"/);
+    const legacyAuto = render({ autoSpeedLimitCms: 50 }); // cue cũ vốn Auto: vẫn nhập được
+    expect(legacyAuto).toMatch(/<input(?![^>]*readOnly)[^>]*aria-label="Tốc độ áp dụng \(cm\/s\)"/);
+    expect(legacyAuto).toMatch(/<input(?![^>]*readOnly)[^>]*aria-label="Vị trí áp dụng cho module đang tích \(m\)"/);
     const manual = render({ autoSpeedLimitCms: undefined });
     expect(manual).toMatch(/<input(?![^>]*readOnly)[^>]*aria-label="Tốc độ áp dụng \(cm\/s\)"/);
     expect(manual).toMatch(/<input(?![^>]*readOnly)[^>]*aria-label="Vị trí áp dụng cho module đang tích \(m\)"/);
   });
 
-  it('cue: mỗi hàng module có ô tốc độ BÊN PHẢI ô vị trí; Auto readOnly, Manual sửa được, ô vị trí luôn sửa được', () => {
+  it('cue: mỗi hàng module có ô tốc độ BÊN PHẢI ô vị trí; luôn sửa được', () => {
     setupBrowserEnv();
     const project = createDefaultProject();
     const m = project.modules[0];
@@ -1718,9 +1717,24 @@ describe('Đơn vị tốc độ: moment (Auto/Manual luôn hiện) và cue (m|C
     expect(iPos).toBeGreaterThan(-1);
     expect(iSpd).toBeGreaterThan(iPos); // tốc độ sau (bên phải) vị trí
     expect(manual).toMatch(new RegExp(`<input(?![^>]*readOnly)[^>]*aria-label="Tốc độ ${m.name} \\(CH3\\)"[^>]*value="89"`));
-    const auto = render({ autoSpeedLimitCms: 50 });
-    expect(auto).toMatch(new RegExp(`<input[^>]*readOnly=""[^>]*aria-label="Tốc độ ${m.name} \\(CH3\\)"`));
-    expect(auto).toMatch(new RegExp(`<input(?![^>]*readOnly)[^>]*aria-label="${m.name} \\(m\\)"`)); // vị trí vẫn sửa được ở Auto
+    const legacyAuto = render({ autoSpeedLimitCms: 50 }); // cue cũ vốn Auto: ô tốc độ từng module vẫn nhập được
+    expect(legacyAuto).toMatch(new RegExp(`<input(?![^>]*readOnly)[^>]*aria-label="Tốc độ ${m.name} \\(CH3\\)"`));
+    expect(legacyAuto).toMatch(new RegExp(`<input(?![^>]*readOnly)[^>]*aria-label="${m.name} \\(m\\)"`));
+  });
+
+  it('cue: nhãn "Vị trí và tốc độ chạy", không còn cụm Auto/Manual, vẫn có m|CH1 trái và cm/s|s|CH3 phải', () => {
+    setupBrowserEnv();
+    const project = createDefaultProject();
+    project.buttons = [{ ...project.buttons[0], autoSpeedLimitCms: 50 }];
+    const h = renderToStaticMarkup(
+      React.createElement(PropertiesPanel, { overrideState: { ...useAppStore.getState(), project, selectedButtonId: project.buttons[0].id, selectedClipId: null, selectedClipIds: [], selectedIds: [], selectedLayerId: null } }),
+    );
+    expect(h).toContain('Vị trí và tốc độ chạy');
+    expect(h).not.toContain('Tốc độ &amp; vị trí chạy');
+    expect(h).not.toContain('Chế độ tốc độ nút Cue');
+    expect(h).not.toMatch(/>Auto</);
+    expect(h).not.toMatch(/>Manual</);
+    expect(h.indexOf('Đơn vị vị trí')).toBeLessThan(h.indexOf('Đơn vị tốc độ nút Cue'));
   });
 
   it('cue: hiện m|CH1 và cm/s|s|CH3; CH1 lưu lại và hiện tương đương m', () => {
@@ -1735,7 +1749,6 @@ describe('Đơn vị tốc độ: moment (Auto/Manual luôn hiện) và cue (m|C
     expect(h).toMatch(/≈0\.50m/);
     expect(h).toContain('Tốc độ áp dụng (cm/s)');
     // hàng 1 Auto|Manual → hàng 2 [vị trí m|CH1] trái, [tốc độ cm/s|s|CH3] phải → ô áp dụng
-    expect(h.indexOf('Chế độ tốc độ nút Cue')).toBeLessThan(h.indexOf('Đơn vị vị trí'));
     expect(h.indexOf('Đơn vị vị trí')).toBeLessThan(h.indexOf('Đơn vị tốc độ nút Cue'));
     expect(h.indexOf('Đơn vị tốc độ nút Cue')).toBeLessThan(h.indexOf('Vị trí áp dụng cho module đang tích'));
     expect(h).not.toContain('Áp dụng cho các layer');
