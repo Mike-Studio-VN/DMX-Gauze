@@ -280,6 +280,85 @@ textarea[readonly] {
   pointer-events: none;
 }
 
+/* Checkbox and tree selection mark */
+.kiln-checkbox {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  inline-size: 26px;
+  block-size: 26px;
+  place-items: center;
+}
+
+.kiln-checkbox > input {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.kiln-check-mark {
+  inline-size: 16px;
+  block-size: 16px;
+  flex: none;
+  border: 1px solid var(--t3);
+  border-radius: 4px;
+  background: var(--s3);
+  color: var(--t1);
+  pointer-events: none;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.kiln-check-mark[data-check-state='checked'],
+.kiln-check-mark[data-check-state='mixed'] {
+  background: color-mix(in srgb, var(--acc-lo) 32%, var(--s3));
+  border-color: var(--acc);
+}
+
+.kiln-check-mark > path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.kiln-check-mark[data-check-state='checked'] > .kiln-check-tick,
+.kiln-check-mark[data-check-state='mixed'] > .kiln-check-dash {
+  opacity: 1;
+}
+
+.kiln-checkbox-label:hover .kiln-checkbox > input:enabled + .kiln-check-mark,
+.kiln-check-button:hover > .kiln-check-mark {
+  border-color: var(--acc-hi);
+}
+
+.kiln-checkbox > input:focus-visible + .kiln-check-mark,
+.kiln-check-button:focus-visible {
+  outline: 2px solid var(--acc-hi);
+  outline-offset: 2px;
+}
+
+.kiln-checkbox > input:disabled {
+  cursor: not-allowed;
+}
+
+.kiln-checkbox > input:disabled + .kiln-check-mark {
+  opacity: 0.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kiln-check-mark,
+  .kiln-check-mark > path {
+    transition: none;
+  }
+}
+
 /* Layer & Tree rows */
 .kiln-layer {
   border-radius: 14px;

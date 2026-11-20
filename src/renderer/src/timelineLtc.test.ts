@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultProject, normalizeProject } from '@shared/preset';
-import type { Command, TimelineClip } from '@shared/types';
+import type { Command, CueButton, TimelineClip } from '@shared/types';
 
 interface VNode {
   type: unknown;
@@ -59,6 +59,7 @@ const hookRuntime = vi.hoisted(() => ({
 vi.mock('react', () => {
   const React = {
     Fragment: Symbol.for('react.fragment'),
+    useCallback: <T>(callback: T) => callback,
     useState: <T>(initial: T | (() => T)): [T, (next: T | ((prev: T) => T)) => void] => {
       const idx = hookRuntime.cursor++;
       if (!(idx in hookRuntime.states)) {
@@ -165,6 +166,7 @@ vi.mock('lucide-react', () => {
 import { TimelineEditor } from './components/TimelineEditor';
 import { DraftInput, NumberField } from './components/DraftInput';
 import { PropertiesPanel } from './components/PropertiesPanel';
+import { KilnCheckbox } from './components/KilnCheckbox';
 import { LtcSettingsPanel } from './components/LtcSettingsPanel';
 import { getBridge } from './services/bridge';
 import { useAppStore } from './store/useAppStore';
@@ -1106,4 +1108,58 @@ describe('Renderer numeric fields commit explicit edits', () => {
       steps: [{ moduleId: mod.id, position: 153, unit: 'ch1' }],
     }), expect.any(String));
   });
+});
+
+it('renders a partially selected cue layer and toggles it through the native input handler', () => {
+  const project = createDefaultProject();
+  const layer = project.layers[0];
+  const modules = project.modules.filter((mod) => mod.layerId === layer.id);
+  expect(modules.length).toBeGreaterThan(1);
+  const step = { moduleId: modules[0].id, position: 0.5 };
+  const cue = { ...project.buttons[0], steps: [step] };
+  const saveButton = (next: CueButton) => useAppStore.setState({
+    project: { ...project, buttons: [next] },
+  });
+  hookRuntime.reset();
+  useAppStore.setState({
+    ...useAppStore.getInitialState(), project: { ...project, buttons: [cue] },
+    focusScope: 'buttons', selectedButtonId: cue.id, saveButton,
+  });
+  hookRuntime.component = () => {
+    const editor = PropertiesPanel({}) as unknown as VNode;
+    const content = (editor.type as (props: VNode['props']) => VNode)(editor.props);
+    const checkbox = collectNodes(content).find((node) => node.type === KilnCheckbox)!;
+    return { type: 'div', props: {
+      children: [KilnCheckbox(checkbox.props as unknown as Parameters<typeof KilnCheckbox>[0]), content],
+    } };
+  };
+  const render = () => {
+    const tree = hookRuntime.render();
+    const input = collectNodes(tree).find((node) => node.props.type === 'checkbox')!;
+    return { input, text: extractText(tree) };
+  };
+  try {
+    let { input, text } = render();
+    expect(text).toContain(`1/${modules.length}`);
+    expect(input.props['aria-checked']).toBe('mixed');
+    const nativeInput = { indeterminate: false };
+    (input.props.ref as (input: typeof nativeInput) => void)(nativeInput);
+    expect(nativeInput.indeterminate).toBe(true);
+    (input.props.onChange as () => void)();
+
+    ({ input, text } = render());
+    expect(text).toContain(`${modules.length}/${modules.length}`);
+    expect(input.props['aria-checked']).toBe(true);
+    (input.props.ref as (input: typeof nativeInput) => void)(nativeInput);
+    expect(nativeInput.indeterminate).toBe(false);
+    expect(useAppStore.getState().project.buttons[0].steps[0]).toEqual(step);
+
+    (input.props.onChange as () => void)();
+    ({ input, text } = render());
+    expect(text).toContain(`0/${modules.length}`);
+    expect(input.props['aria-checked']).toBe(false);
+  } finally {
+    hookRuntime.reset();
+    useAppStore.setState(useAppStore.getInitialState());
+  }
 });

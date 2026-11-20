@@ -9,6 +9,7 @@ import { FPS_OPTIONS } from '@shared/timecode';
 import type { TimelineClip } from '@shared/types';
 import { PropertiesPanel } from './components/PropertiesPanel';
 import { GauzeTree } from './components/GauzeTree';
+import { KilnCheckbox } from './components/KilnCheckbox';
 import { KilnSelect } from './components/KilnSelect';
 import { SettingsModal } from './components/SettingsModal';
 import { ModeButtons, ModeManual } from './components/ControlDeck';
@@ -1204,6 +1205,7 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
       React.createElement(GauzeTree, { overrideState: useAppStore.getState() }),
     );
     expect(treePartialHtml).toContain(`Chọn hết (${project.modules.length})`);
+    expect(treePartialHtml).toContain('data-check-state="mixed"');
     expect(treePartialHtml).not.toContain('Bỏ chọn hết');
 
     useAppStore.getState().selectAll();
@@ -1212,9 +1214,14 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
       React.createElement(GauzeTree, { overrideState: useAppStore.getState() }),
     );
     expect(treeAllHtml).toContain('Bỏ chọn hết');
+    expect(treeAllHtml).toContain('data-check-state="checked"');
 
     useAppStore.getState().deselectAll();
     expect(useAppStore.getState().selectedIds).toEqual([]);
+    const treeEmptyHtml = renderToStaticMarkup(
+      React.createElement(GauzeTree, { overrideState: useAppStore.getState() }),
+    );
+    expect(treeEmptyHtml).toContain('data-check-state="unchecked"');
 
     useAppStore.setState({ project, settingsOpen: true, settingsTab: 'network' });
     const settingsHtml = renderToStaticMarkup(
@@ -1755,5 +1762,19 @@ describe('Đơn vị tốc độ: moment (Auto/Manual luôn hiện) và cue (m|C
     // cây Layer/Module có checkbox, đếm n/m vẫn còn
     expect(h).toMatch(/type="checkbox"/);
     expect(h).toMatch(/\d+\/\d+/);
+  });
+});
+
+describe('Kiln checkbox renderer', () => {
+  it.each([
+    { checked: false, aria: 'false', mark: 'unchecked' },
+    { checked: true, aria: 'true', mark: 'checked' },
+    { checked: false, mixed: true, aria: 'mixed', mark: 'mixed' },
+    { checked: true, disabled: true, aria: 'true', mark: 'checked' },
+  ])('keeps native checkbox markup for $mark ($aria)', ({ aria, mark, ...props }) => {
+    const h = renderToStaticMarkup(React.createElement(KilnCheckbox, props));
+    expect(h).toMatch(new RegExp(`<input[^>]*type="checkbox"[^>]*aria-checked="${aria}"`));
+    expect(h).toContain(`data-check-state="${mark}"`);
+    expect(h.includes(' disabled=""')).toBe(Boolean(props.disabled));
   });
 });
