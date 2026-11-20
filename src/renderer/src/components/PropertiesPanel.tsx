@@ -53,7 +53,6 @@ import {
   keyframeHeightDisplay,
   keyframeHeightFromInput,
   momentSpeedValue,
-  retimeSegmentToSpeed,
   representativeSegmentIndex,
   resolveClipSegmentSpeed,
   segmentDistCm,
@@ -457,17 +456,12 @@ function MomentEditor({
     onUpdate(patch, `kf-${kfId}`)
   }
 
-  // Cột các điểm theo đơn vị cm/s | CH3: Manual → đổi tốc độ chung của moment; Auto → dời thời điểm các điểm sau để đúng
-  // tốc độ của đoạn đi tới điểm này; moment cũ (chưa có Auto/Manual) → chỉ đọc.
-  const commitSpeedCell = (kfId: string, raw: number) => {
-    if (!Number.isFinite(raw)) return
-    const ch3 = clamp(Math.round(raw), 1, 255)
-    if (clip.speedMode === 'manual') {
-      onUpdate({ speedMode: 'manual', speedUnit: pUnit, speedValue: pUnit === 'ch3' ? ch3 : clamp(raw, 1, pCap), speedView: pUnit }, `momspd-${clip.id}`)
-    } else if (clip.speedMode === 'auto') {
-      const patch = retimeSegmentToSpeed(clip, kfId, pUnit === 'ch3' ? ch3ToCms(ch3, pCap) : raw, mod, bounds)
-      if (patch) onUpdate(patch, `kfspd-${kfId}`)
-    }
+  // Cột tốc độ (bên phải độ cao): chỉ Manual sửa được. Sửa MỘT ô = đổi giá trị tốc độ CHUNG của moment theo đơn vị đang
+  // chọn (cm/s | s | CH3), lưu nguyên số nhập và hiển thị lại ở mọi hàng. Auto và moment cũ: chỉ đọc.
+  const commitSpeedCell = (raw: number) => {
+    if (!Number.isFinite(raw) || clip.speedMode !== 'manual') return
+    const v = pUnit === 'ch3' ? clamp(Math.round(raw), 1, 255) : pUnit === 'cms' ? clamp(raw, 1, pCap) : Math.max(0.05, raw)
+    onUpdate({ speedMode: 'manual', speedUnit: pUnit, speedValue: v, speedView: pUnit }, `momspd-${clip.id}`)
   }
 
   // Độ cao các điểm: lưu NGUYÊN theo đơn vị nhập (m hoặc CH1); menu m|CH1 chỉ đổi hiển thị cho tới khi sửa ô.
@@ -658,8 +652,9 @@ function MomentEditor({
         <p className="text-[10.5px] text-muted">
           Độ cao hợp lệ: {hUnit === 'ch1' ? `${hLo}–${hHi} (CH1, ≈ ${ch1ToPos(hLo, mod.length).toFixed(2)}–${ch1ToPos(hHi, mod.length).toFixed(2)} m)` : `${hLo.toFixed(2)}–${hHi.toFixed(2)} m`} (tự kẹp)
         </p>
-        {speedPanels?.controls}
-        <div className="kiln-seg" role="group" aria-label="Đơn vị độ cao">
+        {speedPanels?.modeBar}
+        <div className="flex items-center gap-1.5">
+        <div className="kiln-seg min-w-0 flex-1" role="group" aria-label="Đơn vị độ cao">
           {(['m', 'ch1'] as const).map((u) => (
             <button
               key={u}
@@ -669,11 +664,13 @@ function MomentEditor({
               onClick={() => {
                 if (u !== hUnit) onUpdate({ positionUnit: u === 'ch1' ? 'ch1' : undefined }, `momh-${clip.id}`)
               }}
-              className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${hUnit === u ? 'on' : ''}`}
+              className={`kiln-seg-btn h-7 min-w-0 flex-1 px-1 text-[11px] ${hUnit === u ? 'on' : ''}`}
             >
               {u === 'm' ? 'm' : 'CH1'}
             </button>
           ))}
+        </div>
+          {speedPanels?.unitBar}
         </div>
         <div className="space-y-1.5">
           {sorted.map((kf, idx) => {
@@ -722,7 +719,7 @@ function MomentEditor({
                   <span className="text-[10px] text-muted">{hLabel}</span>
                 </label>
                 <span className="text-muted">·</span>
-                {pUnit === 'sec' ? (
+                {pUnit === 'sec' && clip.speedMode !== 'manual' ? (
                   <label className="kiln-field flex min-w-0 flex-1 items-center gap-0.5 px-1">
                     <NumberField
                       step="0.1"
@@ -743,24 +740,30 @@ function MomentEditor({
                     const segIn = idx > 0 ? resolveClipSegmentSpeed(clip, sorted[idx - 1], kf, mod) : null
                     // Manual + đã lưu CH3: hiện đúng CH3 đã nhập (không quy đổi qua cm/s).
                     const exactCh3 = clip.speedMode === 'manual' && clip.speedUnit === 'ch3' && pUnit === 'ch3' && clip.speedValue !== undefined
+                    // Manual + giây: mỗi đoạn đi trong N s (giá trị chung, không đổi theo hàng).
+                    const exactSec = clip.speedMode === 'manual' && clip.speedUnit === 'sec' && pUnit === 'sec' && clip.speedValue !== undefined
                     const shownVal =
                       segIn === null
                         ? '—'
                         : exactCh3
                           ? String(clamp(Math.round(clip.speedValue as number), 1, 255))
-                          : pUnit === 'cms'
-                            ? String(Number(segIn.cms.toFixed(1)))
-                            : String(cmsToCh3(segIn.cms, pCap))
-                    const editableCell = segIn !== null && clip.speedMode !== undefined
-                    const label = pUnit === 'cms' ? 'cm/s' : 'CH3'
+                          : exactSec
+                            ? String(clip.speedValue)
+                            : pUnit === 'cms'
+                              ? String(Number(segIn.cms.toFixed(1)))
+                              : pUnit === 'sec'
+                                ? String(Number((cmsToSeconds(segmentDistCm(mod, sorted[idx - 1].height, kf.height), segIn.cms) ?? 0).toFixed(2)))
+                                : String(cmsToCh3(segIn.cms, pCap))
+                    const editableCell = segIn !== null && clip.speedMode === 'manual'
+                    const label = pUnit === 'cms' ? 'cm/s' : pUnit === 'sec' ? 's' : 'CH3'
                     const cellTitle =
                       segIn === null
                         ? 'Điểm đầu chưa có đoạn vào'
                         : clip.speedMode === undefined
-                          ? `${label} của đoạn đi tới điểm này (chỉ đọc: chọn Auto/Manual ở TỐC ĐỘ MOMENT để sửa)`
+                          ? `${label} của đoạn đi tới điểm này (chỉ đọc: chọn Auto/Manual để áp cho cả moment)`
                           : clip.speedMode === 'manual'
-                            ? `${label} của đoạn đi tới điểm này. Sửa = đổi tốc độ chung của moment`
-                            : `${label} của đoạn đi tới điểm này. Sửa = dời các điểm sau để đúng tốc độ`
+                            ? `${label} của đoạn đi tới điểm này. Sửa = đổi giá trị chung của moment (áp mọi đoạn)`
+                            : `${label} của đoạn đi tới điểm này: tự tính, chỉ đọc (chọn Manual để nhập)`
                     return (
                       <label className="kiln-field flex min-w-0 flex-1 items-center gap-0.5 px-1" title={cellTitle}>
                         <NumberField
@@ -769,12 +772,12 @@ function MomentEditor({
                           tabIndex={editableCell ? 0 : -1}
                           step={1}
                           min={1}
-                          max={pUnit === 'ch3' ? 255 : pCap}
+                          max={pUnit === 'ch3' ? 255 : pUnit === 'cms' ? pCap : undefined}
                           integer={pUnit === 'ch3' ? 'round' : undefined}
                           aria-label={`${label} tới P${idx + 1}`}
                           value={shownVal}
                           onFocus={() => onSelectKey(kf.id)}
-                          onCommit={(value) => commitSpeedCell(kf.id, value)}
+                          onCommit={(value) => commitSpeedCell(value)}
                           className={`w-full min-w-0 bg-transparent text-right text-[11px] tabular-nums outline-none ${
                             active ? 'font-semibold text-fg' : 'text-fg'
                           }`}
@@ -824,7 +827,7 @@ function momentSpeedPanels({
   sorted: ClipKeyframe[]
   mod: ModuleCfg
   onUpdate: (patch: Partial<TimelineClip>, coalesceKey?: string) => void
-}): { controls: ReactNode; notes: ReactNode } | null {
+}): { modeBar: ReactNode; unitBar: ReactNode; notes: ReactNode } | null {
   if (sorted.length < 2) return null
   const cap = speedCap(mod)
   const segs = sorted.slice(0, -1).map((p1, i) => {
@@ -851,20 +854,11 @@ function momentSpeedPanels({
   const setUnit = (u: 'cms' | 'sec' | 'ch3') => {
     if (u !== unit) onUpdate({ speedView: u }, `momunit-${clip.id}`)
   }
-  const shownManual = mode === 'manual' && clip.speedValue !== undefined ? speedDisplayValue(unit, storedUnit, clip.speedValue, rep.dist, cap) : null
-  const commit = (raw: number) => {
-    if (!Number.isFinite(raw)) return
-    const v = unit === 'ch3' ? clamp(Math.round(raw), 1, 255) : unit === 'cms' ? clamp(raw, 1, cap) : Math.max(0.05, raw)
-    if (v !== shownManual) apply({ speedMode: 'manual', speedUnit: unit, speedValue: v, speedView: unit }) // lưu NGUYÊN theo đơn vị đang chọn
-  }
   const over = segs.some((s) => s.res.mode === 'manual' && s.res.overMax)
   const slow = segs.filter((s) => s.res.mode === 'manual' && s.res.tooSlow)
   const cmsLabel = storedUnit === 'ch3' ? `${ch3ToCms(clamp(Math.round(clip.speedValue ?? 0), 1, 255), cap).toFixed(1)} cm/s` : null
-  const editable = mode === 'manual'
-  const readValue = valueFor(unit, repCms)
-  const unitLabel = unit === 'cms' ? 'cm/s' : unit === 'sec' ? 's' : 'CH3'
   return {
-    controls: (
+    modeBar: (
       <div className="space-y-1.5">
       <div className="kiln-seg" role="group" aria-label="Chế độ tốc độ moment">
         {(['auto', 'manual'] as const).map((m) => (
@@ -873,38 +867,16 @@ function momentSpeedPanels({
           </button>
         ))}
       </div>
-      <div className="kiln-seg" role="group" aria-label="Kiểu nhập tốc độ">
+      {legacy && <p className="text-[10.5px] text-muted">Moment cũ: đang dùng tốc độ theo từng điểm. Chọn Auto/Manual để áp cho cả moment.</p>}
+      </div>
+    ),
+    unitBar: (
+      <div className="kiln-seg min-w-0 flex-1" role="group" aria-label="Kiểu nhập tốc độ">
         {(['cms', 'sec', 'ch3'] as const).map((u) => (
-          <button key={u} type="button" aria-pressed={unit === u} onClick={() => setUnit(u)} className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${unit === u ? 'on' : ''}`}>
+          <button key={u} type="button" aria-pressed={unit === u} onClick={() => setUnit(u)} className={`kiln-seg-btn h-7 min-w-0 flex-1 px-1 text-[11px] ${unit === u ? 'on' : ''}`}>
             {u === 'cms' ? 'cm/s' : u === 'sec' ? 's' : 'CH3'}
           </button>
         ))}
-      </div>
-      {legacy && <p className="text-[10.5px] text-muted">Moment cũ: đang dùng tốc độ theo từng điểm. Chọn Auto/Manual để áp cho cả moment.</p>}
-      {editable ? (
-        <NumberField
-          key={`${clip.id}-${unit}`}
-          min={unit === 'ch3' ? 1 : unit === 'sec' ? 0.05 : 1}
-          max={unit === 'ch3' ? 255 : unit === 'cms' ? cap : undefined}
-          step={unit === 'sec' ? 0.1 : 1}
-          value={shownManual}
-          integer={unit === 'ch3' ? 'round' : undefined}
-          aria-label={unit === 'cms' ? 'Tốc độ chung (cm/s)' : unit === 'sec' ? 'Thời gian mỗi đoạn (s)' : 'CH3 chung (1–255)'}
-          onCommit={commit}
-          className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
-        />
-      ) : (
-        <input
-          key={`ro-${clip.id}-${unit}`}
-          type="text"
-          readOnly
-          tabIndex={-1}
-          value={readValue === null ? '—' : String(readValue)}
-          aria-label={`Giá trị tự tính (${unitLabel}), chỉ đọc`}
-          title={`Tự tính, chỉ đọc (${unitLabel}). Chọn Manual để nhập.`}
-          className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
-        />
-      )}
       </div>
     ),
     notes: (
