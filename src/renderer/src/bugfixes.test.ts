@@ -1179,10 +1179,11 @@ describe('Renderer & Web Bridge regression tests (Bugs 3, 6, 8)', () => {
       expect(html).toContain('>Sent<');
       expect(html).not.toMatch(/\dm → \d/);
       expect(html).toMatch(/<input[^>]*min="0"[^>]*max="255"[^>]*value="0"/);
-      expect(html).toMatch(/<label[^>]+class="[^"]*kiln-field"[^>]*><div[^>]*>CH2 Fine<\/div><input/);
-      for (const label of ['CH1 Pos', 'CH3 Spd', 'CH4 Lock']) {
-        expect(html).toMatch(new RegExp(`<label[^>]+class="[^"]*kiln-readout"[^>]*><div[^>]*>${label}</div><div`));
+      // CH1/CH2/CH3 sửa được (kiln-field + input), CH4 chỉ đọc (kiln-readout, không input)
+      for (const label of ['CH1 Pos', 'CH2 Fine', 'CH3 Spd']) {
+        expect(html).toMatch(new RegExp(`<label[^>]+class="[^"]*kiln-field[^"]*"[^>]*><div[^>]*>${label}</div><input`));
       }
+      expect(html).toMatch(/<div[^>]+class="[^"]*kiln-readout[^"]*"[^>]*><div[^>]*>CH4 Lock<\/div><div/);
 
       useAppStore.getState().updateModule(id, { ch2Fine: 300 });
       expect(useAppStore.getState().project.modules[0].ch2Fine).toBe(255); // kẹp 0..255

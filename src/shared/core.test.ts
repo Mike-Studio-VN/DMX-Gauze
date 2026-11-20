@@ -166,6 +166,67 @@ describe('GauzeCore', () => {
       }
     })
 
+    it.each([true, false])('Sent 3 kênh khi khoá tổng=%s: CH1/CH2/CH3 đúng giá trị nhập (không kẹp, không quy đổi), CH4 77 rồi 0', (global) => {
+      const core = setup()
+      try {
+        core.command({ type: 'lock', locked: global })
+        tickAt(core, 1000)
+        // CH1=250 vượt maxHeight 0.5 m (≈127): vẫn phát nguyên 250; CH3=0 (phanh) vẫn phát 0
+        expect(core.command({ type: 'sendFine', id: 'm-a', ch1: 250, ch2: 9, ch3: 200 }).ok).toBe(true)
+        const during = tickAt(core, 1040)
+        expect(during.slice(0, 4)).toEqual([250, 9, 200, 77])
+        expect(during.slice(4)).toEqual([0, 0, 100, global ? 0 : 77]) // module khác không đổi
+        const after = tickAt(core, 1000 + SENT_PULSE_MS + 40)
+        expect(after.slice(0, 4)).toEqual([250, 0, 200, 0]) // CH4 về 0, CH1/CH3 KHÔNG tự về cũ; CH2 về cfg (panel lưu CH2 vào module khi Sent)
+        expect(tickAt(core, 6000).slice(0, 4)).toEqual([250, 0, 200, 0])
+        // Dừng: CH3 = 0 giữ CH1
+        core.command({ type: 'sendFine', id: 'm-a', ch1: 250, ch2: 9, ch3: 0 })
+        expect(tickAt(core, 6040).slice(0, 3)).toEqual([250, 9, 0])
+      } finally {
+        core.stop()
+      }
+    })
+
+    it('ô trống = giữ live: chỉ CH2 → CH1/CH3 không đổi; thiếu ch1 → CH1 giữ, thiếu ch3 → CH3 giữ', () => {
+      const core = setup()
+      try {
+        core.command({ type: 'lock', locked: false })
+        const before = tickAt(core, 1000)
+        core.command({ type: 'sendFine', id: 'm-a', ch2: 5 })
+        expect(tickAt(core, 1040).slice(0, 3)).toEqual([before[0], 5, before[2]])
+        core.command({ type: 'sendFine', id: 'm-a', ch2: 5, ch3: 30 })
+        expect(tickAt(core, 1080).slice(0, 3)).toEqual([before[0], 5, 30])
+        core.command({ type: 'sendFine', id: 'm-a', ch2: 5, ch1: 77 })
+        expect(tickAt(core, 1120).slice(0, 3)).toEqual([77, 5, 30])
+      } finally {
+        core.stop()
+      }
+    })
+
+    it('CH1 thô giữ tới move/stop/estop kế tiếp (move trở lại kẹp min–max); giá trị sai bị từ chối', () => {
+      const core = setup()
+      try {
+        core.command({ type: 'lock', locked: false })
+        core.command({ type: 'sendFine', id: 'm-a', ch1: 250, ch2: 0 })
+        tickAt(core, 1000)
+        core.configure(cfgOf()) // configure không kẹp lại CH1 thô
+        expect(tickAt(core, 1040)[0]).toBe(250)
+        core.command({ type: 'move', ids: ['m-a'], target: 0.3, speed: { unit: 'cms', value: 60 } })
+        expect(tickAt(core, 1080)[0]).toBe(77) // 0.3×255, đã kẹp min–max
+        core.command({ type: 'sendFine', id: 'm-a', ch1: 250, ch2: 0 })
+        core.command({ type: 'stop', ids: ['m-a'] })
+        expect(tickAt(core, 1120)[0]).toBeLessThanOrEqual(127)
+        core.command({ type: 'sendFine', id: 'm-a', ch1: 250, ch2: 0 })
+        core.command({ type: 'estop' })
+        expect(tickAt(core, 1160)[0]).toBeLessThanOrEqual(127)
+        for (const bad of [{ ch1: 256 }, { ch3: -1 }, { ch1: 1.5 }, { ch2: 300 }]) {
+          expect(core.command({ type: 'sendFine', id: 'm-a', ch2: 0, ...bad }).ok).toBe(false)
+        }
+      } finally {
+        core.stop()
+      }
+    })
+
     it('khoá tổng vẫn chặn move; từ chối CH2 ngoài 0–255 và module lạ', () => {
       const core = setup()
       try {

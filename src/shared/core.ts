@@ -1,6 +1,6 @@
 import { portAddress } from './artnet'
 import { ARTNET_PORT, CH, CHANNELS_PER_MODULE, DMX_UNIVERSE_SIZE, SENT_CH4_PULSE_VALUE, SENT_PULSE_MS } from './dmx'
-import { ch3ToCms, clamp, cmsToCh3, durationToCh3, posToCh1, snapPos } from './convert'
+import { ch1ToPos, ch3ToCms, clamp, cmsToCh3, durationToCh3, posToCh1, snapPos } from './convert'
 import { DEFAULT_DMX_TRANSPORT_HZ, normalizeDmxTransportRate, startDmxFrameLoop } from './dmxTransport'
 import type { DriverFactory, DriverEvents, OutputDriver } from './drivers'
 import { defaultMotionSpeedCh3 } from './timeline'
@@ -48,6 +48,8 @@ export class GauzeCore {
   private pulses = new Map<string, { until: number; ch2: number }>()
   /** Module đã hết xung: CH4 giữ 0 tới khi nhận lệnh move kế tiếp. */
   private zeroHold = new Set<string>()
+  /** CH1 thô do Sent đặt (0–255, KHÔNG kẹp min/max) tới khi module nhận move/stop/estop kế tiếp. */
+  private rawCh1 = new Map<string, number>()
   private sendHz: number = DEFAULT_DMX_TRANSPORT_HZ
   private stopFrameLoop: (() => void) | null = null
   private lastTick = 0
@@ -80,8 +82,10 @@ export class GauzeCore {
     for (const id of [...this.states.keys()]) if (!this.modules.has(id)) this.states.delete(id)
     for (const id of [...this.pulses.keys()]) if (!this.modules.has(id)) this.pulses.delete(id)
     for (const id of [...this.zeroHold]) if (!this.modules.has(id)) this.zeroHold.delete(id)
+    for (const id of [...this.rawCh1.keys()]) if (!this.modules.has(id)) this.rawCh1.delete(id)
     // Áp lại giới hạn min/max cho mục tiêu hiện có.
     for (const [id, st] of this.states) {
+      if (this.rawCh1.has(id)) continue // CH1 thô từ Sent: không kẹp lại
       const [lo, hi] = limits(this.modules.get(id)!)
       st.target = snapPos(clamp(st.target, lo, hi), this.modules.get(id)!)
     }
@@ -194,26 +198,41 @@ export class GauzeCore {
         return { ok: true }
       case 'estop':
         this.holdAll()
+        this.rawCh1.clear()
         this.locked = true
         return { ok: true }
       case 'stop': {
         const ids = cmd.ids === 'all' ? [...this.states.keys()] : cmd.ids
-        for (const id of ids) this.hold(id)
+        for (const id of ids) {
+          this.hold(id)
+          this.rawCh1.delete(id)
+        }
         return { ok: true }
       }
       case 'move':
         return this.move(cmd)
       case 'sendFine':
-        return this.sendFine(cmd.id, cmd.ch2)
+        return this.sendFine(cmd.id, cmd.ch2, cmd.ch1, cmd.ch3)
     }
   }
 
-  private sendFine(id: string, ch2: number): CommandResult {
+  private sendFine(id: string, ch2: number, ch1?: number, ch3?: number): CommandResult {
+    const m = this.modules.get(id)
     const st = this.states.get(id)
-    if (!this.modules.has(id) || !st) return { ok: false, message: 'Không tìm thấy module.' }
-    if (!Number.isInteger(ch2) || ch2 < 0 || ch2 > 255) return { ok: false, message: 'CH2 phải là số nguyên 0–255.' }
-    // Giữ nguyên chỗ: CH1 = vị trí đang giữ (nếu đang chạy thì dừng tại chỗ), không đặt đích mới; CH3 theo hành vi hiện có.
-    if (st.moving || Math.abs(st.target - st.pos) > 1e-6) this.hold(id)
+    if (!m || !st) return { ok: false, message: 'Không tìm thấy module.' }
+    const bad = (v: number | undefined) => v !== undefined && (!Number.isInteger(v) || v < 0 || v > 255)
+    if (bad(ch2) || bad(ch1) || bad(ch3)) return { ok: false, message: 'CH1/CH2/CH3 phải là số nguyên 0–255.' }
+    if (ch1 === undefined && ch3 === undefined) {
+      // Giữ nguyên chỗ: CH1 = vị trí đang giữ (nếu đang chạy thì dừng tại chỗ), không đặt đích mới; CH3 theo hành vi hiện có.
+      if (st.moving || Math.abs(st.target - st.pos) > 1e-6) this.hold(id)
+    } else {
+      // TEST: phát đúng giá trị nhập. CH1 thô (không kẹp min/max); đích mô phỏng theo CH1 để 3D bám theo.
+      if (ch1 !== undefined) {
+        this.rawCh1.set(id, ch1)
+        st.target = ch1ToPos(ch1, m.length)
+      }
+      if (ch3 !== undefined) st.ch3 = ch3
+    }
     this.pulses.set(id, { until: this.now() + SENT_PULSE_MS, ch2 })
     this.zeroHold.delete(id)
     return { ok: true }
@@ -238,6 +257,7 @@ export class GauzeCore {
       const m = this.modules.get(id)
       const st = this.states.get(id)
       if (!m || !st) continue
+      this.rawCh1.delete(id)
       this.zeroHold.delete(id) // move hợp lệ: trở lại điều khiển bình thường (CH4 theo khoá tổng)
       const [lo, hi] = limits(m)
       let target: number
@@ -301,6 +321,10 @@ export class GauzeCore {
         continue
       }
       const step = (ch3ToCms(st.ch3, m.maxSpeedCms) / 100) * dt
+      if (step <= 0) {
+        st.moving = false // CH3 = 0: phanh
+        continue
+      }
       if (Math.abs(diff) <= step) {
         st.pos = st.target
         st.moving = false
@@ -325,7 +349,7 @@ export class GauzeCore {
       const st = this.states.get(m.id)
       const a = m.startAddress - 1
       if (!st || a < 0 || a + CHANNELS_PER_MODULE > DMX_UNIVERSE_SIZE) continue
-      this.frame[a + CH.POSITION] = posToCh1(st.target, m)
+      this.frame[a + CH.POSITION] = this.rawCh1.get(m.id) ?? posToCh1(st.target, m)
       // CH2: nơi DUY NHẤT ghi CH2 — giá trị người dùng nhập (cfg.ch2Fine hoặc ch2 của xung Sent), không phụ thuộc vị trí/lệnh/khoá.
       const pulse = this.pulses.get(m.id)
       this.frame[a + CH.FINE] = pulse ? pulse.ch2 : clamp(Math.round(m.ch2Fine ?? 0), 0, 255)
