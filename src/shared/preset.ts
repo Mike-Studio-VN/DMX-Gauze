@@ -299,6 +299,13 @@ export function normalizeProject(raw: unknown): Project {
           moduleId: reqString(s.moduleId, `buttons[${idx}].steps[${sIdx}].moduleId`, false),
           position: ch1 ? reqFinite(s.position, `buttons[${idx}].steps[${sIdx}].position`, 0, 255, true) : reqFinite(s.position, `buttons[${idx}].steps[${sIdx}].position`, 0),
           ...(ch1 ? { unit: 'ch1' as const } : {}),
+          ...(s.speedValue === undefined
+            ? {}
+            : (() => {
+                const su = reqSpeedUnit(s.speedUnit, `buttons[${idx}].steps[${sIdx}].speedUnit`)
+                if (su === undefined) failProject(`buttons[${idx}].steps[${sIdx}].speedUnit thiếu`)
+                return { speedUnit: su, speedValue: reqFinite(s.speedValue, `buttons[${idx}].steps[${sIdx}].speedValue`, 0.01, su === 'ch3' ? 255 : undefined) }
+              })()),
         }
       })
       return {

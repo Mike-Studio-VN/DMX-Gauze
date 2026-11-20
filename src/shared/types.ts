@@ -81,6 +81,9 @@ export interface CueStep {
   position: number
   /** Đơn vị của `position`: 'm' (mặc định, project cũ) hoặc 'ch1' (gửi đúng CH1 đó). */
   unit?: 'm' | 'ch1'
+  /** Tốc độ RIÊNG của module này (lưu nguyên theo đơn vị nhập). Thiếu = dùng tốc độ chung của cue. Bỏ qua khi cue ở Auto. */
+  speedUnit?: SpeedUnit | 'ch3'
+  speedValue?: number
 }
 
 export interface CueButton {

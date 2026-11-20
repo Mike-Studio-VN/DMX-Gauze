@@ -47,6 +47,9 @@ import {
   applyCueValues,
   cueModeSwitch,
   cueRepDistanceCm,
+  stepSpeed,
+  stepWithPosition,
+  speedStoredFromInput,
   defaultCueSpeedCms,
   cueSpeedView,
   storedSpeedAsCms,
@@ -981,6 +984,16 @@ function CueButtonEditor({
     onSave({ ...btn, positionUnit: nextUnit === 'ch1' ? 'ch1' : undefined })
   }
 
+  // Tốc độ riêng của module (Manual): lưu NGUYÊN theo đơn vị đang chọn vào bước của module. Auto: không sửa.
+  const setModuleSpeed = (m: ModuleCfg, raw: number) => {
+    if (isAuto || !stepById.has(m.id)) return
+    const stored = speedStoredFromInput(speedView, raw)
+    onSave(
+      { ...btn, steps: btn.steps.map((s) => (s.moduleId === m.id ? { ...s, speedUnit: speedView, speedValue: stored } : s)), speedView },
+      `cue-mspd-${btn.id}-${m.id}`,
+    )
+  }
+
   const toggleModule = (m: ModuleCfg) => {
     const exists = btn.steps.some((s) => s.moduleId === m.id)
     const steps = exists ? btn.steps.filter((s) => s.moduleId !== m.id) : [...btn.steps, currentStep(m)]
@@ -990,7 +1003,8 @@ function CueButtonEditor({
   const setModuleHeight = (m: ModuleCfg, rawPos: number) => {
     const next = storeFromInput(rawPos, m)
     const exists = btn.steps.some((s) => s.moduleId === m.id)
-    const steps = exists ? btn.steps.map((s) => (s.moduleId === m.id ? next : s)) : [...btn.steps, next]
+    // Giữ tốc độ riêng của bước khi chỉ sửa vị trí.
+    const steps = exists ? btn.steps.map((s) => (s.moduleId === m.id ? stepWithPosition(s, next) : s)) : [...btn.steps, next]
     onSave({ ...btn, steps }, `cue-mod-${btn.id}-${m.id}`)
   }
 
@@ -1304,6 +1318,35 @@ function CueButtonEditor({
                             {heightUnit === 'ch1' ? 'CH1' : 'm'}
                           </button>
                         </div>
+                        {(() => {
+                          // Tốc độ của module (bên phải vị trí): bước có tốc độ riêng thì dùng, không thì tốc độ chung của cue.
+                          const eff = step && !isAuto ? stepSpeed(btn, step) : { unit: btn.speedUnit, value: btn.speedValue }
+                          const rowDist = step ? Math.abs(stepPositionM(step, m.length) - (snapshotModules[m.id]?.pos ?? m.minHeight)) * 100 || Math.abs(stepPositionM(step, m.length) - m.minHeight) * 100 : 0
+                          const shown = speedDisplayValue(speedView, eff.unit, eff.value, rowDist, m.maxSpeedCms)
+                          const label = speedView === 'cms' ? 'cm/s' : speedView === 'sec' ? 's' : 'CH3'
+                          const editableSpeed = checked && !isAuto
+                          return (
+                            <div
+                              className="kiln-field flex h-6 w-[4.5rem] items-center rounded-full px-2"
+                              title={isAuto ? 'Auto: tốc độ tự tính, chỉ đọc (chọn Manual để nhập)' : step?.speedValue !== undefined ? `Tốc độ riêng của ${m.name}` : `Đang dùng tốc độ chung của cue; nhập để đặt riêng cho ${m.name}`}
+                            >
+                              <NumberField
+                                key={`${btn.id}-${m.id}-${speedView}-${eff.unit}-${eff.value}-${editableSpeed}`}
+                                readOnly={!editableSpeed}
+                                tabIndex={editableSpeed ? 0 : -1}
+                                step={speedView === 'ch3' ? 1 : '0.5'}
+                                min={speedView === 'ch3' ? 1 : 0.1}
+                                max={speedView === 'ch3' ? 255 : undefined}
+                                integer={speedView === 'ch3' ? 'round' : undefined}
+                                aria-label={`Tốc độ ${m.name} (${label})`}
+                                value={checked && shown !== null ? shown : '—'}
+                                onCommit={(value) => setModuleSpeed(m, value)}
+                                className="w-full min-w-0 border-0 bg-transparent text-center text-[11.5px] text-fg tabular-nums outline-none"
+                              />
+                              <span className="shrink-0 pl-0.5 text-[10px] text-muted">{label}</span>
+                            </div>
+                          )
+                        })()}
                       </div>
                     )
                   })}

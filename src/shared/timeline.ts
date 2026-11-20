@@ -1611,6 +1611,30 @@ export function cueStepFromInput(raw: number, unit: 'm' | 'ch1', m: Pick<ModuleC
   return { moduleId: m.id, position: Number(clamp(raw, m.minHeight, m.maxHeight).toFixed(2)) }
 }
 
+/** Đặt lại vị trí của bước nhưng GIỮ tốc độ riêng (speedUnit/speedValue) của nó. */
+export function stepWithPosition(old: CueStep, next: CueStep): CueStep {
+  return { ...next, ...(old.speedValue === undefined ? {} : { speedUnit: old.speedUnit, speedValue: old.speedValue }) }
+}
+
+/** Tốc độ hiệu lực của một bước: riêng của bước nếu có, không thì tốc độ chung của cue. */
+export function stepSpeed(btn: Pick<CueButton, 'speedUnit' | 'speedValue'>, step: CueStep): { unit: SpeedViewUnit; value: number } {
+  return step.speedValue !== undefined && step.speedUnit !== undefined
+    ? { unit: step.speedUnit, value: step.speedValue }
+    : { unit: btn.speedUnit, value: btn.speedValue }
+}
+
+/** Tóm tắt tốc độ các module của cue (cho nhãn nút): giống nhau → {unit,value}; khác nhau → null. Auto: dùng tốc độ chung. */
+export function cueSpeedSummary(btn: Pick<CueButton, 'speedUnit' | 'speedValue' | 'steps' | 'autoSpeedLimitCms'>): { unit: SpeedViewUnit; value: number } | null {
+  if (btn.autoSpeedLimitCms !== undefined || btn.steps.length === 0) return { unit: btn.speedUnit, value: btn.speedValue }
+  const first = stepSpeed(btn, btn.steps[0])
+  return btn.steps.every((s) => {
+    const x = stepSpeed(btn, s)
+    return x.unit === first.unit && x.value === first.value
+  })
+    ? first
+    : null
+}
+
 /**
  * Áp CẢ HAI giá trị cho các module ĐANG TÍCH (có trong steps): `pos` (theo btn.positionUnit, lưu nguyên vào từng CueStep,
  * kẹp theo min–max từng module) và `spd` (theo đơn vị đang chọn → speedUnit/speedValue của cue, chỉ khi Manual). null = không đổi.
@@ -1638,13 +1662,20 @@ export function applyCueValues(
         if (!m) return s
         const stored = cueStepFromInput(input.pos as number, unit, m)
         if (stored.position !== wanted) clamped.push(m.name)
-        return stored
+        return stepWithPosition(s, stored)
       }),
     }
   }
   if (speedGiven) {
+    // Tốc độ ghi vào TỪNG bước của module đang tích (tốc độ riêng); tốc độ chung của cue giữ nguyên làm mặc định.
     const view = cueSpeedView(btn)
-    next = { ...next, speedUnit: view, speedValue: speedStoredFromInput(view, input.spd as number), speedView: view, autoSpeedLimitCms: undefined }
+    const stored = speedStoredFromInput(view, input.spd as number)
+    next = {
+      ...next,
+      steps: next.steps.map((s) => (modById.has(s.moduleId) ? { ...s, speedUnit: view, speedValue: stored } : s)),
+      speedView: view,
+      autoSpeedLimitCms: undefined,
+    }
   }
   return { btn: next, clamped }
 }

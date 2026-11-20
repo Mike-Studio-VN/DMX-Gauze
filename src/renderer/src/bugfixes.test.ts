@@ -1702,6 +1702,27 @@ describe('Đơn vị tốc độ: moment (Auto/Manual luôn hiện) và cue (m|C
     expect(manual).toMatch(/<input(?![^>]*readOnly)[^>]*aria-label="Vị trí áp dụng cho module đang tích \(m\)"/);
   });
 
+  it('cue: mỗi hàng module có ô tốc độ BÊN PHẢI ô vị trí; Auto readOnly, Manual sửa được, ô vị trí luôn sửa được', () => {
+    setupBrowserEnv();
+    const project = createDefaultProject();
+    const m = project.modules[0];
+    const render = (over: object) => {
+      project.buttons = [{ ...project.buttons[0], steps: [{ moduleId: m.id, position: 0.5, speedUnit: 'ch3', speedValue: 89 }], speedUnit: 'cms', speedValue: 30, speedView: 'ch3', ...over }];
+      return renderToStaticMarkup(
+        React.createElement(PropertiesPanel, { overrideState: { ...useAppStore.getState(), project, selectedButtonId: project.buttons[0].id, selectedClipId: null, selectedClipIds: [], selectedIds: [], selectedLayerId: null } }),
+      );
+    };
+    const manual = render({ autoSpeedLimitCms: undefined });
+    const iPos = manual.indexOf(`aria-label="${m.name} (m)"`);
+    const iSpd = manual.indexOf(`aria-label="Tốc độ ${m.name} (CH3)"`);
+    expect(iPos).toBeGreaterThan(-1);
+    expect(iSpd).toBeGreaterThan(iPos); // tốc độ sau (bên phải) vị trí
+    expect(manual).toMatch(new RegExp(`<input(?![^>]*readOnly)[^>]*aria-label="Tốc độ ${m.name} \\(CH3\\)"[^>]*value="89"`));
+    const auto = render({ autoSpeedLimitCms: 50 });
+    expect(auto).toMatch(new RegExp(`<input[^>]*readOnly=""[^>]*aria-label="Tốc độ ${m.name} \\(CH3\\)"`));
+    expect(auto).toMatch(new RegExp(`<input(?![^>]*readOnly)[^>]*aria-label="${m.name} \\(m\\)"`)); // vị trí vẫn sửa được ở Auto
+  });
+
   it('cue: hiện m|CH1 và cm/s|s|CH3; CH1 lưu lại và hiện tương đương m', () => {
     setupBrowserEnv();
     const project = createDefaultProject();
