@@ -175,12 +175,14 @@ export function defaultModuleTransform(): Transform3D {
 }
 
 function parseClipSpeed(c: Record<string, unknown>, label: string): Pick<TimelineClip, 'speedMode' | 'speedUnit' | 'speedValue'> {
-  if (c.speedMode === undefined) return {} // moment cũ: giữ hành vi theo từng điểm
-  if (c.speedMode === 'auto') return { speedMode: 'auto' }
+  // speedUnit là lựa chọn hiển thị/nhập (cm/s | s | CH3), lưu cả khi Auto hoặc moment cũ.
+  const unit = c.speedUnit as TimelineClip['speedUnit']
+  if (unit !== undefined && unit !== 'cms' && unit !== 'sec' && unit !== 'ch3') failProject(`${label}.speedUnit phải là 'cms', 'sec' hoặc 'ch3'`)
+  const u = unit === undefined ? {} : { speedUnit: unit }
+  if (c.speedMode === undefined) return u // moment cũ: giữ hành vi theo từng điểm
+  if (c.speedMode === 'auto') return { speedMode: 'auto', ...u }
   if (c.speedMode !== 'manual') failProject(`${label}.speedMode phải là 'auto' hoặc 'manual'`)
-  const unit = c.speedUnit === undefined ? 'cms' : c.speedUnit
-  if (unit !== 'cms' && unit !== 'sec' && unit !== 'ch3') failProject(`${label}.speedUnit phải là 'cms', 'sec' hoặc 'ch3'`)
-  return { speedMode: 'manual', speedUnit: unit, speedValue: reqFinite(c.speedValue, `${label}.speedValue`, 0, 10000) }
+  return { speedMode: 'manual', speedUnit: unit ?? 'cms', speedValue: reqFinite(c.speedValue, `${label}.speedValue`, 0, 10000) }
 }
 
 function parseKeyframeSpeed(kf: Record<string, unknown>, label: string): Pick<ClipKeyframe, 'speedMode' | 'manualSpeedCms'> {
@@ -286,6 +288,16 @@ export function normalizeProject(raw: unknown): Project {
         steps,
         speedUnit: b.speedUnit,
         speedValue: reqFinite(b.speedValue, `buttons[${idx}].speedValue`, 0.01),
+        ...(b.positionUnit === undefined || b.positionUnit === 'm'
+          ? {}
+          : b.positionUnit === 'ch1'
+            ? { positionUnit: 'ch1' as const }
+            : failProject(`buttons[${idx}].positionUnit phải là 'm' hoặc 'ch1'`)),
+        ...(b.speedView === undefined
+          ? {}
+          : b.speedView === 'ch3' && b.speedUnit === 'cms'
+            ? { speedView: 'ch3' as const }
+            : failProject(`buttons[${idx}].speedView chỉ là 'ch3' khi speedUnit = 'cms'`)),
         ...(b.autoSpeedLimitCms === undefined ? {} : {
           autoSpeedLimitCms: reqFinite(b.autoSpeedLimitCms, `buttons[${idx}].autoSpeedLimitCms`, 1, DEFAULT_MOTION_SPEED_CMS),
         }),

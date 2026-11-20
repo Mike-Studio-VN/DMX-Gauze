@@ -87,6 +87,10 @@ export interface CueButton {
   speedValue: number
   /** Trần tốc độ tự động của cue mặc định, bỏ khi người dùng đặt tốc độ riêng. */
   autoSpeedLimitCms?: number
+  /** Đơn vị nhập vị trí trong panel cue: 'm' (mặc định) hoặc 'ch1' (0–255 ↔ 0 → length module). Chỉ là cách hiển thị; step.position luôn là m. */
+  positionUnit?: 'm' | 'ch1'
+  /** 'ch3' = hiển thị/nhập tốc độ cue theo CH3 (lưu vẫn là cm/s qua speedUnit 'cms', thang = Tốc độ max module tham chiếu). */
+  speedView?: 'ch3'
   /** Vị trí ô (0-based) trong lưới Cue Custom. */
   slotIndex?: number
   /** Hiển thị / đánh dấu lặp (LOOP) trên nút cue. */
@@ -129,7 +133,10 @@ export interface TimelineClip {
    * 'auto' = mọi đoạn tự tính từ quãng/thời gian; 'manual' = dùng `speedUnit` + `speedValue`.
    */
   speedMode?: 'auto' | 'manual'
-  /** Kiểu nhập khi manual: cm/s (cùng tốc độ), giây (mỗi đoạn đi trong N giây), hoặc CH3 trực tiếp (1..255). Mặc định 'cms'. */
+  /**
+   * Kiểu nhập/hiển thị: cm/s (cùng tốc độ), giây (mỗi đoạn đi trong N giây), hoặc CH3 trực tiếp (1..255). Mặc định 'cms'.
+   * Lưu cả khi Auto/moment cũ (chỉ là đơn vị hiển thị, đổi cột các điểm theo đơn vị này).
+   */
   speedUnit?: 'cms' | 'sec' | 'ch3'
   speedValue?: number
   keyframes: ClipKeyframe[]
