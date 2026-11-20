@@ -512,6 +512,7 @@ export const useAppStore = create<AppState>((set, get) => {
       if (get().activeTab === 'timeline' && activeTab !== 'timeline') get().holdTimelineTargets()
       set((s) => ({
         activeTab,
+        ...(activeTab !== 'timeline' && s.ltcActive ? { ltcActive: false, ltcDropFrame: undefined } : {}),
         focusScope: activeTab === 'buttons' ? 'buttons' : activeTab === 'timeline' ? 'timeline' : 'tree',
         selectedButtonId:
           activeTab === 'buttons' ? (s.selectedButtonId ?? s.project.buttons[0]?.id ?? null) : s.selectedButtonId,

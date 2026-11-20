@@ -221,6 +221,32 @@ function extractText(node: unknown): string {
   return '';
 }
 
+function mockPcmInput() {
+  const processor: { connect: () => void; onaudioprocess?: (event: unknown) => void } = { connect: vi.fn() };
+  vi.stubGlobal('navigator', {
+    mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) },
+  });
+  vi.stubGlobal('AudioContext', class {
+    sampleRate = 48000;
+    destination = {};
+    createMediaStreamSource() { return { connect: vi.fn() }; }
+    createScriptProcessor() { return processor; }
+    close = vi.fn(async () => {});
+  });
+  let phase = 1;
+  return {
+    ready: () => vi.waitFor(() => expect(processor.onaudioprocess).toBeTypeOf('function')),
+    feed(minute: number, second: number, frames: number[]) {
+      for (const frame of frames) {
+        vi.advanceTimersByTime(40);
+        const pcm = encodeSmpteBiphaseFrame(0, minute, second, frame, 48000, 25, phase);
+        phase = pcm.endPhase;
+        processor.onaudioprocess!({ inputBuffer: { numberOfChannels: 1, getChannelData: () => pcm.samples } });
+      }
+    },
+  };
+}
+
 describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (Bug 5)', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -411,7 +437,7 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     const stops = dispatched.filter((c) => c.type === 'stop');
     expect(stops).toEqual([{ type: 'stop', ids: [mod.id] }]);
 
-    // A fresh incoming frame reacquires lock. The transport button now stops LTC without starting local playback.
+    // A fresh incoming frame reacquires lock. Only the dedicated LTC button stops reception.
     capturedProc!.onaudioprocess!({ inputBuffer: { numberOfChannels: 1, getChannelData: () => new Float32Array(2048) } });
     for (const frameNum of [13, 14, 15, 16]) {
       vi.advanceTimersByTime(40);
@@ -421,7 +447,7 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     }
     vi.advanceTimersByTime(40);
     expect(extractText(hookRuntime.lastTree)).toContain('Live');
-    const stopLtc = collectNodes(hookRuntime.lastTree).find((n) => n.props['aria-label'] === 'Dừng LTC');
+    const stopLtc = collectNodes(hookRuntime.lastTree).find((n) => n.props['aria-label'] === 'Tắt nhận LTC');
     expect(stopLtc).toBeDefined();
     (stopLtc!.props.onClick as () => void)();
     hookRuntime.render();
@@ -606,7 +632,7 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     expect(extractText(findNode('output'))).toBe('00:00:01:02');
     expect(dropAt(0.026)).toBe(0.04);
 
-    (findNode('button', 'Dừng LTC')!.props.onClick as () => void)();
+    (findNode('button', 'Tắt nhận LTC')!.props.onClick as () => void)();
     hookRuntime.render();
     expect(findNode('select', 'Tốc độ khung hình')?.props).toMatchObject({ value: 50, disabled: false });
     expect(extractText(findNode('output'))).toBe('00:00:01:05');
@@ -658,5 +684,95 @@ describe('TimelineEditor real LTC decode -> freewheel -> lost stop integration (
     expect(extractText(collectNodes(hookRuntime.lastTree).find((node) => node.type === 'output'))).toBe(expected);
     hookRuntime.reset();
     expect(useAppStore.getState().ltcActive).toBe(false);
+  });
+
+  it('accepts PCM after activating LTC through the shared store', async () => {
+    const project = createDefaultProject();
+    project.settings.ltc.fps = 25;
+    useAppStore.setState({ project, sendCommand: async () => ({ ok: true }) });
+    const input = mockPcmInput();
+    hookRuntime.component = () => TimelineEditor({}) as unknown as VNode;
+    hookRuntime.render();
+    useAppStore.getState().setLtcActive(true);
+    hookRuntime.render();
+    await input.ready();
+    input.feed(0, 3, [0, 1, 2]);
+    expect(useAppStore.getState().playheadTime).toBeCloseTo(3.04);
+    useAppStore.getState().setActiveTab('manual');
+    expect(useAppStore.getState().ltcActive).toBe(false);
+    input.feed(0, 3, [3, 4, 5]);
+    expect(useAppStore.getState().playheadTime).toBeCloseTo(3.04);
+  });
+
+  it('follows absolute LTC past the editing ruler during lock and freewheel', async () => {
+    const project = createDefaultProject();
+    project.settings.ltc.fps = 25;
+    project.settings.ltc.offsetFrames = 2;
+    useAppStore.setState({ project, sendCommand: async () => ({ ok: true }) });
+    const input = mockPcmInput();
+    hookRuntime.component = () => TimelineEditor({}) as unknown as VNode;
+    const toggle = collectNodes(hookRuntime.render()).find((node) => extractText(node) === 'Timecode' && node.type === 'button');
+    (toggle!.props.onClick as () => void)();
+    hookRuntime.render();
+    await input.ready();
+    input.feed(1, 0, [0, 1, 2]);
+    expect(useAppStore.getState().playheadTime).toBeCloseTo(60.12);
+    expect(extractText(collectNodes(hookRuntime.lastTree).find((node) => node.type === 'output'))).toBe('00:01:00:03');
+    const marker = collectNodes(hookRuntime.lastTree).find((node) => String(node.props.className).startsWith('timeline-ruler-marker'));
+    expect(marker?.props.title).toContain('ngoài vùng dựng');
+    vi.advanceTimersByTime(125);
+    expect(useAppStore.getState().playheadTime).toBeGreaterThan(60.12);
+  });
+
+  it('blocks local play, seek and ruler input while LTC owns the playhead, then restores local control', async () => {
+    const project = createDefaultProject();
+    project.settings.timeline.startTime = 1.2;
+    project.settings.ltc.fps = 25;
+    const sendCommand = vi.fn(async () => ({ ok: true }));
+    useAppStore.setState({ project, sendCommand });
+    const input = mockPcmInput();
+    hookRuntime.component = () => TimelineEditor({}) as unknown as VNode;
+    const find = (key: string, value: string) => collectNodes(hookRuntime.lastTree).find((node) => node.props[key] === value);
+    const click = (node?: VNode) => {
+      (node!.props.onClick as () => void)();
+      hookRuntime.render();
+    };
+    hookRuntime.render();
+    click(find('className', 'timeline-play'));
+    vi.advanceTimersByTime(100);
+    const localTime = useAppStore.getState().playheadTime;
+    expect(localTime).toBeGreaterThan(1.2);
+    click(collectNodes(hookRuntime.lastTree).find((node) => extractText(node) === 'Timecode' && node.type === 'button'));
+    sendCommand.mockClear();
+    await input.ready();
+    click(find('className', 'timeline-play'));
+    expect(useAppStore.getState().ltcActive).toBe(true);
+    expect(find('className', 'timeline-play')?.props.disabled).toBe(true);
+    click(find('aria-label', 'Mốc tiếp theo'));
+    const ruler = collectNodes(hookRuntime.lastTree).find((node) => String(node.props.className).includes('cursor-ew-resize select-none'));
+    const forbiddenRead = vi.fn(() => ({ left: 0 }));
+    (ruler!.props.onPointerDown as (e: unknown) => void)({ clientX: 500, currentTarget: { getBoundingClientRect: forbiddenRead } });
+    expect(forbiddenRead).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(500);
+    expect(useAppStore.getState().playheadTime).toBe(localTime);
+    expect(sendCommand).not.toHaveBeenCalled();
+
+    input.feed(0, 2, [0, 1, 2]);
+    const locked = useAppStore.getState().playheadTime;
+    click(find('className', 'timeline-play'));
+    click(find('aria-label', 'Về timecode bắt đầu'));
+    input.feed(0, 2, [3, 4, 5]);
+    expect(useAppStore.getState().playheadTime).toBeGreaterThan(locked);
+    expect(sendCommand).toHaveBeenCalled();
+
+    const held = useAppStore.getState().playheadTime;
+    click(find('aria-label', 'Tắt nhận LTC'));
+    expect(useAppStore.getState().ltcActive).toBe(false);
+    expect(useAppStore.getState().playheadTime).toBe(held);
+    click(find('aria-label', 'Về timecode bắt đầu'));
+    expect(useAppStore.getState().playheadTime).toBe(1.2);
+    click(find('className', 'timeline-play'));
+    vi.advanceTimersByTime(100);
+    expect(useAppStore.getState().playheadTime).toBeGreaterThan(1.2);
   });
 });

@@ -472,7 +472,7 @@ textarea[readonly] {
   cursor: pointer;
   color: var(--t2);
 }
-.timeline-icon:hover {
+.timeline-icon:hover:not(:disabled) {
   color: var(--t1);
   background: rgba(255, 236, 214, 0.08);
 }
@@ -483,8 +483,12 @@ textarea[readonly] {
   background: var(--acc);
   color: var(--on-acc);
 }
-.timeline-play:hover {
+.timeline-play:hover:not(:disabled) {
   background: var(--acc-hi);
+}
+.timeline-transport button:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 .timeline-issue {
   width: auto;
