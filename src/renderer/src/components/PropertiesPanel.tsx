@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NumberField } from './DraftInput'
 import {
   AlertCircle,
@@ -48,6 +48,10 @@ import {
   speedStoredFromInput,
   storedSpeedAsCms,
   speedDisplayValue,
+  heightRange,
+  keyframeCh1,
+  keyframeHeightDisplay,
+  keyframeHeightFromInput,
   momentSpeedValue,
   retimeSegmentToSpeed,
   representativeSegmentIndex,
@@ -466,13 +470,16 @@ function MomentEditor({
     }
   }
 
-  const loM = Math.max(0, mod.minHeight)
-  const hiM = Math.min(mod.length, Math.max(loM, mod.maxHeight))
-  const commitHeight = (kfId: string, rawM: number) => {
-    const h = clamp(rawM, loM, hiM)
-    const { keyframes, syncEdge } = updateClipKeyframeHeight(clip, kfId, h)
+  // Độ cao các điểm: lưu NGUYÊN theo đơn vị nhập (m hoặc CH1); menu m|CH1 chỉ đổi hiển thị cho tới khi sửa ô.
+  const hUnit = clip.positionUnit ?? 'm'
+  const [hLo, hHi] = heightRange(mod, hUnit)
+  const hLabel = hUnit === 'ch1' ? 'CH1' : 'm'
+  const commitHeight = (kfId: string, raw: number) => {
+    const { height, ch1 } = keyframeHeightFromInput(raw, hUnit, mod)
+    const { keyframes, syncEdge } = updateClipKeyframeHeight(clip, kfId, height, ch1)
     onUpdate({ keyframes }, `kfh-${kfId}`, syncEdge)
   }
+  const speedPanels = momentSpeedPanels({ clip, sorted, mod, onUpdate })
 
   const applyPreset = (presetId: CurvePresetId) => {
     const kfs = buildCurveKeyframes(presetId, clip.duration, mod.minHeight, mod.maxHeight)
@@ -648,12 +655,32 @@ function MomentEditor({
           </div>
         </div>
 
-        <p className="text-[10.5px] text-muted">Độ cao hợp lệ: {loM.toFixed(2)}–{hiM.toFixed(2)} m (nhập mét, tự kẹp)</p>
+        <p className="text-[10.5px] text-muted">
+          Độ cao hợp lệ: {hUnit === 'ch1' ? `${hLo}–${hHi} (CH1, ≈ ${ch1ToPos(hLo, mod.length).toFixed(2)}–${ch1ToPos(hHi, mod.length).toFixed(2)} m)` : `${hLo.toFixed(2)}–${hHi.toFixed(2)} m`} (tự kẹp)
+        </p>
+        {speedPanels?.controls}
+        <div className="kiln-seg" role="group" aria-label="Đơn vị độ cao">
+          {(['m', 'ch1'] as const).map((u) => (
+            <button
+              key={u}
+              type="button"
+              aria-pressed={hUnit === u}
+              title="Chỉ đổi cách hiển thị: độ cao đã lưu không bị quy đổi cho tới khi bạn sửa ô"
+              onClick={() => {
+                if (u !== hUnit) onUpdate({ positionUnit: u === 'ch1' ? 'ch1' : undefined }, `momh-${clip.id}`)
+              }}
+              className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${hUnit === u ? 'on' : ''}`}
+            >
+              {u === 'm' ? 'm' : 'CH1'}
+            </button>
+          ))}
+        </div>
         <div className="space-y-1.5">
           {sorted.map((kf, idx) => {
             const active = selectedKeyId === kf.id
             const timelineTime = Number((clip.startTime + kf.offset).toFixed(4))
-            const hM = Number(kf.height.toFixed(3))
+            const hShown = keyframeHeightDisplay(kf, hUnit, mod)
+            const storedCh1 = keyframeCh1(kf, mod)
 
             return (
               <div
@@ -672,6 +699,29 @@ function MomentEditor({
                 >
                   P{idx + 1}
                 </span>
+                <label className="kiln-field flex min-w-0 flex-1 items-center gap-0.5 px-1">
+                  <NumberField
+                    step={hUnit === 'ch1' ? 1 : '0.01'}
+                    min={hLo}
+                    max={hHi}
+                    integer={hUnit === 'ch1' ? 'round' : undefined}
+                    aria-label={`Độ cao P${idx + 1} (${hLabel})`}
+                    title={
+                      hUnit === 'ch1'
+                        ? `Độ cao (CH1), hợp lệ ${hLo}–${hHi}${storedCh1 === undefined ? ' · đang hiển thị quy đổi từ m, sửa ô để lưu theo CH1' : ''}`
+                        : `Độ cao (m), hợp lệ ${hLo.toFixed(2)}–${hHi.toFixed(2)} m${storedCh1 !== undefined ? ' · đang hiển thị quy đổi từ CH1, sửa ô để lưu theo m' : ''}`
+                    }
+                    key={`${kf.id}-${hUnit}`}
+                    value={hShown}
+                    onFocus={() => onSelectKey(kf.id)}
+                    onCommit={(value) => commitHeight(kf.id, value)}
+                    className={`w-full min-w-0 bg-transparent text-right text-[11px] tabular-nums outline-none ${
+                      active ? 'font-semibold text-[#FFD08A]' : 'text-[#FFB26B]'
+                    }`}
+                  />
+                  <span className="text-[10px] text-muted">{hLabel}</span>
+                </label>
+                <span className="text-muted">·</span>
                 {pUnit === 'sec' ? (
                   <label className="kiln-field flex min-w-0 flex-1 items-center gap-0.5 px-1">
                     <NumberField
@@ -734,22 +784,6 @@ function MomentEditor({
                     )
                   })()
                 )}
-                <span className="text-muted">·</span>
-                <label className="kiln-field flex min-w-0 flex-1 items-center gap-0.5 px-1">
-                  <NumberField
-                    step="0.01"
-                    min={loM}
-                    max={hiM}
-                    title={`Độ cao (m), hợp lệ ${loM.toFixed(2)}–${hiM.toFixed(2)} m`}
-                    value={hM}
-                    onFocus={() => onSelectKey(kf.id)}
-                    onCommit={(value) => commitHeight(kf.id, value)}
-                    className={`w-full min-w-0 bg-transparent text-right text-[11px] tabular-nums outline-none ${
-                      active ? 'font-semibold text-[#FFD08A]' : 'text-[#FFB26B]'
-                    }`}
-                  />
-                  <span className="text-[10px] text-muted">m</span>
-                </label>
                 {sorted.length > 2 && (
                   <button
                     type="button"
@@ -770,7 +804,7 @@ function MomentEditor({
         </div>
       </div>
 
-      <MomentSpeedEditor clip={clip} sorted={sorted} mod={mod} onUpdate={onUpdate} />
+      {speedPanels?.notes}
     </div>
   )
 }
@@ -780,7 +814,7 @@ function MomentEditor({
  * quyết định cột trong CÁC ĐIỂM). Auto: ô giá trị chỉ đọc (giá trị tự tính theo đơn vị đang chọn); Manual: nhập được
  * (cm/s = cùng tốc độ, s = mỗi đoạn đi trong N giây, CH3 = cùng CH3). Đoạn đại diện để đổi đơn vị = đoạn dài nhất.
  */
-function MomentSpeedEditor({
+function momentSpeedPanels({
   clip,
   sorted,
   mod,
@@ -790,7 +824,7 @@ function MomentSpeedEditor({
   sorted: ClipKeyframe[]
   mod: ModuleCfg
   onUpdate: (patch: Partial<TimelineClip>, coalesceKey?: string) => void
-}) {
+}): { controls: ReactNode; notes: ReactNode } | null {
   if (sorted.length < 2) return null
   const cap = speedCap(mod)
   const segs = sorted.slice(0, -1).map((p1, i) => {
@@ -829,9 +863,9 @@ function MomentSpeedEditor({
   const editable = mode === 'manual'
   const readValue = valueFor(unit, repCms)
   const unitLabel = unit === 'cms' ? 'cm/s' : unit === 'sec' ? 's' : 'CH3'
-  return (
-    <div className="space-y-1.5 border-t border-line pt-2.5">
-      <div className="text-[11px] font-semibold tracking-wide text-muted uppercase">Tốc độ moment</div>
+  return {
+    controls: (
+      <div className="space-y-1.5">
       <div className="kiln-seg" role="group" aria-label="Chế độ tốc độ moment">
         {(['auto', 'manual'] as const).map((m) => (
           <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)} className={`kiln-seg-btn h-7 flex-1 px-2.5 text-[11px] ${mode === m ? 'on' : ''}`}>
@@ -871,6 +905,10 @@ function MomentSpeedEditor({
           className="kiln-field h-7 w-full px-2.5 text-xs tabular-nums"
         />
       )}
+      </div>
+    ),
+    notes: (
+      <div className="space-y-1.5 border-t border-line pt-2.5">
       {mode === 'auto' && (
         <div className="space-y-0.5 text-[10.5px] text-muted tabular-nums">
           <div>Mọi {segs.length} đoạn tự tính từ quãng đường / thời gian giữa các điểm.</div>
@@ -905,8 +943,10 @@ function MomentSpeedEditor({
           {slow.length}/{segs.length} đoạn quá chậm, không kịp tới đích đúng giờ (vd P{segs.indexOf(slow[0]) + 1}→P{segs.indexOf(slow[0]) + 2}: cần {(slow[0].dist / slow[0].res.cms).toFixed(2)}s, có {slow[0].dt.toFixed(2)}s).
         </p>
       )}
-    </div>
-  )
+
+      </div>
+    ),
+  }
 }
 
 function CueButtonEditor({

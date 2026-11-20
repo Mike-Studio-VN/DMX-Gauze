@@ -13,6 +13,12 @@ import {
   speedDisplayValue,
   speedStoredFromInput,
   storedSpeedAsCms,
+  heightRange,
+  keyframeCh1,
+  keyframeHeightDisplay,
+  keyframeHeightFromInput,
+  mToCh1Raw,
+  updateClipKeyframeHeight,
 } from './timeline'
 import type { ModuleCfg, TimelineClip } from './types'
 
@@ -177,3 +183,78 @@ describe('lưu/đọc đơn vị', () => {
     expect(() => normalizeProject(bad)).toThrow(/speedUnit/)
   })
 })
+
+describe('độ cao điểm trong moment: lưu nguyên m hoặc CH1', () => {
+  const m = { ...mod(120), length: 2.55, minHeight: 0.1, maxHeight: 2.0 }
+  it('nhập CH1 lưu nguyên số (kẹp theo min–max), height = m tương đương; nhập m bỏ ch1', () => {
+    expect(keyframeHeightFromInput(128, 'ch1', m)).toEqual({ height: ch1ToPos(128, 2.55), ch1: 128 })
+    expect(keyframeHeightFromInput(0, 'ch1', m).ch1).toBe(10) // min 0,1 m
+    expect(keyframeHeightFromInput(255, 'ch1', m).ch1).toBe(200) // max 2,0 m
+    expect(keyframeHeightFromInput(1.234, 'm', m)).toEqual({ height: 1.234 })
+    expect(keyframeHeightFromInput(9, 'm', m).height).toBe(2)
+    expect(heightRange(m, 'ch1')).toEqual([10, 200])
+    expect(heightRange(m, 'm')).toEqual([0.1, 2])
+  })
+  it('đổi menu chỉ đổi hiển thị, hai chiều giữ giá trị lưu; height bị sửa chỗ khác thì ch1 cũ bị bỏ qua', () => {
+    const kf = { height: ch1ToPos(100, 2.55), ch1: 100 }
+    expect(keyframeHeightDisplay(kf, 'ch1', m)).toBe(100)
+    expect(keyframeHeightDisplay(kf, 'm', m)).toBeCloseTo(1, 3)
+    expect(keyframeHeightDisplay(kf, 'ch1', m)).toBe(100) // quay lại vẫn 100
+    const dragged = { height: 1.5, ch1: 100 } // kéo thả đổi height, ch1 cũ lệch
+    expect(keyframeCh1(dragged, m)).toBeUndefined()
+    expect(keyframeHeightDisplay(dragged, 'ch1', m)).toBe(mToCh1Raw(1.5, 2.55))
+    expect(keyframeHeightDisplay({ height: 1 }, 'm', m)).toBe(1)
+  })
+  it('updateClipKeyframeHeight ghi/xoá ch1 theo đơn vị nhập', () => {
+    const c = clip()
+    const withCh1 = updateClipKeyframeHeight(c, 'b', ch1ToPos(100, 2.55), 100).keyframes.find((k) => k.id === 'b')!
+    expect(withCh1.ch1).toBe(100)
+    const back = updateClipKeyframeHeight({ ...c, keyframes: [{ ...c.keyframes[0] }, withCh1, c.keyframes[2], c.keyframes[3]] }, 'b', 1.2).keyframes.find((k) => k.id === 'b')!
+    expect(back.ch1).toBeUndefined()
+  })
+  it('gửi DMX: điểm nhập CH1 100 → byte CH1 = 100 (qua planner + core), kẹp theo min–max', () => {
+    const mm = { ...modOf2(), id: 'm' }
+    const run = (kfCh1: number) => {
+      const c: TimelineClip = {
+        id: 'c', layerId: 'l', moduleId: 'm', startTime: 0, duration: 4, curveMode: 'linear', speedMode: 'auto',
+        keyframes: [
+          { id: 'a', offset: 0, height: ch1ToPos(kfCh1, 2.55), ch1: kfCh1 },
+          { id: 'b', offset: 4, height: ch1ToPos(kfCh1, 2.55), ch1: kfCh1 },
+        ],
+      }
+      const core = new GauzeCore((_cfg, ev) => new MockDriver(ev))
+      core.configure({ modules: [mm], output: createDefaultProject().settings.output, lockValue: LOCK_VALUE })
+      core.command({ type: 'lock', locked: false })
+      for (const cmd of planTimelineFollow([mm], [c], [], 0, 0.06, null, new LinearFollowPlanner()).commands) core.command(cmd)
+      core.tick()
+      const f = core.snapshot().frame[0]
+      core.stop()
+      return f
+    }
+    expect(run(100)).toBe(100)
+    expect(run(128)).toBe(128)
+    expect(run(250)).toBe(200) // kẹp theo maxHeight 2,0 m
+  })
+  it('lưu/đọc: positionUnit moment + ch1 điểm round-trip; project cũ mặc định m', () => {
+    const p = createDefaultProject()
+    p.clips = [
+      { ...clip(), positionUnit: 'ch1', keyframes: clip().keyframes.map((k, i) => (i === 1 ? { ...k, ch1: 100 } : k)) },
+      { ...clip(), id: 'c2' },
+    ]
+    const back = normalizeProject(JSON.parse(JSON.stringify(normalizeProject(p))))
+    expect(back.clips?.[0].positionUnit).toBe('ch1')
+    expect(back.clips?.[0].keyframes[1].ch1).toBe(100)
+    expect(back.clips?.[1]).not.toHaveProperty('positionUnit')
+    expect(back.clips?.[1].keyframes.every((k) => k.ch1 === undefined)).toBe(true)
+    const bad = JSON.parse(JSON.stringify(normalizeProject(p)))
+    bad.clips[0].keyframes[1].ch1 = 300
+    expect(() => normalizeProject(bad)).toThrow(/ch1/)
+    bad.clips[0].keyframes[1].ch1 = 100
+    bad.clips[0].positionUnit = 'pct'
+    expect(() => normalizeProject(bad)).toThrow(/positionUnit/)
+  })
+})
+
+function modOf2(): ModuleCfg {
+  return { ...mod(120), startAddress: 1, length: 2.55, minHeight: 0.1, maxHeight: 2.0 }
+}
