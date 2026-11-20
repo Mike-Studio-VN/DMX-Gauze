@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
-  CheckSquare,
   ChevronDown,
   ChevronRight,
   Copy,
@@ -15,13 +14,13 @@ import {
   Link2,
   Plus,
   RefreshCw,
-  Square,
   Trash2,
 } from 'lucide-react'
 import { conflictMap } from '@shared/addressing'
 import { addressRange } from '@shared/dmx'
 import type { Layer, ModuleCfg } from '@shared/types'
 import { useAppStore } from '../store/useAppStore'
+import { CheckMark } from './KilnCheckbox'
 
 type ContextMenuState =
   | { kind: 'layer'; x: number; y: number; layer: Layer }
@@ -85,6 +84,7 @@ export function GauzeTree(props: {
   const conflicts = conflictMap(project.modules)
   const isAuto = project.settings.addressMode === 'auto'
   const allSelected = project.modules.length > 0 && project.modules.every((m) => selectedIds.includes(m.id))
+  const partiallySelected = !allSelected && project.modules.some((m) => selectedIds.includes(m.id))
 
   const quickAddLayer = () => {
     const newId = `layer-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`
@@ -133,9 +133,9 @@ export function GauzeTree(props: {
           type="button"
           onClick={allSelected ? deselectAll : selectAll}
           title={allSelected ? 'Bỏ chọn tất cả module màn' : 'Chọn tất cả module màn'}
-          className={`kiln-btn h-6 px-2.5 text-[11px] ${allSelected ? 'text-[#FFB26B]' : 'kiln-btn-cue'}`}
+          className={`kiln-btn kiln-check-button h-6 px-2.5 text-[11px] ${allSelected ? 'text-[#FFB26B]' : 'kiln-btn-cue'}`}
         >
-          {allSelected ? <Square size={12} aria-hidden /> : <CheckSquare size={12} aria-hidden />}
+          <CheckMark state={allSelected ? 'checked' : partiallySelected ? 'mixed' : 'unchecked'} />
           {allSelected ? 'Bỏ chọn hết' : `Chọn hết (${project.modules.length})`}
         </button>
 

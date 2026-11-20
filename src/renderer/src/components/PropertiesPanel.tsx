@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NumberField } from './DraftInput'
+import { KilnCheckbox } from './KilnCheckbox'
 import {
   AlertCircle,
   AlertTriangle,
@@ -1224,16 +1225,15 @@ function CueButtonEditor({
             return (
               <div key={layer.id} className="kiln-layer space-y-1.5 p-2.5">
                 <div className="flex items-center justify-between gap-2 pb-1">
-                  <label className="flex cursor-pointer items-center gap-2 font-semibold text-info">
-                    <input
-                      type="checkbox"
+                  <label className="kiln-checkbox-label flex min-w-0 flex-1 cursor-pointer items-center gap-1 font-semibold text-info">
+                    <KilnCheckbox
                       checked={allChecked}
+                      mixed={selectedCount > 0 && !allChecked}
                       onChange={() => toggleLayerInButton(layer.id)}
-                      className="h-4 w-4 rounded accent-brand"
                     />
                     <span>{layer.name}</span>
                   </label>
-                  <span className="kiln-readout text-[11px] tabular-nums">
+                  <span className="kiln-readout shrink-0 text-[11px] tabular-nums">
                     {selectedCount}/{mods.length}
                   </span>
                 </div>
@@ -1254,12 +1254,10 @@ function CueButtonEditor({
                             : 'bg-black/15 shadow-[inset_0_0_0_1px_var(--line)]'
                         }`}
                       >
-                        <label className={`flex min-w-0 flex-1 cursor-pointer items-center gap-2 ${checked ? '' : 'text-muted'}`}>
-                          <input
-                            type="checkbox"
+                        <label className={`kiln-checkbox-label flex min-w-0 flex-1 cursor-pointer items-center gap-1 ${checked ? '' : 'text-muted'}`}>
+                          <KilnCheckbox
                             checked={checked}
                             onChange={() => toggleModule(m)}
-                            className="h-4 w-4 shrink-0 rounded accent-brand"
                           />
                           <span className="truncate text-[11.5px]" title={`${m.name} (${m.minHeight}–${m.maxHeight}m)`}>
                             {m.name}
